@@ -3,10 +3,23 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
+const DEFAULT_TITLE = "Characteristics of Cyberbullying";
+
+const DEFAULT_PROMPT = `청소년이 인식한 사이버폭력의 특징에 대한 유사성 분류를 진행하고자 합니다. 제시된 유사성 분류 카드(진술문 목록)를 보시고 귀하께서 생각하시기에 유사한 내용의 카드(진술문)를 같은 묶음으로 분류하시기 바랍니다. 분류하는 기준에는 정답이 없습니다. 유사하다고 생각되는 카드(진술문)을 묶음으로 분류해 주시면 됩니다. 15분 내외의 시간이 소요될 수 있습니다.
+
+※ 유사성 분류 작업 시, 다음의 5가지 지침을 반드시 준수해 주십시오.
+① 하나의 묶음은 반드시 2장 이상의 카드로 구성되어야 합니다.
+② 모든 카드를 하나의 묶음으로 만들 수는 없습니다. (전체 카드 47장을 하나의 묶음으로 불가)
+③ 하나의 묶음에는 16장 이상의 카드가 포함될 수 없습니다. 전체 카드의 1/3 이상이 포함된 묶음이 만들어지지 않기 위함입니다.
+④ 남는 카드 간 유사성(공통점)이 없을 때, <기타>라는 묶음으로 몽땅 묶일 수 없습니다. 번거로우시겠지만 다른 주제(묶음 제목)를 생각해 보셔야 합니다. (유사성이 있는 카드끼리만 묶음을 만들 수 있습니다.)
+⑤ 누락되는 카드(진술문)가 없도록 유의해 주세요. (47장의 모든 카드는 하나 이상의 묶음에 포함되어야 합니다.)
+- 최소: 4개 묶음(카드 2장으로 구성된 1개 묶음, 카드 15장으로 구성된 3개 묶음)
+- 최대: 23개 묶음(카드 2장으로 구성된 22개 묶음, 카드 3장으로 구성된 1개 묶음)`;
+
 export default function NewProjectPage() {
   const router = useRouter();
-  const [title, setTitle] = useState("");
-  const [prompt, setPrompt] = useState("");
+  const [title, setTitle] = useState(DEFAULT_TITLE);
+  const [prompt, setPrompt] = useState(DEFAULT_PROMPT);
   const [statementsText, setStatementsText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -74,15 +87,19 @@ export default function NewProjectPage() {
 
           <div>
             <label htmlFor="prompt" className="block text-sm font-medium mb-1">
-              참가자 안내문 (선택)
+              참가자 안내문
             </label>
+            <p className="text-xs text-slate-500 mb-1.5">
+              연구자가 자유롭게 수정할 수 있습니다. 프로젝트를 생성하고 링크를
+              공유한 뒤에는 참가자가 이 내용을 수정할 수 없습니다.
+            </p>
             <textarea
               id="prompt"
-              rows={3}
+              rows={16}
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
               placeholder="예: 아래 카드들을 의미상 비슷하다고 느끼는 것끼리 자유롭게 묶어 주세요."
-              className="w-full rounded-lg border border-slate-300 px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-slate-400"
+              className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400"
             />
           </div>
 

@@ -40,6 +40,13 @@ model SortSession {
   participantName String
   createdAt       DateTime @default(now())
 
+  consentAgreed Boolean @default(true)
+  gender        String
+  age           Int
+  schoolLevel   String
+  grade         String
+  phoneNumber   String
+
   groups SortGroup[]
 }
 
