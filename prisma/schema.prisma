@@ -1,0 +1,63 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Project {
+  id         String    @id @default(cuid())
+  slug       String    @unique
+  adminToken String    @unique
+  title      String
+  prompt     String    @default("")
+  createdAt  DateTime  @default(now())
+
+  statements  Statement[]
+  sortSessions SortSession[]
+}
+
+model Statement {
+  id        String   @id @default(cuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  text      String
+  order     Int      @default(0)
+
+  groupItems SortGroupItem[]
+}
+
+model SortSession {
+  id              String   @id @default(cuid())
+  projectId       String
+  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  participantName String
+  createdAt       DateTime @default(now())
+
+  groups SortGroup[]
+}
+
+model SortGroup {
+  id            String      @id @default(cuid())
+  sortSessionId String
+  sortSession   SortSession @relation(fields: [sortSessionId], references: [id], onDelete: Cascade)
+  label         String      @default("")
+
+  items SortGroupItem[]
+}
+
+model SortGroupItem {
+  id          String    @id @default(cuid())
+  groupId     String
+  group       SortGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  statementId String
+  statement   Statement @relation(fields: [statementId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, statementId])
+}
