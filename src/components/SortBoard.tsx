@@ -534,14 +534,19 @@ export function SortBoard({
       </div>
 
       <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900 space-y-1">
-        <a
-          href={`/p/${slug}/guide`}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="font-semibold underline decoration-2 underline-offset-2 hover:text-blue-700"
-        >
-          {GUIDE_LINK_TEXT}
-        </a>
+        <p>
+          <a
+            href={`/p/${slug}/guide`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-semibold underline decoration-2 underline-offset-2 hover:text-blue-700"
+          >
+            {GUIDE_LINK_TEXT}
+          </a>{" "}
+          <span className="text-xs text-blue-700">
+            클릭하시면 유사성 분류 방법(지침)이 활성화됩니다.
+          </span>
+        </p>
         <p>
           왼쪽의 진술문을 오른쪽의 묶음으로 드래그해서, 서로 의미가
           비슷하다고 생각되는 진술문끼리 같은 묶음에 넣어 주세요. 묶음은
@@ -550,7 +555,6 @@ export function SortBoard({
           하나 이상의 묶음에 배치한 후 제출해 주세요. 자세한 지침은 위
           링크를 클릭해 언제든 다시 확인할 수 있습니다.
         </p>
-        {prompt && <p className="whitespace-pre-line">{prompt}</p>}
       </div>
 
       <DndContext

@@ -3,10 +3,11 @@ export type SortedSession = {
 };
 
 /**
- * Builds a symmetric similarity matrix (0..1) between statements based on how
- * often participants placed each pair in the same group.
+ * Raw co-occurrence counts between statements: how many participants placed
+ * each pair in the same group. This is the aggregate "group matrix" used in
+ * concept mapping methodology, before it's normalized for MDS/clustering.
  */
-export function buildSimilarityMatrix(
+export function buildCooccurrenceMatrix(
   statementIds: string[],
   sessions: SortedSession[]
 ): number[][] {
@@ -30,6 +31,20 @@ export function buildSimilarityMatrix(
       }
     }
   }
+
+  return cooccurrence;
+}
+
+/**
+ * Builds a symmetric similarity matrix (0..1) between statements based on how
+ * often participants placed each pair in the same group.
+ */
+export function buildSimilarityMatrix(
+  statementIds: string[],
+  sessions: SortedSession[]
+): number[][] {
+  const n = statementIds.length;
+  const cooccurrence = buildCooccurrenceMatrix(statementIds, sessions);
 
   const sessionCount = Math.max(sessions.length, 1);
   const similarity = cooccurrence.map((row) =>
