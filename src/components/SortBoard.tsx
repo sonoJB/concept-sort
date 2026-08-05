@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -59,11 +59,16 @@ function Card({
           : undefined,
         touchAction: "none",
       }}
-      className={`select-none cursor-grab active:cursor-grabbing rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm ${
+      className={`flex min-w-0 select-none items-start gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm cursor-grab active:cursor-grabbing ${
         isDragging ? "opacity-40" : ""
       }`}
     >
-      {number}. {text}
+      <span className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[11px] font-semibold text-slate-600">
+        {number}
+      </span>
+      <span className="min-w-0 flex-1 break-words leading-relaxed">
+        {text}
+      </span>
     </div>
   );
 }
@@ -72,17 +77,22 @@ function DropZone({
   id,
   children,
   className,
+  innerRef,
 }: {
   id: string;
   children: React.ReactNode;
   className?: string;
+  innerRef?: (node: HTMLDivElement | null) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id });
   return (
     <div
-      ref={setNodeRef}
+      ref={(node) => {
+        setNodeRef(node);
+        innerRef?.(node);
+      }}
       className={`${className ?? ""} ${
-        isOver ? "ring-2 ring-slate-400 bg-slate-100" : ""
+        isOver ? "ring-2 ring-blue-400 bg-blue-50" : ""
       }`}
     >
       {children}
@@ -136,6 +146,14 @@ export function SortBoard({
   const [error, setError] = useState<string | null>(null);
   const nextGroupNumber = useRef(minGroups + 1);
 
+  const [highlightedGroupId, setHighlightedGroupId] = useState<string | null>(
+    null
+  );
+  const labelInputRefs = useRef<Map<string, HTMLInputElement>>(new Map());
+  const groupWrapperRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const poolPanelRef = useRef<HTMLDivElement | null>(null);
+  const pendingFocusIdRef = useRef<string | null>(null);
+
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
   );
@@ -146,6 +164,30 @@ export function SortBoard({
   );
 
   const pooled = statements.filter((s) => assignment[s.id] === null);
+
+  // Runs after a newly added group has mounted: scroll it into view and
+  // focus its label input. Only touches refs/the DOM, no setState here.
+  useEffect(() => {
+    const id = pendingFocusIdRef.current;
+    if (!id) return;
+    pendingFocusIdRef.current = null;
+    const el = labelInputRefs.current.get(id);
+    el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    el?.focus();
+  }, [groups]);
+
+  // Clears the highlight flash a moment after it's set.
+  useEffect(() => {
+    if (!highlightedGroupId) return;
+    const timer = setTimeout(() => setHighlightedGroupId(null), 900);
+    return () => clearTimeout(timer);
+  }, [highlightedGroupId]);
+
+  function flashGroup(groupId: string) {
+    const el = groupWrapperRefs.current.get(groupId);
+    el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    setHighlightedGroupId(groupId);
+  }
 
   function handleDragStart(event: DragStartEvent) {
     setActiveId(String(event.active.id));
@@ -180,6 +222,8 @@ export function SortBoard({
     setGroups((prev) => {
       if (prev.length >= maxGroups) return prev;
       const id = `g${nextGroupNumber.current++}`;
+      pendingFocusIdRef.current = id;
+      setHighlightedGroupId(id);
       return [...prev, { id, label: "" }];
     });
   }
@@ -232,14 +276,19 @@ export function SortBoard({
     setError(null);
 
     if (pooled.length > 0) {
+      poolPanelRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest",
+      });
       setError(
         `아직 분류되지 않은 진술문이 ${pooled.length}개 있습니다. 모든 진술문을 하나 이상의 묶음에 배치해 주세요. 상단의 ${GUIDE_LINK_TEXT}을 클릭하여 방법을 다시 확인해 주세요.`
       );
       return;
     }
 
-    const payloadGroups = groups
+    const payloadGroupsWithId = groups
       .map((g) => ({
+        id: g.id,
         label: g.label,
         statementIds: statements
           .filter((s) => assignment[s.id] === g.id)
@@ -247,37 +296,47 @@ export function SortBoard({
       }))
       .filter((g) => g.statementIds.length > 0);
 
-    if (payloadGroups.length === 0) {
+    if (payloadGroupsWithId.length === 0) {
       setError(
         `최소 1개 이상의 묶음에 진술문을 배치해 주세요. 상단의 ${GUIDE_LINK_TEXT}을 클릭하여 방법을 다시 확인해 주세요.`
       );
       return;
     }
 
-    if (payloadGroups.length === 1) {
+    if (payloadGroupsWithId.length === 1) {
+      flashGroup(payloadGroupsWithId[0].id);
       setError(
         `모든 카드를 하나의 묶음으로 만들 수 없습니다. 상단의 ${GUIDE_LINK_TEXT}을 클릭하여 방법을 다시 확인해 주세요.`
       );
       return;
     }
 
-    const tooSmall = payloadGroups.some((g) => g.statementIds.length < 2);
-    if (tooSmall) {
+    const offendingSmall = payloadGroupsWithId.find(
+      (g) => g.statementIds.length < 2
+    );
+    if (offendingSmall) {
+      flashGroup(offendingSmall.id);
       setError(
         `묶음은 반드시 2장 이상의 카드로 구성되어야 합니다. 상단의 ${GUIDE_LINK_TEXT}을 클릭하여 방법을 다시 확인해 주세요.`
       );
       return;
     }
 
-    const tooBig = payloadGroups.some(
+    const offendingBig = payloadGroupsWithId.find(
       (g) => g.statementIds.length > maxCardsPerGroup
     );
-    if (tooBig) {
+    if (offendingBig) {
+      flashGroup(offendingBig.id);
       setError(
         `하나의 묶음에는 전체 진술문의 1/3 이상을 묶을 수 없습니다. 상단의 ${GUIDE_LINK_TEXT}을 다시 한번 숙지해 주세요.`
       );
       return;
     }
+
+    const payloadGroups = payloadGroupsWithId.map(({ label, statementIds }) => ({
+      label,
+      statementIds,
+    }));
 
     setSubmitting(true);
     try {
@@ -528,12 +587,12 @@ export function SortBoard({
   const active = activeId ? statementById.get(activeId) : undefined;
 
   return (
-    <div className="max-w-6xl mx-auto py-8 px-4 space-y-6">
-      <div>
+    <div className="mx-auto flex w-full max-w-[1600px] flex-col px-4 py-4 md:h-dvh md:overflow-hidden">
+      <div className="shrink-0">
         <h1 className="text-xl font-bold">{title}</h1>
       </div>
 
-      <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900 space-y-1">
+      <div className="mt-3 shrink-0 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900 space-y-1">
         <p>
           <a
             href={`/p/${slug}/guide`}
@@ -561,16 +620,20 @@ export function SortBoard({
         sensors={sensors}
         onDragStart={handleDragStart}
         onDragEnd={handleDragEnd}
+        autoScroll={{ enabled: true }}
       >
-        <div className="grid md:grid-cols-3 gap-6">
+        <div className="mt-3 flex flex-col gap-4 md:mt-4 md:min-h-0 md:flex-1 md:flex-row md:gap-6 md:overflow-hidden">
           <DropZone
             id={POOL_ID}
-            className="md:col-span-1 rounded-xl border-2 border-dashed border-slate-300 p-4 min-h-[200px] md:max-h-[70vh] md:overflow-y-auto"
+            innerRef={(node) => {
+              poolPanelRef.current = node;
+            }}
+            className="flex flex-col rounded-xl border-2 border-dashed border-slate-300 md:w-[340px] md:shrink-0 md:min-h-0 md:overflow-hidden"
           >
-            <p className="text-xs font-medium text-slate-500 mb-2">
+            <p className="shrink-0 px-4 pt-3 pb-2 text-xs font-medium text-slate-500">
               진술문 ({pooled.length}개 남음)
             </p>
-            <div className="flex flex-col gap-2">
+            <div className="flex flex-col gap-2 px-4 pb-4 md:min-h-0 md:flex-1 md:overflow-y-auto md:overscroll-contain">
               {pooled.map((s) => (
                 <Card
                   key={s.id}
@@ -582,8 +645,8 @@ export function SortBoard({
             </div>
           </DropZone>
 
-          <div className="md:col-span-2 space-y-3">
-            <div className="flex items-center justify-between">
+          <div className="flex min-w-0 flex-col md:min-h-0 md:flex-1">
+            <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 pb-2">
               <p className="text-sm font-medium text-slate-600">
                 묶음 ({groups.length}개 / 최소 {minGroups}개, 최대 {maxGroups}
                 개)
@@ -597,35 +660,51 @@ export function SortBoard({
               </button>
             </div>
 
-            <div className="grid sm:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 content-start gap-4 xl:grid-cols-2 md:min-h-0 md:flex-1 md:overflow-y-auto md:overscroll-contain md:pr-1 md:pb-2">
               {groups.map((group, idx) => {
                 const items = statements.filter(
                   (s) => assignment[s.id] === group.id
                 );
+                const isHighlighted = highlightedGroupId === group.id;
                 return (
                   <DropZone
                     key={group.id}
                     id={group.id}
-                    className="rounded-xl border border-slate-300 bg-slate-50 p-4 min-h-[140px]"
+                    innerRef={(node) => {
+                      if (node) groupWrapperRefs.current.set(group.id, node);
+                      else groupWrapperRefs.current.delete(group.id);
+                    }}
+                    className={`flex min-h-[140px] flex-col rounded-xl border bg-slate-50 p-4 transition-colors duration-700 ${
+                      isHighlighted
+                        ? "border-emerald-400 bg-emerald-50"
+                        : "border-slate-300"
+                    }`}
                   >
-                    <div className="flex items-center gap-2 mb-2">
+                    <div className="mb-2 flex shrink-0 items-center gap-2">
                       <input
+                        ref={(el) => {
+                          if (el) labelInputRefs.current.set(group.id, el);
+                          else labelInputRefs.current.delete(group.id);
+                        }}
                         value={group.label}
                         onChange={(e) => updateLabel(group.id, e.target.value)}
                         placeholder={`묶음 ${idx + 1} 이름 (선택)`}
-                        className="flex-1 text-sm rounded-md border border-slate-300 px-2 py-1 bg-white focus:outline-none focus:ring-2 focus:ring-slate-400"
+                        className="min-w-0 flex-1 rounded-md border border-slate-300 bg-white px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400"
                       />
+                      <span className="shrink-0 text-xs text-slate-500">
+                        묶음 {idx + 1} · {items.length}개
+                      </span>
                       {groups.length > minGroups && (
                         <button
                           onClick={() => removeGroup(group.id)}
-                          className="text-slate-400 hover:text-red-500 text-xs"
+                          className="shrink-0 text-slate-400 hover:text-red-500 text-xs"
                           aria-label="묶음 삭제"
                         >
                           삭제
                         </button>
                       )}
                     </div>
-                    <div className="flex flex-col gap-2">
+                    <div className="flex flex-1 flex-col gap-2">
                       {items.map((s) => (
                         <Card
                           key={s.id}
@@ -651,13 +730,17 @@ export function SortBoard({
         </DragOverlay>
       </DndContext>
 
-      {error && (
-        <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-          {error}
-        </p>
-      )}
-
-      <div className="pt-4 border-t border-slate-200">
+      <div className="mt-3 shrink-0 border-t border-slate-200 pt-3">
+        {pooled.length > 0 && (
+          <p className="mb-2 text-xs text-amber-700">
+            미분류 진술문 {pooled.length}개 남음
+          </p>
+        )}
+        {error && (
+          <p className="mb-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+            {error}
+          </p>
+        )}
         <button
           onClick={handleSubmit}
           disabled={submitting}
