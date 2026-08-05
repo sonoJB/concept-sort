@@ -22,6 +22,13 @@ type Step = "name" | "consent" | "declined" | "demographics" | "sorting";
 
 const POOL_ID = "pool";
 
+// Shared verbatim so Tailwind's static scanner sees every class it needs to
+// generate. Applied to both the statement panel and every group column so
+// their outer widths always match exactly, on every screen size (no 2xl
+// widening for groups).
+const FIXED_PANEL_WIDTH =
+  "md:w-[280px] md:min-w-[280px] md:max-w-[280px] md:shrink-0";
+
 const CONSENT_BODY = `본 연구는 청소년이 인식한 사이버폭력 특징에 대한 개념을 탐색하는 연구입니다. 본 연구의 참여에 앞서 연구에 대한 설명과 동의서를 읽어 보십시오. 귀하의 서명은 연구에 대한 설명을 읽었으며 연구 참여에 동의하였다는 것을 의미합니다.
 
 1. 연구 목적
@@ -685,7 +692,7 @@ export function SortBoard({
             innerRef={(node) => {
               poolPanelRef.current = node;
             }}
-            className="flex flex-col rounded-xl border-2 border-dashed border-slate-300 md:w-[280px] md:shrink-0 md:min-h-0 md:overflow-hidden"
+            className={`flex flex-col rounded-xl border-2 border-dashed border-slate-300 md:min-h-0 md:overflow-hidden ${FIXED_PANEL_WIDTH}`}
           >
             <p className="shrink-0 px-4 pt-3 pb-2 text-xs font-medium text-slate-500">
               진술문 ({pooled.length}개 남음)
@@ -730,7 +737,7 @@ export function SortBoard({
                       if (node) groupWrapperRefs.current.set(group.id, node);
                       else groupWrapperRefs.current.delete(group.id);
                     }}
-                    className={`flex min-w-0 flex-col overflow-hidden rounded-xl border bg-slate-50 transition-colors duration-700 md:h-full md:w-[300px] md:shrink-0 md:self-stretch 2xl:w-[310px] ${
+                    className={`flex min-w-0 flex-col overflow-hidden rounded-xl border bg-slate-50 transition-colors duration-700 md:h-full md:self-stretch ${FIXED_PANEL_WIDTH} ${
                       isHighlighted
                         ? "border-emerald-400 bg-emerald-50"
                         : "border-slate-300"
