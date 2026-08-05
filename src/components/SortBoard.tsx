@@ -59,16 +59,14 @@ function Card({
           : undefined,
         touchAction: "none",
       }}
-      className={`flex min-w-0 select-none items-start gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm cursor-grab active:cursor-grabbing ${
+      className={`flex min-w-0 select-none items-start gap-2 rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-[13px] leading-5 shadow-xs cursor-grab active:cursor-grabbing ${
         isDragging ? "opacity-40" : ""
       }`}
     >
-      <span className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[11px] font-semibold text-slate-600">
+      <span className="mt-0.5 inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full bg-slate-100 text-[10px] font-semibold text-slate-600">
         {number}
       </span>
-      <span className="min-w-0 flex-1 break-words leading-relaxed">
-        {text}
-      </span>
+      <span className="min-w-0 flex-1 break-words leading-5">{text}</span>
     </div>
   );
 }
@@ -144,7 +142,6 @@ export function SortBoard({
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const nextGroupNumber = useRef(minGroups + 1);
 
   const [highlightedGroupId, setHighlightedGroupId] = useState<string | null>(
     null
@@ -152,6 +149,7 @@ export function SortBoard({
   const labelInputRefs = useRef<Map<string, HTMLInputElement>>(new Map());
   const groupWrapperRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const poolPanelRef = useRef<HTMLDivElement | null>(null);
+  const groupBoardRef = useRef<HTMLDivElement | null>(null);
   const pendingFocusIdRef = useRef<string | null>(null);
 
   const sensors = useSensors(
@@ -165,15 +163,71 @@ export function SortBoard({
 
   const pooled = statements.filter((s) => assignment[s.id] === null);
 
-  // Runs after a newly added group has mounted: scroll it into view and
-  // focus its label input. Only touches refs/the DOM, no setState here.
+  // Scrolls a group into view. On the desktop horizontal board, this moves
+  // only the board's own scrollLeft (never the page or the left panel); on
+  // mobile, where the board is a normal vertical stack (scrollWidth ===
+  // clientWidth, no horizontal overflow), it falls back to a plain
+  // scrollIntoView. `board` needs `position: relative` for `offsetLeft` to
+  // be measured relative to it rather than some other ancestor.
+  //
+  // `behavior: "smooth"` is driven by the compositor and, like
+  // requestAnimationFrame, silently never completes while the tab is
+  // backgrounded (document.visibilityState === "hidden") in most browsers
+  // — so that case scrolls instantly instead.
+  function scrollGroupIntoView(id: string) {
+    const board = groupBoardRef.current;
+    const group = groupWrapperRefs.current.get(id);
+    if (!group) return;
+
+    const behavior: ScrollBehavior =
+      typeof document !== "undefined" && document.visibilityState === "hidden"
+        ? "instant"
+        : "smooth";
+
+    if (board && board.scrollWidth > board.clientWidth) {
+      const targetLeft = group.offsetLeft - board.clientWidth + group.offsetWidth + 16;
+      board.scrollTo({ left: Math.max(0, targetLeft), behavior });
+    } else {
+      group.scrollIntoView({ behavior, block: "nearest" });
+    }
+  }
+
+  // Runs after a newly added group has mounted and settled into the board
+  // layout: scroll it into view, then focus its label input without
+  // scrolling again. Two rAFs ensure the flex layout (and thus the group's
+  // final position) has been computed before we scroll. Only touches
+  // refs/the DOM, no setState here.
+  //
+  // requestAnimationFrame never fires while the tab is backgrounded
+  // (document.visibilityState === "hidden") in most browsers, which would
+  // silently strand the scroll/focus indefinitely — so that case runs
+  // immediately instead of waiting on rAF.
   useEffect(() => {
     const id = pendingFocusIdRef.current;
     if (!id) return;
     pendingFocusIdRef.current = null;
-    const el = labelInputRefs.current.get(id);
-    el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    el?.focus();
+
+    const runFocus = () => {
+      scrollGroupIntoView(id);
+      labelInputRefs.current.get(id)?.focus({ preventScroll: true });
+    };
+
+    if (
+      typeof document !== "undefined" &&
+      document.visibilityState === "hidden"
+    ) {
+      runFocus();
+      return;
+    }
+
+    let raf2 = 0;
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(runFocus);
+    });
+    return () => {
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+    };
   }, [groups]);
 
   // Clears the highlight flash a moment after it's set.
@@ -184,8 +238,7 @@ export function SortBoard({
   }, [highlightedGroupId]);
 
   function flashGroup(groupId: string) {
-    const el = groupWrapperRefs.current.get(groupId);
-    el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    scrollGroupIntoView(groupId);
     setHighlightedGroupId(groupId);
   }
 
@@ -219,9 +272,13 @@ export function SortBoard({
   }
 
   function addGroup() {
+    // Precomputed outside the updater (not a counter mutated inside it) so
+    // the updater stays pure: React (Strict Mode in dev, and potentially
+    // other internals) may invoke it more than once for the same prev
+    // state, and every invocation must produce the same result.
+    const id = crypto.randomUUID();
     setGroups((prev) => {
       if (prev.length >= maxGroups) return prev;
-      const id = `g${nextGroupNumber.current++}`;
       pendingFocusIdRef.current = id;
       setHighlightedGroupId(id);
       return [...prev, { id, label: "" }];
@@ -587,7 +644,7 @@ export function SortBoard({
   const active = activeId ? statementById.get(activeId) : undefined;
 
   return (
-    <div className="mx-auto flex w-full max-w-[1600px] flex-col px-4 py-4 md:h-dvh md:overflow-hidden">
+    <div className="mx-auto flex w-full max-w-none flex-col px-3 py-3 md:h-dvh md:overflow-hidden">
       <div className="shrink-0">
         <h1 className="text-xl font-bold">{title}</h1>
       </div>
@@ -622,13 +679,13 @@ export function SortBoard({
         onDragEnd={handleDragEnd}
         autoScroll={{ enabled: true }}
       >
-        <div className="mt-3 flex flex-col gap-4 md:mt-4 md:min-h-0 md:flex-1 md:flex-row md:gap-6 md:overflow-hidden">
+        <div className="mt-3 flex flex-col gap-4 md:mt-4 md:min-h-0 md:flex-1 md:flex-row md:gap-4 md:overflow-hidden">
           <DropZone
             id={POOL_ID}
             innerRef={(node) => {
               poolPanelRef.current = node;
             }}
-            className="flex flex-col rounded-xl border-2 border-dashed border-slate-300 md:w-[340px] md:shrink-0 md:min-h-0 md:overflow-hidden"
+            className="flex flex-col rounded-xl border-2 border-dashed border-slate-300 md:w-[280px] md:shrink-0 md:min-h-0 md:overflow-hidden"
           >
             <p className="shrink-0 px-4 pt-3 pb-2 text-xs font-medium text-slate-500">
               진술문 ({pooled.length}개 남음)
@@ -651,16 +708,15 @@ export function SortBoard({
                 묶음 ({groups.length}개 / 최소 {minGroups}개, 최대 {maxGroups}
                 개)
               </p>
-              <button
-                onClick={addGroup}
-                disabled={groups.length >= maxGroups}
-                className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium hover:bg-slate-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                + 새 묶음
-              </button>
+              <p className="hidden text-xs text-slate-400 md:inline">
+                묶음은 좌우로 스크롤하여 확인할 수 있습니다.
+              </p>
             </div>
 
-            <div className="grid grid-cols-1 content-start gap-4 xl:grid-cols-2 md:min-h-0 md:flex-1 md:overflow-y-auto md:overscroll-contain md:pr-1 md:pb-2">
+            <div
+              ref={groupBoardRef}
+              className="relative flex flex-col gap-3 md:min-h-0 md:flex-1 md:flex-row md:flex-nowrap md:items-stretch md:gap-3 md:overflow-x-auto md:overflow-y-hidden md:overscroll-x-contain md:pb-2 md:pr-2 [scrollbar-gutter:stable] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-300"
+            >
               {groups.map((group, idx) => {
                 const items = statements.filter(
                   (s) => assignment[s.id] === group.id
@@ -674,13 +730,13 @@ export function SortBoard({
                       if (node) groupWrapperRefs.current.set(group.id, node);
                       else groupWrapperRefs.current.delete(group.id);
                     }}
-                    className={`flex min-h-[140px] flex-col rounded-xl border bg-slate-50 p-4 transition-colors duration-700 ${
+                    className={`flex min-w-0 flex-col overflow-hidden rounded-xl border bg-slate-50 transition-colors duration-700 md:h-full md:w-[300px] md:shrink-0 md:self-stretch 2xl:w-[310px] ${
                       isHighlighted
                         ? "border-emerald-400 bg-emerald-50"
                         : "border-slate-300"
                     }`}
                   >
-                    <div className="mb-2 flex shrink-0 items-center gap-2">
+                    <div className="flex shrink-0 items-center gap-1.5 px-3 pt-3 pb-2">
                       <input
                         ref={(el) => {
                           if (el) labelInputRefs.current.set(group.id, el);
@@ -689,22 +745,22 @@ export function SortBoard({
                         value={group.label}
                         onChange={(e) => updateLabel(group.id, e.target.value)}
                         placeholder={`묶음 ${idx + 1} 이름 (선택)`}
-                        className="min-w-0 flex-1 rounded-md border border-slate-300 bg-white px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400"
+                        className="min-w-0 flex-1 rounded-md border border-slate-300 bg-white px-2 py-1.5 text-[13px] focus:outline-none focus:ring-2 focus:ring-slate-400"
                       />
-                      <span className="shrink-0 text-xs text-slate-500">
-                        묶음 {idx + 1} · {items.length}개
+                      <span className="shrink-0 whitespace-nowrap text-[11px] text-slate-500">
+                        {idx + 1} · {items.length}개
                       </span>
                       {groups.length > minGroups && (
                         <button
                           onClick={() => removeGroup(group.id)}
-                          className="shrink-0 text-slate-400 hover:text-red-500 text-xs"
+                          className="shrink-0 px-1 py-0.5 text-xs text-slate-400 hover:text-red-500"
                           aria-label="묶음 삭제"
                         >
                           삭제
                         </button>
                       )}
                     </div>
-                    <div className="flex flex-1 flex-col gap-2">
+                    <div className="flex min-h-[64px] min-w-0 flex-col gap-1.5 px-2.5 pb-3 md:min-h-0 md:flex-1 md:overflow-y-auto md:overscroll-y-contain md:pr-2 md:[scrollbar-gutter:stable] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-300">
                       {items.map((s) => (
                         <Card
                           key={s.id}
@@ -717,6 +773,14 @@ export function SortBoard({
                   </DropZone>
                 );
               })}
+
+              <button
+                onClick={addGroup}
+                disabled={groups.length >= maxGroups}
+                className="flex h-11 w-full shrink-0 items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 text-sm font-medium text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed md:w-[180px] md:self-start"
+              >
+                + 새 묶음
+              </button>
             </div>
           </div>
         </div>
