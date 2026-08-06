@@ -38,29 +38,31 @@ name: Concept Analysis Cross-Validation
 # fcluster(criterion="maxclust"), which does not guarantee exactly k
 # clusters. Final verification status: FAILED. Push trigger removed after.
 #
-# TEMPORARY (attempt 4): the same one-shot, path-restricted push trigger is
-# re-added below to fix the attempt-3 findings and add diagnostics: (1)
-# ci_r.R's matrix conversion now infers each input's actual shape instead of
-# assuming square, with explicit validation; (2) ci_python.py's Ward exact-k
-# partitions now use scipy.cluster.hierarchy.cut_tree instead of
-# fcluster(criterion="maxclust"); (3) a second Python job runs a current
-# scikit-learn version (1.9.0) as the primary/gating reference, alongside
-# the original 1.5.1 pin kept as a legacy diagnostic-only comparison; (4)
-# disparity values, distinct stress-definition breakdowns (rss,
-# sumSquaredDistances, sumSquaredDisparities, both Stress-1 denominator
-# conventions), and fixed-iteration snapshots (1/2/5/10/19 iterations from
-# the shared init, eps=0 to discourage early convergence) are now reported
-# by TS/Python/R for the zeroFree fixture. No statistical algorithm code
-# (src/lib/conceptAnalysis/**) was touched. Removed again in a follow-up
-# commit ("Restore manual-only workflow after fourth validation attempt")
-# right after this run.
+# Attempt 4 (run 31109702124) reused that same temporary trigger with (1)
+# ci_r.R's matrix conversion fixed (infers each input's actual shape instead
+# of assuming square) — R now runs successfully end to end; (2)
+# ci_python.py's Ward exact-k partitions switched to
+# scipy.cluster.hierarchy.cut_tree — Ward-Linkage, Ward-Partition (python),
+# and Ward (r) all PASSED, confirming Ward is fully correct across all three
+# implementations; (3) a current scikit-learn (1.9.0) job as the primary
+# reference plus the original 1.5.1 pin as a legacy diagnostic-only
+# comparison. SMACOF itself still FAILED all three required checks, but with
+# a very different, better-understood signature than attempt 3: stress
+# values now match TS to ~1e-9 (both converge to the same objective value),
+# while pairwise distances differ by a large, CONSTANT scale factor —
+# consistent with Kruskal Stress-1 being scale-invariant (multiple
+# same-shape, different-scale configurations can be equally optimal).
+# Fixed-iteration snapshots showed iteration 0 (raw init) is byte-identical
+# across TS/Python/R, but iteration 1 already diverges — pointing at the
+# disparity-fitting step (this fixture has exact ties in dissimilarity
+# despite its "zeroFree" name only guaranteeing no off-diagonal zeros) as
+# the most likely first divergence point, not a convergence-criterion or
+# update-formula bug. No statistical algorithm code
+# (src/lib/conceptAnalysis/**) was touched. Final verification status:
+# FAILED (not VERIFIED). The push trigger is removed again here, restoring
+# manual-only dispatch.
 on:
   workflow_dispatch: {}
-  push:
-    branches:
-      - feature/concept-map-analysis-prototype
-    paths:
-      - analysis-prototype/ci-trigger.txt
 
 permissions:
   contents: read
