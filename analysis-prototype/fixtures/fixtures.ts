@@ -59,6 +59,24 @@ export const fixtureF_allEqual_dissimilarity: Matrix = [
   [0.4, 0.4, 0.4, 0],
 ];
 
+// ---- G. strictNoTies: 5-point, every i<j dissimilarity value is distinct ----
+// Added for cross-language SMACOF diagnostics (attempt 5): the "zeroFree"
+// MDS fixture used for the main cross-validation comparison has plenty of
+// off-diagonal ZEROS excluded (hence the name) but is NOT tie-free — it has
+// exact repeated dissimilarity values (four pairs at 1, two at sqrt(2)).
+// strictNoTies has 10 pairwise values, all pairwise-distinct, so any
+// cross-language disparity/distance divergence observed here CANNOT be
+// attributed to tie-handling differences — isolating that variable from
+// disparity-normalization and Guttman-update differences. Synthetic,
+// neutral values only — no production/rrrvvnux content, no participant PII.
+export const fixtureG_strictNoTies_dissimilarity: Matrix = [
+  [0, 1.1, 2.3, 1.7, 2.9],
+  [1.1, 0, 1.3, 2.1, 1.9],
+  [2.3, 1.3, 0, 2.7, 1.5],
+  [1.7, 2.1, 2.7, 0, 2.5],
+  [2.9, 1.9, 1.5, 2.5, 0],
+];
+
 // ---- G. 8 statements, synthetic participants for KR/JP/ALL scope tests ----
 export const fixtureG_project: FixtureProject = {
   projectKey: "proto-fixture-g",

@@ -59,10 +59,28 @@ name: Concept Analysis Cross-Validation
 # the most likely first divergence point, not a convergence-criterion or
 # update-formula bug. No statistical algorithm code
 # (src/lib/conceptAnalysis/**) was touched. Final verification status:
-# FAILED (not VERIFIED). The push trigger is removed again here, restoring
+# FAILED (not VERIFIED). The push trigger was removed after, restoring
 # manual-only dispatch.
+#
+# TEMPORARY (attempt 5): the same one-shot, path-restricted push trigger is
+# re-added below for a diagnostic-only round (no VERIFIED-gating logic
+# loosened): a new tie-free "strictNoTies" fixture isolates tie-handling
+# from disparity-normalization/scale questions; TS/Python/R all now report
+# pairKey-labeled disparities, tie-block groupings, and disparity
+# normalization metadata (targetNormQ vs actual sum-of-squares); the
+# comparator adds scale-equivalence classification (RAW_SCALE_EXACT /
+# SCALE_EQUIVALENT / SHAPE_DIFFERENT) via best-fit-scale, canonical
+# q-rescaling, and 2D rigid/similarity Procrustes analysis, ADDITIVE to the
+# existing raw comparisons (nothing removed, no tolerance loosened).
+# Removed again in a follow-up commit ("Restore manual-only workflow after
+# fifth validation attempt") right after this run.
 on:
   workflow_dispatch: {}
+  push:
+    branches:
+      - feature/concept-map-analysis-prototype
+    paths:
+      - analysis-prototype/ci-trigger.txt
 
 permissions:
   contents: read
@@ -129,10 +147,13 @@ jobs:
           mkdir -p artifacts/inputs
           npx -y tsx analysis-prototype/scripts/exportFixtures.ts artifacts/inputs/fixtures.json
 
-      - name: Run TypeScript reference (shared-init SMACOF, Ward, dimension diagnostics)
+      - name: Export diagnostic fixtures (strictNoTies)
+        run: npx -y tsx analysis-prototype/scripts/exportDiagnosticFixtures.ts artifacts/inputs/diagnostic-fixtures.json
+
+      - name: Run TypeScript reference (shared-init SMACOF, Ward, dimension diagnostics, diagnostic fixtures)
         run: |
           mkdir -p artifacts/typescript
-          npx -y tsx analysis-prototype/scripts/runTsReference.ts artifacts/inputs/fixtures.json artifacts/typescript
+          npx -y tsx analysis-prototype/scripts/runTsReference.ts artifacts/inputs/fixtures.json artifacts/typescript artifacts/inputs/diagnostic-fixtures.json
 
       - name: Upload node-reference-inputs artifact
         uses: actions/upload-artifact@v4
@@ -167,7 +188,7 @@ jobs:
       - name: Run Python reference (current)
         run: |
           mkdir -p artifacts/python
-          python analysis-prototype/reference/ci_python.py downloaded/inputs/fixtures.json artifacts/python --label current
+          python analysis-prototype/reference/ci_python.py downloaded/inputs/fixtures.json artifacts/python --label current --diagnostic-fixtures downloaded/inputs/diagnostic-fixtures.json
 
       - name: Upload python-reference-current artifact
         uses: actions/upload-artifact@v4
@@ -205,7 +226,7 @@ jobs:
       - name: Run Python reference (legacy)
         run: |
           mkdir -p artifacts/python
-          python analysis-prototype/reference/ci_python.py downloaded/inputs/fixtures.json artifacts/python --label legacy
+          python analysis-prototype/reference/ci_python.py downloaded/inputs/fixtures.json artifacts/python --label legacy --diagnostic-fixtures downloaded/inputs/diagnostic-fixtures.json
 
       - name: Upload python-reference-legacy artifact
         uses: actions/upload-artifact@v4
@@ -258,7 +279,7 @@ jobs:
       - name: Run R reference
         run: |
           mkdir -p artifacts/r
-          Rscript analysis-prototype/reference/ci_r.R downloaded/inputs/fixtures.json artifacts/r
+          Rscript analysis-prototype/reference/ci_r.R downloaded/inputs/fixtures.json artifacts/r downloaded/inputs/diagnostic-fixtures.json
 
       - name: Upload r-reference artifact
         uses: actions/upload-artifact@v4

@@ -1,17 +1,19 @@
 """
 CI-executed Python reference runner. Reads the shared fixtures JSON
-(exportFixtures.ts output) and produces python-smacof-results.json /
-python-ward-results.json / python-version-metadata.json for
+(exportFixtures.ts output) and an optional diagnostic fixtures JSON
+(exportDiagnosticFixtures.ts output — strictNoTies), and produces
+python-smacof-results.json / python-ward-results.json /
+python-version-metadata.json / python-diagnostic-smacof-results.json for
 compareReferences.ts to consume.
 
 Pinned dependencies are recorded in python-version-metadata.json at runtime
 (the actual resolved versions, not just what was requested) rather than only
-in the workflow file, since attempt 4 runs this same script against two
-different scikit-learn version pins in two separate jobs (current vs
-legacy) — see --label below.
+in the workflow file, since this script runs against two different
+scikit-learn version pins in two separate jobs (current vs legacy) — see
+--label below.
 
 Usage:
-  python ci_python.py <fixtures.json> <output-dir> [--label current|legacy]
+  python ci_python.py <fixtures.json> <output-dir> [--label current|legacy] [--diagnostic-fixtures <path>]
 
 IMPORTANT, documented here rather than silently assumed:
 - sklearn.manifold.smacof's public signature does not accept a per-pair
@@ -25,15 +27,25 @@ IMPORTANT, documented here rather than silently assumed:
   instructions, the offDiagonalZero fixture is NOT run through sklearn at
   all — this is recorded explicitly in the metadata output, not silently
   skipped.
+- Attempt-5 correction: sklearn.isotonic.IsotonicRegression DOES perform
+  proper tie handling (ties in x share one fitted y, matching the
+  "secondary" convention by construction) — this script's own
+  stress_breakdown() recompute below now explicitly pools ties in the
+  dissimilarity RANK KEY before calling IsotonicRegression, using x=pooled
+  tie-block index rather than x=arange(n_pairs), so tied dissimilarities are
+  guaranteed to receive one shared fitted disparity (matching isotonic.ts's
+  isotonicRegressionByRank behavior) rather than being silently broken by
+  Python's sort-stability. This does NOT change how sklearn's own internal
+  smacof() computes disparities during majorization — that remains sklearn's
+  own implementation, inspected read-only below (see
+  inspect_sklearn_smacof_source) rather than assumed.
 - This script independently RECOMPUTES stress from sklearn's returned
-  embedding using this project's own formulas (isotonic fit via
-  sklearn.isotonic.IsotonicRegression, weighted, on the same
-  ascending-dissimilarity-rank ordering used in isotonic.ts), rather than
-  trusting sklearn's own internally-reported stress value to already be in
-  the same normalization convention. All of rss / sumSquaredDistances /
-  sumSquaredDisparities / both stress-1 denominator variants /
-  sklearn's own reported stress are reported side by side under distinct
-  names — never conflated.
+  embedding using this project's own formulas, rather than trusting
+  sklearn's own internally-reported stress value to already be in the same
+  normalization convention. All of rss / sumSquaredDistances /
+  sumSquaredDisparities / both stress-1 denominator variants / sklearn's own
+  reported stress / disparity-normalization metadata are reported side by
+  side under distinct names — never conflated.
 """
 import argparse
 import hashlib
@@ -52,11 +64,13 @@ parser = argparse.ArgumentParser()
 parser.add_argument("fixtures_path")
 parser.add_argument("output_dir")
 parser.add_argument("--label", default="current", choices=["current", "legacy"])
+parser.add_argument("--diagnostic-fixtures", default=None)
 args = parser.parse_args()
 
 fixtures_path = args.fixtures_path
 output_dir = args.output_dir
 version_label = args.label
+diagnostic_fixtures_path = args.diagnostic_fixtures
 
 with open(fixtures_path, "r", encoding="utf-8") as f:
     fixtures = json.load(f)
@@ -105,36 +119,55 @@ def active_pairs(n, weight=None):
 
 def stress_breakdown(dissimilarity, distance, n):
     """Independently computes every stress-related quantity this project's
-    stress.ts distinguishes by name, using this project's own formulas
-    (weighted isotonic regression on ascending-dissimilarity rank, secondary
-    tie handling via sklearn.isotonic.IsotonicRegression which pools ties by
-    construction when x-values repeat). Uniform weight=1 is assumed here
-    (this function is only called on fixtures run through sklearn, which
-    excludes the weighted/off-diagonal-zero fixtures already).
+    stress.ts distinguishes by name.
 
-    Returns a dict with distinctly-named fields:
-      rss                        = sum w_ij (disparity_ij - distance_ij)^2
-      sumSquaredDistances         = sum w_ij distance_ij^2
-      sumSquaredDisparities       = sum w_ij disparity_ij^2
-      stress1DistanceDenominator  = sqrt(rss / sumSquaredDistances)   -- this
-                                     project's normalizedStress1 definition
-      stress1DisparityDenominator = sqrt(rss / sumSquaredDisparities) -- an
-                                     alternative denominator convention some
-                                     libraries use; reported for comparison,
-                                     never written into normalizedStress1
-      disparities                 = list of {i, j, dissimilarity, disparity}
-                                     in pair order (i<j, row-major)
+    Tie handling (attempt-5 fix): dissimilarity values are pooled into tie
+    blocks (values within 1e-9 of each other) BEFORE isotonic regression, and
+    IsotonicRegression is fit on x=block_index (one x per DISTINCT
+    dissimilarity value, weighted by block size) rather than x=arange(n) —
+    this mirrors isotonic.ts's isotonicRegressionByRank secondary-tie
+    behavior: every pair sharing a dissimilarity value receives one shared
+    fitted disparity, not an artifact of sort-order stability.
+
+    Returns a dict with distinctly-named fields (see module docstring):
+      rss, sumSquaredDistances, sumSquaredDisparities,
+      stress1DistanceDenominator, stress1DisparityDenominator,
+      disparities (list of {pairKey, i, j, dissimilarity, disparity,
+      configurationDistance}), activePairCount, targetNormQ,
+      preNormalizationDisparitySumSquares,
+      postNormalizationDisparitySumSquares, disparityNormalizationApplied
+      (always False here — this recompute never rescales; sklearn's OWN
+      internal normalization, if any, is inspected separately via
+      inspect_sklearn_smacof_source, not replicated here).
     """
     pairs = active_pairs(n)
     sorted_pairs = sorted(pairs, key=lambda p: dissimilarity[p[0]][p[1]])
-    y = np.array([distance[i][j] for i, j in sorted_pairs])
-    x = np.arange(len(sorted_pairs))
+
+    # Pool exact ties in the dissimilarity rank key into blocks.
+    tie_eps = 1e-9
+    block_of_pair = {}
+    block_targets = []
+    block_weights = []
+    for (i, j) in sorted_pairs:
+        d_val = dissimilarity[i][j]
+        if block_targets and abs(block_targets[-1][0] - d_val) <= tie_eps:
+            block_idx = len(block_targets) - 1
+        else:
+            block_targets.append((d_val, []))
+            block_idx = len(block_targets) - 1
+            block_weights.append(0)
+        block_targets[block_idx][1].append(distance[i][j])
+        block_weights[block_idx] += 1
+        block_of_pair[(i, j)] = block_idx
+
+    block_means = np.array([np.mean(vals) for _, vals in block_targets])
+    x = np.arange(len(block_means))
     ir = IsotonicRegression(increasing=True)
-    disparity_sorted = ir.fit_transform(x, y)
+    fitted_blocks = ir.fit_transform(x, block_means, sample_weight=np.array(block_weights))
 
     disparity_by_pair = {}
-    for (i, j), d_hat in zip(sorted_pairs, disparity_sorted):
-        disparity_by_pair[(i, j)] = float(d_hat)
+    for (i, j) in pairs:
+        disparity_by_pair[(i, j)] = float(fitted_blocks[block_of_pair[(i, j)]])
 
     rss = 0.0
     sum_sq_dist = 0.0
@@ -146,7 +179,14 @@ def stress_breakdown(dissimilarity, distance, n):
         rss += (d_hat - d_ij) ** 2
         sum_sq_dist += d_ij ** 2
         sum_sq_disp += d_hat ** 2
-        disparities_out.append({"i": i, "j": j, "dissimilarity": float(dissimilarity[i][j]), "disparity": d_hat})
+        disparities_out.append({
+            "pairKey": f"{i}-{j}",
+            "i": i,
+            "j": j,
+            "dissimilarity": float(dissimilarity[i][j]),
+            "disparity": d_hat,
+            "configurationDistance": float(d_ij),
+        })
 
     stress1_distance_denom = float(np.sqrt(rss / sum_sq_dist)) if sum_sq_dist > 0 else None
     stress1_disparity_denom = float(np.sqrt(rss / sum_sq_disp)) if sum_sq_disp > 0 else None
@@ -159,14 +199,52 @@ def stress_breakdown(dissimilarity, distance, n):
         "stress1DisparityDenominator": stress1_disparity_denom,
         "disparities": disparities_out,
         "activePairCount": len(pairs),
+        "targetNormQ": len(pairs),
+        "preNormalizationDisparitySumSquares": float(sum_sq_disp),
+        "postNormalizationDisparitySumSquares": float(sum_sq_disp),
+        "disparityNormalizationApplied": False,
     }
 
 
-def inspect_sklearn_convergence_source():
+def compute_tie_blocks(disparities, tie_eps=1e-9):
+    """Groups this recompute's active pairs by (near-)equal dissimilarity —
+    for direct tie-block comparison against TS's ts-tie-blocks.json.
+    """
+    sorted_d = sorted(disparities, key=lambda d: d["dissimilarity"])
+    blocks = []
+    for d in sorted_d:
+        if blocks and abs(blocks[-1]["dissimilarity"] - d["dissimilarity"]) <= tie_eps:
+            blocks[-1]["pairKeys"].append(d["pairKey"])
+            blocks[-1]["disparityValues"].append(d["disparity"])
+            blocks[-1]["configurationDistances"].append(d["configurationDistance"])
+        else:
+            blocks.append({
+                "dissimilarity": d["dissimilarity"],
+                "pairKeys": [d["pairKey"]],
+                "disparityValues": [d["disparity"]],
+                "configurationDistances": [d["configurationDistance"]],
+            })
+    out = []
+    for idx, b in enumerate(blocks):
+        out.append({
+            "tieBlockId": idx,
+            "dissimilarity": b["dissimilarity"],
+            "pairKeys": b["pairKeys"],
+            "blockSize": len(b["pairKeys"]),
+            "meanConfigurationDistance": float(np.mean(b["configurationDistances"])),
+            "disparityValues": b["disparityValues"],
+            "disparityIsUniformWithinBlock": (max(b["disparityValues"]) - min(b["disparityValues"])) <= 1e-9,
+            "fittedDisparity": b["disparityValues"][0],
+        })
+    return out
+
+
+def inspect_sklearn_smacof_source():
     """Read-only inspection of the installed sklearn._mds module: records
     the file's version, a content hash (so a specific inspected file is
-    traceable), and the exact source line(s) implementing the convergence
-    check, WITHOUT calling any private function or monkey-patching anything.
+    traceable), and the exact source line(s) implementing (a) the
+    convergence check and (b) any disparity-normalization step, WITHOUT
+    calling any private function or monkey-patching anything.
     """
     try:
         from sklearn.manifold import _mds as mds_module
@@ -177,46 +255,46 @@ def inspect_sklearn_convergence_source():
         file_hash = hashlib.sha256(source_text.encode("utf-8")).hexdigest()
 
         convergence_lines = []
+        normalization_lines = []
         for lineno, line in enumerate(source_text.splitlines(), start=1):
             stripped = line.strip()
             if "eps" in stripped and ("stress" in stripped.lower() or "old_stress" in stripped or "<" in stripped or "break" in stripped):
                 convergence_lines.append({"line": lineno, "text": stripped})
+            if "disparities" in stripped and ("sqrt" in stripped or "*=" in stripped or "normalize" in stripped.lower()):
+                normalization_lines.append({"line": lineno, "text": stripped})
 
         return {
             "sourceFile": source_file,
             "sourceFileSha256": file_hash,
             "convergenceRelatedLines": convergence_lines[:20],
+            "disparityNormalizationRelatedLines": normalization_lines[:20],
         }
     except Exception as e:  # noqa: BLE001 - diagnostic best-effort, must not crash the run
         return {"error": str(e)}
 
 
-smacof_results = {}
-skipped = {}
-snapshots = {}
-
 SNAPSHOT_ITERS = [1, 2, 5, 10, 19]
 
-for key, fx in fixtures["mds"].items():
+
+def run_smacof_on_fixture(key, fx, snapshot_keys):
+    """Runs sklearn's smacof() on one fixture and returns (result_dict,
+    tie_blocks, snapshots_dict_or_None, skip_reason_or_None). Shared between
+    the main fixtures.json loop and the diagnostic fixtures loop.
+    """
     if key in ("ties", "offDiagonalZero"):
-        skipped[key] = (
+        return None, None, None, (
             "Excluded from sklearn comparison: sklearn.manifold.smacof's public API "
             "has no per-pair weight matrix and no independently-confirmed tie-handling "
             "convention matching this project's 'secondary' approach; off-diagonal "
             "dissimilarity=0 handling is not independently confirmed safe either. "
             "See ci_python.py module docstring."
         )
-        continue
 
     dissimilarity = np.array(fx["dissimilarity"])
     init = np.array(fx["initialCoordinates"])
     n = dissimilarity.shape[0]
     n_components = fx["dimension"]
 
-    # sklearn's public smacof() expects init shaped (n_samples, n_components)
-    # directly — a plain 2D array. No reshape here; validate instead of
-    # coercing, so a genuine shape mismatch surfaces as a clear error rather
-    # than being silently "fixed" into some other unintended shape.
     validate_init_shape(init, dissimilarity, n_components)
 
     try:
@@ -233,9 +311,6 @@ for key, fx in fixtures["mds"].items():
             return_n_iter=True,
         )
     except TypeError:
-        # Older sklearn without normalized_stress kwarg — retry without it,
-        # and record that sklearn's own stress value in that case is its
-        # legacy (non-normalized) convention, not necessarily Stress-1.
         embedding, sklearn_stress, n_iter = smacof(
             dissimilarity,
             metric=False,
@@ -251,35 +326,23 @@ for key, fx in fixtures["mds"].items():
     distance = pairwise_distance(embedding)
     breakdown = stress_breakdown(dissimilarity, distance, n)
 
-    smacof_results[key] = {
+    result = {
         "coordinates": embedding.tolist(),
         "pairwiseDistance": distance.tolist(),
         "sklearnReportedStress": float(sklearn_stress),
         "recomputedRawStress": breakdown["rss"],
         "recomputedNormalizedStress1": breakdown["stress1DistanceDenominator"],
-        "rss": breakdown["rss"],
-        "sumSquaredDistances": breakdown["sumSquaredDistances"],
-        "sumSquaredDisparities": breakdown["sumSquaredDisparities"],
-        "stress1DistanceDenominator": breakdown["stress1DistanceDenominator"],
-        "stress1DisparityDenominator": breakdown["stress1DisparityDenominator"],
-        "disparities": breakdown["disparities"],
-        "activePairCount": breakdown["activePairCount"],
         "nIter": int(n_iter),
         "initShape": list(init.shape),
+        **breakdown,
     }
+    tie_blocks = compute_tie_blocks(breakdown["disparities"])
 
-    # ---- Fixed-iteration diagnostics (zeroFree only, to bound runtime) ----
-    # eps=0 is the public, documented parameter used to discourage
-    # early-convergence stopping so the state after exactly N iterations can
-    # be observed. sklearn's smacof() may still stop earlier than max_iter
-    # for reasons unrelated to eps (e.g. a stress-non-decrease guard); if
-    # the returned n_iter is less than the requested snapshot iteration
-    # count, that is recorded explicitly via "iterationsRun" rather than
-    # assumed to equal the request.
-    if key == "zeroFree":
-        snap_list = {}
+    snapshots = None
+    if key in snapshot_keys:
         iteration0_distance = pairwise_distance(init)
         iteration0_breakdown = stress_breakdown(dissimilarity, iteration0_distance, n)
+        snap_list = {}
         for iter_count in SNAPSHOT_ITERS:
             snap_embedding, snap_stress, snap_n_iter = smacof(
                 dissimilarity,
@@ -299,24 +362,62 @@ for key, fx in fixtures["mds"].items():
                 "iterationsRun": int(snap_n_iter),
                 "coordinates": snap_embedding.tolist(),
                 "pairwiseDistance": snap_distance.tolist(),
-                "rss": snap_breakdown["rss"],
-                "stress1DistanceDenominator": snap_breakdown["stress1DistanceDenominator"],
-                "stress1DisparityDenominator": snap_breakdown["stress1DisparityDenominator"],
                 "libraryReportedStress": float(snap_stress),
+                **snap_breakdown,
             }
-        snapshots[key] = {
+        snapshots = {
             "iteration0": {
-                "note": "Raw init (pre-iteration), computed directly — not a smacof() call.",
+                "note": "S0_INITIAL_CONFIGURATION: raw init, before any disparity fit or Guttman update.",
                 "coordinates": init.tolist(),
                 "pairwiseDistance": iteration0_distance.tolist(),
-                "rss": iteration0_breakdown["rss"],
-                "stress1DistanceDenominator": iteration0_breakdown["stress1DistanceDenominator"],
+                **iteration0_breakdown,
+            },
+            "s1InitialDisparity": {
+                "note": "S1_INITIAL_DISPARITY: isotonic fit (tie-pooled) of S0's distances against the dissimilarity ranking.",
+                **iteration0_breakdown,
             },
             "snapshots": snap_list,
         }
 
+    return result, tie_blocks, snapshots, None
+
+
+def process_fixture_set(mds_fixtures, snapshot_keys):
+    results = {}
+    tie_blocks_by_fixture = {}
+    snapshots_by_fixture = {}
+    skipped = {}
+    for key, fx in mds_fixtures.items():
+        result, tie_blocks, snapshots, skip_reason = run_smacof_on_fixture(key, fx, snapshot_keys)
+        if skip_reason:
+            skipped[key] = skip_reason
+            continue
+        results[key] = result
+        tie_blocks_by_fixture[key] = tie_blocks
+        if snapshots:
+            snapshots_by_fixture[key] = snapshots
+    return results, tie_blocks_by_fixture, snapshots_by_fixture, skipped
+
+
+# ---- Main fixtures ----
+smacof_results, tie_blocks, snapshots, skipped = process_fixture_set(fixtures["mds"], {"zeroFree"})
+
 with open(f"{output_dir}/python-smacof-results.json", "w", encoding="utf-8") as f:
     json.dump({"results": smacof_results, "skipped": skipped, "snapshots": snapshots, "versionLabel": version_label}, f, indent=2)
+with open(f"{output_dir}/python-tie-blocks.json", "w", encoding="utf-8") as f:
+    json.dump(tie_blocks, f, indent=2)
+
+# ---- Diagnostic fixtures (strictNoTies), if provided ----
+if diagnostic_fixtures_path:
+    with open(diagnostic_fixtures_path, "r", encoding="utf-8") as f:
+        diagnostic_fixtures = json.load(f)
+    diag_results, diag_tie_blocks, diag_snapshots, diag_skipped = process_fixture_set(
+        diagnostic_fixtures["mds"], set(diagnostic_fixtures["mds"].keys())
+    )
+    with open(f"{output_dir}/python-diagnostic-smacof-results.json", "w", encoding="utf-8") as f:
+        json.dump({"results": diag_results, "skipped": diag_skipped, "snapshots": diag_snapshots, "versionLabel": version_label}, f, indent=2)
+    with open(f"{output_dir}/python-diagnostic-tie-blocks.json", "w", encoding="utf-8") as f:
+        json.dump(diag_tie_blocks, f, indent=2)
 
 # ---- Ward via SciPy ----
 ward_points = np.array(fixtures["ward"]["tieFree"]["points"])
@@ -362,7 +463,7 @@ with open(f"{output_dir}/python-ward-results.json", "w", encoding="utf-8") as f:
         indent=2,
     )
 
-sklearn_source_inspection = inspect_sklearn_convergence_source()
+sklearn_source_inspection = inspect_sklearn_smacof_source()
 
 with open(f"{output_dir}/python-version-metadata.json", "w", encoding="utf-8") as f:
     json.dump(
@@ -372,7 +473,7 @@ with open(f"{output_dir}/python-version-metadata.json", "w", encoding="utf-8") a
             "numpyVersion": np.__version__,
             "scipyVersion": scipy.__version__,
             "scikitLearnVersion": sklearn.__version__,
-            "sklearnConvergenceSourceInspection": sklearn_source_inspection,
+            "sklearnSmacofSourceInspection": sklearn_source_inspection,
         },
         f,
         indent=2,

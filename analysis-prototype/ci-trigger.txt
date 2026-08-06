@@ -1,7 +1,5 @@
 concept-analysis-cross-validation
-previous-run-id: 31106809126
+previous-run-id: 31109702124
 previous-status: FAILED
-attempt: 4
-r-fix: robust-json-matrix-conversion
-ward-fix: scipy-cut-tree-exact-k
-smacof-diagnostic: current-and-legacy-reference
+attempt: 5
+diagnostic: disparity-normalization-and-scale-equivalence
