@@ -12,13 +12,25 @@ name: Concept Analysis Cross-Validation
 # branch" solely so GitHub Actions could discover this workflow at all
 # (workflow_dispatch-only workflows on a non-default branch are invisible to
 # the dispatch API — GET .../actions/workflows returned total_count: 0
-# before that commit). That run failed at the `npm ci` / `prisma generate`
-# environment step (DATABASE_URL required by prisma.config.ts, which this
-# workflow must not set) before any statistical comparison ran — see
-# analysis-prototype/results/ for the reported NOT_RUN outcome. This commit
-# removes the push trigger again per the original one-shot intent.
+# before that commit). That first attempt (run 31102381986) failed at the
+# `npm ci` / `prisma generate` environment step (DATABASE_URL required by
+# prisma.config.ts, which this workflow must not set) before any
+# statistical comparison ran, and the trigger was removed afterward.
+#
+# TEMPORARY (attempt 2): the same one-shot, path-restricted push trigger is
+# re-added below, now that `npm ci` has been changed to
+# `npm ci --ignore-scripts` (this prototype never needs the generated
+# Prisma client, so skipping the postinstall hook avoids the DATABASE_URL
+# requirement without ever setting one, real or dummy). Removed again in a
+# follow-up commit ("Restore manual-only workflow after validation retry")
+# right after this run.
 on:
   workflow_dispatch: {}
+  push:
+    branches:
+      - feature/concept-map-analysis-prototype
+    paths:
+      - analysis-prototype/ci-trigger.txt
 
 permissions:
   contents: read
@@ -50,8 +62,18 @@ jobs:
           node -e "console.log(JSON.stringify({nodeVersion: process.version, platform: process.platform, arch: process.arch, runnerOs: process.env.RUNNER_OS}, null, 2))" > artifacts/metadata/environment.json
           cat artifacts/metadata/environment.json
 
-      - name: npm ci
-        run: npm ci
+      # --ignore-scripts: this prototype never imports the generated Prisma
+      # client, so the postinstall `prisma generate` hook (which requires
+      # DATABASE_URL, forbidden in this workflow) is unnecessary and skipped.
+      - name: npm ci --ignore-scripts
+        run: npm ci --ignore-scripts
+
+      - name: Verify Node/npm/tsx are actually usable after --ignore-scripts
+        run: |
+          node --version
+          npm --version
+          npx -y tsx --version
+          node -e "console.log('node-runtime-ok')"
 
       - name: Run internal verification suite (Node 22)
         run: npx -y tsx analysis-prototype/scripts/verify.ts
@@ -162,8 +184,18 @@ jobs:
         with:
           node-version: "22"
 
-      - name: npm ci
-        run: npm ci
+      # --ignore-scripts: see node-reference-inputs job for why (no
+      # DATABASE_URL in this workflow, and this job never needs the
+      # generated Prisma client either — it only runs compareReferences.ts).
+      - name: npm ci --ignore-scripts
+        run: npm ci --ignore-scripts
+
+      - name: Verify Node/npm/tsx are actually usable after --ignore-scripts
+        run: |
+          node --version
+          npm --version
+          npx -y tsx --version
+          node -e "console.log('node-runtime-ok')"
 
       - uses: actions/download-artifact@v4
         with:
@@ -222,3 +254,23 @@ jobs:
           name: concept-analysis-validation
           path: final/concept-analysis-validation
           retention-days: 7
+
+      # compareReferences.ts only sets a nonzero exit code for FAILED, so
+      # this job could otherwise report "success" while the true research
+      # verification state is PARTIALLY_VERIFIED or NOT_RUN. This step
+      # reads ONLY comparison-summary.json (no other logic, no algorithm
+      # code) and makes the job's pass/fail match the true state: VERIFIED
+      # is the only status that exits 0.
+      - name: Enforce VERIFIED-only job success
+        if: always()
+        run: |
+          if [ ! -f artifacts/comparison/comparison-summary.json ]; then
+            echo "comparison-summary.json not found -- treating as NOT_RUN."
+            exit 1
+          fi
+          STATUS=$(node -e "console.log(JSON.parse(require('fs').readFileSync('artifacts/comparison/comparison-summary.json','utf-8')).overallStatus)")
+          echo "Final research verification status: $STATUS"
+          if [ "$STATUS" != "VERIFIED" ]; then
+            echo "Status is not VERIFIED -- failing this job so its conclusion matches the true research verification state."
+            exit 1
+          fi
