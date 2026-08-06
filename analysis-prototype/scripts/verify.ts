@@ -24,6 +24,7 @@ import {
   euclideanDistanceMatrix,
   runDimensionDiagnostics,
   PRIMARY_MAP_DIMENSION,
+  runSmacofFromInitialConfiguration,
   type SmacofParams,
 } from "../../src/lib/conceptAnalysis";
 import {
@@ -587,6 +588,33 @@ console.log("\n=== N=0 / N=1 handling ===");
     proportionN1.every((row) => row.every((v) => v === 0 || v === 1 || Number.isNaN(v) === false)),
     "N=1: every off-diagonal proportion is a valid 0 or 1 (binary, since only one sort exists)"
   );
+}
+
+// ============================================================
+// runSmacofFromInitialConfiguration: the cross-validation entry point
+// ============================================================
+console.log("\n=== runSmacofFromInitialConfiguration ===");
+{
+  const initial = [[0.5, -0.3], [-0.4, 0.6], [0.9, 0.9], [-0.6, -0.5]];
+  const result = runSmacofFromInitialConfiguration(fixtureB_square_dissimilarity, buildWeightMatrix(4), initial, {
+    maxIter: 300,
+    eps: 1e-9,
+  });
+  assert(result.errorCode === undefined, "explicit-init run on a valid fixture reports no errorCode");
+  assert(Number.isFinite(result.normalizedStress1), "explicit-init run produces a finite stress");
+  assert(result.stressHistory.length > 0, "explicit-init run records a stress history");
+
+  // Same explicit initial config + same inputs must reproduce identically (no PRNG involved at all).
+  const result2 = runSmacofFromInitialConfiguration(fixtureB_square_dissimilarity, buildWeightMatrix(4), initial, {
+    maxIter: 300,
+    eps: 1e-9,
+  });
+  assert(result.normalizedStress1 === result2.normalizedStress1, "explicit-init run is exactly reproducible with no randomness involved");
+  assert(JSON.stringify(result.coordinates) === JSON.stringify(result2.coordinates), "explicit-init coordinates are exactly reproducible");
+}
+{
+  const result = runSmacofFromInitialConfiguration([[0]], buildWeightMatrix(1), [[0]], { maxIter: 10, eps: 1e-9 });
+  assert(result.errorCode === "INSUFFICIENT_ITEMS", "explicit-init entry point rejects n<2 the same way runSmacof does");
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

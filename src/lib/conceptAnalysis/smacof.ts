@@ -121,19 +121,26 @@ function hasDegenerateCoincidentPoints(distance: Matrix, weight: WeightMatrix): 
   return false;
 }
 
-function runSingleInit(
+/**
+ * Core majorization loop, parameterized on the STARTING configuration
+ * rather than generating one — used both by the normal random-multi-start
+ * path (runSingleInit below) and by runSmacofFromInitialConfiguration,
+ * which exists specifically so an external reference implementation
+ * (Python/R) can be handed the exact same starting coordinates for a fair,
+ * apples-to-apples cross-validation run instead of relying on two
+ * different languages' PRNGs to somehow agree (they can't).
+ */
+function runFromConfiguration(
   dissimilarity: Matrix,
   weight: WeightMatrix,
-  dimension: number,
+  initialPoints: Point[],
   initIndex: number,
   seed: number,
   maxIter: number,
   eps: number,
   vPseudoInverse: Matrix
 ): SmacofInitResult {
-  const n = dissimilarity.length;
-  const rng = mulberry32(seed);
-  let points = randomInitialConfiguration(n, dimension, rng);
+  let points = centerConfiguration(initialPoints);
 
   const stressHistory: number[] = [];
   let converged = false;
@@ -220,6 +227,85 @@ function runSingleInit(
     iterations,
     stressHistory,
   };
+}
+
+function runSingleInit(
+  dissimilarity: Matrix,
+  weight: WeightMatrix,
+  dimension: number,
+  initIndex: number,
+  seed: number,
+  maxIter: number,
+  eps: number,
+  vPseudoInverse: Matrix
+): SmacofInitResult {
+  const n = dissimilarity.length;
+  const rng = mulberry32(seed);
+  const initialPoints = randomInitialConfiguration(n, dimension, rng);
+  return runFromConfiguration(dissimilarity, weight, initialPoints, initIndex, seed, maxIter, eps, vPseudoInverse);
+}
+
+/**
+ * Cross-validation entry point: runs the exact same majorization loop as
+ * runSmacof, but from a caller-supplied starting configuration instead of a
+ * PRNG-generated one. This is what analysis-prototype's fixture-export /
+ * comparison scripts use so Python (sklearn's `init=` parameter) and R can
+ * be started from IDENTICAL coordinates — matching seeds alone would not
+ * produce identical starts across three different PRNG implementations.
+ */
+export function runSmacofFromInitialConfiguration(
+  dissimilarity: Matrix,
+  weight: WeightMatrix,
+  initialPoints: Point[],
+  options: { maxIter: number; eps: number }
+): SmacofInitResult & { errorCode?: string } {
+  const n = dissimilarity.length;
+  if (n < 2) {
+    return {
+      initIndex: 0,
+      seed: 0,
+      coordinates: initialPoints,
+      rawStress: NaN,
+      normalizedStress1: NaN,
+      converged: false,
+      iterations: 0,
+      stressHistory: [],
+      errorCode: "INSUFFICIENT_ITEMS",
+      errorMessage: "SMACOF requires at least 2 items.",
+    };
+  }
+  const dimension = initialPoints[0]?.length ?? 0;
+  if (dimension >= n) {
+    return {
+      initIndex: 0,
+      seed: 0,
+      coordinates: initialPoints,
+      rawStress: NaN,
+      normalizedStress1: NaN,
+      converged: false,
+      iterations: 0,
+      stressHistory: [],
+      errorCode: "DIMENSION_TOO_HIGH",
+      errorMessage: `dimension (${dimension}) must be < number of items (${n}).`,
+    };
+  }
+  const hasAnyWeightedPair = upperTrianglePairs(n).some(({ i, j }) => weight[i][j] > 0);
+  if (!hasAnyWeightedPair) {
+    return {
+      initIndex: 0,
+      seed: 0,
+      coordinates: initialPoints,
+      rawStress: NaN,
+      normalizedStress1: NaN,
+      converged: false,
+      iterations: 0,
+      stressHistory: [],
+      errorCode: "NO_WEIGHTED_PAIRS",
+      errorMessage: "Every off-diagonal pair has weight=0 (all marked missing) — there is nothing to fit.",
+    };
+  }
+  const vPseudoInverse = symmetricPseudoInverse(buildV(weight));
+  return runFromConfiguration(dissimilarity, weight, initialPoints, 0, 0, options.maxIter, options.eps, vPseudoInverse);
 }
 
 export function runSmacof(dissimilarity: Matrix, weight: WeightMatrix, params: SmacofParams): SmacofRunResult {
