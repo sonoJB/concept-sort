@@ -74,6 +74,11 @@ export type SmacofInitResult = {
   stressHistory: number[];
   errorCode?: string;
   errorMessage?: string;
+  /** Disparity normalization metadata from the final iteration's fit (see disparityNormalization.ts). Undefined only when the run errored before any disparity was ever normalized. */
+  disparityNormalizationFactor?: number;
+  disparityNormBefore?: number;
+  disparityNormAfter?: number;
+  normalizationTarget?: number;
 };
 
 export type SmacofRunResult = {

@@ -36,6 +36,7 @@ import { deriveSeed, mulberry32, uniform, type Prng } from "./prng";
 import { isotonicRegressionByRank } from "./isotonic";
 import { matMul, symmetricPseudoInverse } from "./linalg";
 import { computeNormalizedStress1, computeRawStress, euclideanDistanceMatrix, upperTrianglePairs } from "./stress";
+import { normalizeDisparities } from "./disparityNormalization";
 import type { Matrix, Point, SmacofInitResult, SmacofParams, SmacofRunResult, WeightMatrix } from "./types";
 
 function centerConfiguration(points: Point[]): Point[] {
@@ -140,6 +141,7 @@ function runFromConfiguration(
   eps: number,
   vPseudoInverse: Matrix
 ): SmacofInitResult {
+  const n = initialPoints.length;
   let points = centerConfiguration(initialPoints);
 
   const stressHistory: number[] = [];
@@ -166,7 +168,29 @@ function runFromConfiguration(
       };
     }
 
-    const disparity = fitDisparities(dissimilarity, distance, weight);
+    // Fit disparities via weighted PAVA (isotonic.ts, unchanged), then
+    // rescale them to the classical optimal-scaling target norm
+    // q = n(n-1)/2 before they are used for Stress or the Guttman
+    // transform — see disparityNormalization.ts for the rationale
+    // (matches scikit-learn's/R smacof's confirmed behavior).
+    const rawDisparity = fitDisparities(dissimilarity, distance, weight);
+    const normResult = normalizeDisparities(rawDisparity, weight, n);
+    if (normResult.errorCode) {
+      return {
+        initIndex,
+        seed,
+        coordinates: points,
+        rawStress: NaN,
+        normalizedStress1: NaN,
+        converged: false,
+        iterations,
+        stressHistory,
+        errorCode: normResult.errorCode,
+        errorMessage: normResult.errorMessage,
+      };
+    }
+    const disparity = normResult.normalizedDisparities;
+
     const normalized = computeNormalizedStress1(disparity, distance, weight);
     if (!Number.isFinite(normalized)) {
       return {
@@ -199,13 +223,30 @@ function runFromConfiguration(
           stressHistory,
           errorCode: "STRESS_INCREASED",
           errorMessage: `Stress increased from ${prev} to ${normalized} at iteration ${iter}; majorization invariant violated.`,
+          disparityNormalizationFactor: normResult.normalizationFactor,
+          disparityNormBefore: normResult.preNormalizationSumSquares,
+          disparityNormAfter: normResult.postNormalizationSumSquares,
+          normalizationTarget: normResult.normalizationTarget,
         };
       }
       if (Math.abs(prev - normalized) < eps) {
         converged = true;
         lastNormalized = normalized;
         const rawStress = computeRawStress(disparity, distance, weight);
-        return { initIndex, seed, coordinates: points, rawStress, normalizedStress1: normalized, converged, iterations, stressHistory };
+        return {
+          initIndex,
+          seed,
+          coordinates: points,
+          rawStress,
+          normalizedStress1: normalized,
+          converged,
+          iterations,
+          stressHistory,
+          disparityNormalizationFactor: normResult.normalizationFactor,
+          disparityNormBefore: normResult.preNormalizationSumSquares,
+          disparityNormAfter: normResult.postNormalizationSumSquares,
+          normalizationTarget: normResult.normalizationTarget,
+        };
       }
     }
 
@@ -215,7 +256,23 @@ function runFromConfiguration(
 
   // Hit maxIter without meeting eps — report honestly as not converged.
   const distance = euclideanDistanceMatrix(points);
-  const disparity = fitDisparities(dissimilarity, distance, weight);
+  const rawDisparity = fitDisparities(dissimilarity, distance, weight);
+  const normResult = normalizeDisparities(rawDisparity, weight, n);
+  if (normResult.errorCode) {
+    return {
+      initIndex,
+      seed,
+      coordinates: points,
+      rawStress: NaN,
+      normalizedStress1: lastNormalized,
+      converged: false,
+      iterations,
+      stressHistory,
+      errorCode: normResult.errorCode,
+      errorMessage: normResult.errorMessage,
+    };
+  }
+  const disparity = normResult.normalizedDisparities;
   const rawStress = computeRawStress(disparity, distance, weight);
   return {
     initIndex,
@@ -226,6 +283,10 @@ function runFromConfiguration(
     converged: false,
     iterations,
     stressHistory,
+    disparityNormalizationFactor: normResult.normalizationFactor,
+    disparityNormBefore: normResult.preNormalizationSumSquares,
+    disparityNormAfter: normResult.postNormalizationSumSquares,
+    normalizationTarget: normResult.normalizationTarget,
   };
 }
 

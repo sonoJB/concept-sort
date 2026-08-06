@@ -376,7 +376,9 @@ function main() {
         reason: `stressDiff=${stressDiff.toExponential(3)} (tol ${STRESS_ABS_TOLERANCE}), maxDistDiff=${distDiff.toExponential(3)} (tol ${PAIRWISE_DISTANCE_ABS_TOLERANCE}). scikit-learn version: ${pythonSmacof.versionLabel ?? "unknown"}.`,
         numericDifference: Math.max(stressDiff, distDiff),
         tolerance: STRESS_ABS_TOLERANCE,
-        required: false,
+        // Attempt 6: raw-scale comparison required again for zeroFree now
+        // that the engine normalizes disparities.
+        required: fixtureKey === "zeroFree",
       });
 
       const dCompare = compareDisparityMaps(disparityMap(ts.disparities), disparityMap(py.disparities));
@@ -445,7 +447,10 @@ function main() {
         reason: `stressDiff=${stressDiff.toExponential(3)} (tol ${STRESS_ABS_TOLERANCE}), maxDistDiff=${distDiff.toExponential(3)} (tol ${PAIRWISE_DISTANCE_ABS_TOLERANCE}). ties="secondary" used on both sides. activeWeightedPairCount=${r.activeWeightedPairCount}, zeroValuedActivePairCount=${r.zeroValuedActivePairCount}.`,
         numericDifference: Math.max(stressDiff, distDiff),
         tolerance: STRESS_ABS_TOLERANCE,
-        required: fixtureKey === "ties" || fixtureKey === "offDiagonalZero",
+        // Attempt 6: raw-scale comparison required again for zeroFree too
+        // (in addition to ties/offDiagonalZero, already required since
+        // attempt 3/4) now that the engine normalizes disparities.
+        required: fixtureKey === "ties" || fixtureKey === "offDiagonalZero" || fixtureKey === "zeroFree",
       });
 
       const dCompare = compareDisparityMaps(disparityMap(ts.disparities), disparityMap(r.disparities));
@@ -527,7 +532,12 @@ function main() {
         reason: `stressDiff=${stressDiff.toExponential(3)}, maxDistDiff=${distDiff.toExponential(3)} — tie-free fixture, isolates tie-handling from other divergence causes.`,
         numericDifference: Math.max(stressDiff, distDiff),
         tolerance: STRESS_ABS_TOLERANCE,
-        required: false,
+        // Attempt 6: raw-scale comparison is required again now that the
+        // engine normalizes disparities (per the attempt-6 approval) —
+        // strictNoTies has no ties, so if normalization fully explains the
+        // scale gap, this should now pass at raw scale, not just
+        // scale-equivalence.
+        required: true,
       });
       const c = classifySmacof(ts, ref, ts.pairwiseDistance, ref.pairwiseDistance, diagWeight, ts.disparities, ref.disparities);
       rows.push({
@@ -613,6 +623,14 @@ function main() {
     smacofOffDiagonalZeroVsR: rows.find((r) => r.category === "SMACOF" && r.fixture === "offDiagonalZero" && r.reference === "r"),
     scaleAnalysisZeroFreeVsPython: rows.find((r) => r.category === "ScaleAnalysis" && r.fixture === "zeroFree" && r.reference === "python"),
     scaleAnalysisZeroFreeVsR: rows.find((r) => r.category === "ScaleAnalysis" && r.fixture === "zeroFree" && r.reference === "r"),
+    // Attempt 6: raw-scale comparisons, required again now that the engine
+    // normalizes disparities to match scikit-learn/R's convention.
+    smacofZeroFreeVsPythonRaw: rows.find((r) => r.category === "SMACOF" && r.fixture === "zeroFree" && r.reference === "python"),
+    smacofZeroFreeVsRRaw: rows.find((r) => r.category === "SMACOF" && r.fixture === "zeroFree" && r.reference === "r"),
+    smacofTiesVsRRaw: rows.find((r) => r.category === "SMACOF" && r.fixture === "ties" && r.reference === "r"),
+    disparityTiesVsRRaw: rows.find((r) => r.category === "Disparity" && r.fixture === "ties" && r.reference === "r"),
+    strictNoTiesRawVsPython: rows.find((r) => r.category === "SMACOF-diagnostic" && r.fixture === "strictNoTies" && r.reference === "python"),
+    strictNoTiesRawVsR: rows.find((r) => r.category === "SMACOF-diagnostic" && r.fixture === "strictNoTies" && r.reference === "r"),
   };
   const requiredList = Object.values(required);
   const requiredStatuses = requiredList.map((r) => r?.status ?? "SKIPPED");

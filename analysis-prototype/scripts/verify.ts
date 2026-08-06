@@ -25,6 +25,7 @@ import {
   runDimensionDiagnostics,
   PRIMARY_MAP_DIMENSION,
   runSmacofFromInitialConfiguration,
+  normalizeDisparities,
   type SmacofParams,
 } from "../../src/lib/conceptAnalysis";
 import {
@@ -36,6 +37,7 @@ import {
   fixtureF_allEqual_dissimilarity,
   fixtureG_project,
   fixtureG_sessions,
+  fixtureG_strictNoTies_dissimilarity,
 } from "../fixtures/fixtures";
 
 let passed = 0;
@@ -615,6 +617,204 @@ console.log("\n=== runSmacofFromInitialConfiguration ===");
 {
   const result = runSmacofFromInitialConfiguration([[0]], buildWeightMatrix(1), [[0]], { maxIter: 10, eps: 1e-9 });
   assert(result.errorCode === "INSUFFICIENT_ITEMS", "explicit-init entry point rejects n<2 the same way runSmacof does");
+}
+
+// ============================================================
+// Disparity normalization (attempt 6): normalizeDisparities()
+// ============================================================
+console.log("\n=== disparity normalization: A. basic ===");
+{
+  // 4 objects, complete weight matrix, q = 4*3/2 = 6.
+  const disparity = [
+    [0, 1, 2, 3],
+    [1, 0, 4, 5],
+    [2, 4, 0, 6],
+    [3, 5, 6, 0],
+  ];
+  const weight = buildWeightMatrix(4);
+  const result = normalizeDisparities(disparity, weight, 4);
+  assert(result.errorCode === undefined, "basic normalization reports no error");
+  assert(result.normalizationTarget === 6, "normalizationTarget = n(n-1)/2 = 6 for n=4");
+  assert(Math.abs(result.postNormalizationSumSquares - 6) < 1e-9, "post-normalization weighted sum of squares equals q=6");
+  assert(result.activePairCount === 6, "all 6 pairs are active for a complete weight matrix");
+}
+
+console.log("\n=== disparity normalization: B. off-diagonal zero preserved ===");
+{
+  const n = fixtureE_offDiagonalZero_dissimilarity.length;
+  const weight = buildWeightMatrix(n);
+  // A zero-valued disparity at an active pair, mirroring what PAVA can
+  // legitimately produce for the offDiagonalZero fixture.
+  const disparity = [
+    [0, 0, 0.5, 0.6],
+    [0, 0, 0.55, 0.62],
+    [0.5, 0.55, 0, 0.3],
+    [0.6, 0.62, 0.3, 0],
+  ];
+  const result = normalizeDisparities(disparity, weight, n);
+  assert(result.errorCode === undefined, "off-diagonal-zero disparity matrix normalizes without error");
+  assert(result.activePairCount === 6, "off-diagonal-zero pair (0,1) still counts as active (weight=1), not missing");
+  assert(result.zeroValuedActivePairCount === 1, "exactly one active pair has disparity=0, tracked separately from missing pairs");
+  assert(result.normalizedDisparities[0][1] === 0, "a zero disparity stays exactly 0 after a positive-factor rescale (0 * factor = 0)");
+}
+
+console.log("\n=== disparity normalization: C. secondary ties preserved ===");
+{
+  const n = fixtureD_ties_dissimilarity.length;
+  const weight = buildWeightMatrix(n);
+  const distance = euclideanDistanceMatrix([[0, 0], [1, 0], [0.9, 0.1], [2, 2], [2.1, 2.05]]);
+  const observations: { rankKey: number; value: number; weight: number }[] = [];
+  const pairIndex: { i: number; j: number }[] = [];
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      observations.push({ rankKey: fixtureD_ties_dissimilarity[i][j], value: distance[i][j], weight: 1 });
+      pairIndex.push({ i, j });
+    }
+  }
+  const fitted = isotonicRegressionByRank(observations);
+  const disparity = Array.from({ length: n }, () => new Array(n).fill(0));
+  pairIndex.forEach(({ i, j }, idx) => {
+    disparity[i][j] = fitted[idx];
+    disparity[j][i] = fitted[idx];
+  });
+  const result = normalizeDisparities(disparity, weight, n);
+  assert(result.errorCode === undefined, "ties-heavy disparity matrix normalizes without error");
+  // fixtureD has dissimilarity=0.5 for pairs (0,1)(0,2)(0,3)(0,4)(1,2)(1,3)(1,4) and 0.3 for (2,3)(2,4)(3,4).
+  const tieGroupA = [[0, 1], [0, 2], [0, 3], [0, 4], [1, 2], [1, 3], [1, 4]];
+  const tieGroupB = [[2, 3], [2, 4], [3, 4]];
+  const valuesA = tieGroupA.map(([i, j]) => result.normalizedDisparities[i][j]);
+  const valuesB = tieGroupB.map(([i, j]) => result.normalizedDisparities[i][j]);
+  assert(valuesA.every((v) => Math.abs(v - valuesA[0]) < 1e-9), "all pairs sharing dissimilarity=0.5 receive an identical disparity after normalization");
+  assert(valuesB.every((v) => Math.abs(v - valuesB[0]) < 1e-9), "all pairs sharing dissimilarity=0.3 receive an identical disparity after normalization");
+}
+
+console.log("\n=== disparity normalization: D. scale invariance ===");
+{
+  const disparity = [
+    [0, 1, 2, 3],
+    [1, 0, 4, 5],
+    [2, 4, 0, 6],
+    [3, 5, 6, 0],
+  ];
+  const weight = buildWeightMatrix(4);
+  const resultA = normalizeDisparities(disparity, weight, 4);
+  const scaled = disparity.map((row) => row.map((v) => v * 7.5));
+  const resultB = normalizeDisparities(scaled, weight, 4);
+  assert(resultA.errorCode === undefined && resultB.errorCode === undefined, "both scale variants normalize without error");
+  for (let i = 0; i < 4; i++) {
+    for (let j = 0; j < 4; j++) {
+      assert(Math.abs(resultA.normalizedDisparities[i][j] - resultB.normalizedDisparities[i][j]) < 1e-9, `normalized disparity[${i}][${j}] is invariant to a pre-normalization uniform rescale of the input`);
+    }
+  }
+}
+
+console.log("\n=== disparity normalization: E. zero denominator ===");
+{
+  const n = 4;
+  const weight = buildWeightMatrix(n);
+  const allZeroDisparity = Array.from({ length: n }, () => new Array(n).fill(0));
+  const result = normalizeDisparities(allZeroDisparity, weight, n);
+  assert(result.errorCode === "ZERO_DISPARITY_NORM", "all-zero disparity matrix reports ZERO_DISPARITY_NORM, not a fabricated factor");
+  assert(!Number.isFinite(result.normalizationFactor), "ZERO_DISPARITY_NORM never returns a finite normalizationFactor");
+  assert(result.normalizedDisparities.length === 0, "ZERO_DISPARITY_NORM never returns a fabricated normalized matrix");
+}
+{
+  const n = 3;
+  const allMissingWeight = [
+    [0, 0, 0],
+    [0, 0, 0],
+    [0, 0, 0],
+  ];
+  const disparity = [
+    [0, 1, 2],
+    [1, 0, 3],
+    [2, 3, 0],
+  ];
+  const result = normalizeDisparities(disparity, allMissingWeight, n);
+  assert(result.errorCode === "NO_WEIGHTED_PAIRS", "all-missing-weight matrix reports NO_WEIGHTED_PAIRS, not ZERO_DISPARITY_NORM");
+}
+
+console.log("\n=== disparity normalization: F. missing pairs vs complete matrix ===");
+{
+  const n = 4;
+  const disparity = [
+    [0, 1, 2, 3],
+    [1, 0, 4, 5],
+    [2, 4, 0, 6],
+    [3, 5, 6, 0],
+  ];
+  const weightWithMissing = [
+    [0, 1, 1, 0], // pair (0,3) genuinely missing
+    [1, 0, 1, 1],
+    [1, 1, 0, 1],
+    [0, 1, 1, 0],
+  ];
+  const result = normalizeDisparities(disparity, weightWithMissing, n);
+  assert(result.errorCode === undefined, "a matrix with one genuinely-missing pair still normalizes");
+  assert(result.normalizationTarget === 6, "normalizationTarget stays n(n-1)/2 = 6 regardless of missing pairs");
+  assert(result.activePairCount === 5, "activePairCount (5) is reported separately from normalizationTarget (6) when a pair is missing");
+}
+
+console.log("\n=== disparity normalization: G. hand-computed reference ===");
+{
+  // n=3, disparities (0,1)=1, (0,2)=2, (1,2)=3, all weight=1.
+  // sumSquares = 1^2 + 2^2 + 3^2 = 14. q = 3*2/2 = 3.
+  // normalizationFactor = sqrt(3/14) (computed independently here, not via the helper's own internals).
+  const disparity = [
+    [0, 1, 2],
+    [1, 0, 3],
+    [2, 3, 0],
+  ];
+  const weight = buildWeightMatrix(3);
+  const result = normalizeDisparities(disparity, weight, 3);
+  const expectedFactor = Math.sqrt(3 / 14);
+  assert(Math.abs(result.normalizationFactor - expectedFactor) < 1e-12, `normalizationFactor matches hand-derived sqrt(3/14): got ${result.normalizationFactor}, expected ${expectedFactor}`);
+  assert(Math.abs(result.normalizedDisparities[0][1] - 1 * expectedFactor) < 1e-12, "normalized disparity(0,1) = 1 * sqrt(3/14)");
+  assert(Math.abs(result.normalizedDisparities[1][2] - 3 * expectedFactor) < 1e-12, "normalized disparity(1,2) = 3 * sqrt(3/14)");
+}
+
+console.log("\n=== disparity normalization: H. SMACOF regression across diagnostic fixtures ===");
+{
+  const fixturesUnderTest: { name: string; dissimilarity: number[][]; init: number[][] }[] = [
+    {
+      name: "strictNoTies",
+      dissimilarity: fixtureG_strictNoTies_dissimilarity,
+      init: [[0.4, -0.5], [-0.6, 0.3], [0.8, 0.2], [-0.3, -0.7], [0.1, 0.6]],
+    },
+    {
+      name: "zeroFree",
+      dissimilarity: fixtureB_square_dissimilarity,
+      init: [[0.5, -0.3], [-0.4, 0.6], [0.9, 0.9], [-0.6, -0.5]],
+    },
+    {
+      name: "ties",
+      dissimilarity: fixtureD_ties_dissimilarity,
+      init: [[0.4, -0.5], [-0.6, 0.3], [0.8, 0.2], [-0.3, -0.7], [0.1, 0.6]],
+    },
+    {
+      name: "offDiagonalZero",
+      dissimilarity: fixtureE_offDiagonalZero_dissimilarity,
+      init: [[0.5, -0.3], [-0.4, 0.6], [0.9, 0.9], [-0.6, -0.5]],
+    },
+  ];
+
+  for (const fx of fixturesUnderTest) {
+    const n = fx.dissimilarity.length;
+    const weight = buildWeightMatrix(n);
+    const result = runSmacofFromInitialConfiguration(fx.dissimilarity, weight, fx.init, { maxIter: 300, eps: 1e-9 });
+    assert(result.errorCode === undefined, `${fx.name}: SMACOF regression run reports no errorCode`);
+    assert(Number.isFinite(result.normalizedStress1), `${fx.name}: finite Stress-1`);
+    assert(result.coordinates.every((p) => p.every((v) => Number.isFinite(v))), `${fx.name}: all coordinates finite`);
+    assert(result.stressHistory.every((v, i) => i === 0 || v <= result.stressHistory[i - 1] + 1e-7), `${fx.name}: stress history is monotone non-increasing after normalization`);
+    assert(result.disparityNormalizationFactor !== undefined && Number.isFinite(result.disparityNormalizationFactor), `${fx.name}: disparityNormalizationFactor is reported and finite`);
+    assert(result.normalizationTarget === (n * (n - 1)) / 2, `${fx.name}: normalizationTarget = n(n-1)/2`);
+    assert(result.disparityNormAfter !== undefined && Math.abs(result.disparityNormAfter - result.normalizationTarget!) < 1e-6, `${fx.name}: post-normalization sum of squares matches the target norm`);
+
+    // Deterministic reproducibility with the same seed/init (no PRNG involved in this entry point).
+    const result2 = runSmacofFromInitialConfiguration(fx.dissimilarity, weight, fx.init, { maxIter: 300, eps: 1e-9 });
+    assert(result.normalizedStress1 === result2.normalizedStress1, `${fx.name}: exactly reproducible across repeated runs with identical inputs`);
+    assert(JSON.stringify(result.coordinates) === JSON.stringify(result2.coordinates), `${fx.name}: coordinates exactly reproducible across repeated runs`);
+  }
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -1,6 +1,7 @@
 export * from "./types";
 export * from "./prng";
 export * from "./isotonic";
+export * from "./disparityNormalization";
 export * from "./linalg";
 export * from "./stress";
 export * from "./similarity";

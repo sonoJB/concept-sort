@@ -24,6 +24,7 @@ import {
   euclideanDistanceMatrix,
   upperTrianglePairs,
   isotonicRegressionByRank,
+  normalizeDisparities,
 } from "../../src/lib/conceptAnalysis";
 
 const fixturesPath = process.argv[2];
@@ -40,19 +41,21 @@ const fixtures = JSON.parse(fs.readFileSync(fixturesPath, "utf-8"));
 /**
  * Independently recomputes every stress-related quantity by name, using the
  * SAME public functions the engine itself uses (isotonicRegressionByRank,
- * upperTrianglePairs) but called directly from this diagnostic script, not
- * from inside src/lib/conceptAnalysis. This mirrors ci_python.py's
- * stress_breakdown() and ci_r.R's diagnostics so all three implementations
- * report distinctly-named values for direct comparison.
+ * upperTrianglePairs, and — since attempt 6 — normalizeDisparities) but
+ * called directly from this diagnostic script, not from inside
+ * src/lib/conceptAnalysis. This mirrors ci_python.py's stress_breakdown()
+ * and ci_r.R's diagnostics so all three implementations report
+ * distinctly-named values for direct comparison.
  *
- * Also reports disparity-normalization metadata (attempt 5): targetNormQ =
- * the number of active pairs (the classical "Σ w dHat^2 = n(n-1)/2" target
- * some SMACOF formulations rescale disparities to every iteration) next to
- * postNormalizationDisparitySumSquares (= sumSquaredDisparities, since this
- * engine's fitDisparities() in smacof.ts performs NO such rescaling — see
- * the read-only audit in the attempt-5 report). preNormalization and
- * postNormalization are therefore always equal here; the field pair exists
- * so Python/R (which may differ) are directly comparable by name.
+ * Attempt 6: normalizeDisparities() is now applied here too, AFTER the
+ * isotonic fit and BEFORE computing rss/distances/stress denominators —
+ * matching exactly what runSmacofFromInitialConfiguration itself now does
+ * internally (smacof.ts). Without this, this script's independent
+ * "disparities" recompute would silently drift out of sync with the
+ * engine's own (now-normalized) coordinates, since the coordinates
+ * (euclideanDistanceMatrix(result.coordinates), used for `distance` below)
+ * DO reflect the real engine's normalized-disparity-driven Guttman
+ * transform, but a recompute that skipped normalization would not.
  */
 function stressBreakdown(dissimilarity: number[][], distance: number[][], weight: number[][]) {
   const n = distance.length;
@@ -64,22 +67,28 @@ function stressBreakdown(dissimilarity: number[][], distance: number[][], weight
   }));
   const fitted = isotonicRegressionByRank(observations);
 
+  const rawDisparity: number[][] = Array.from({ length: n }, () => new Array(n).fill(0));
+  pairs.forEach(({ i, j }, idx) => {
+    rawDisparity[i][j] = fitted[idx];
+    rawDisparity[j][i] = fitted[idx];
+  });
+  const normResult = normalizeDisparities(rawDisparity, weight, n);
+
   let rss = 0;
   let sumSquaredDistances = 0;
   let sumSquaredDisparities = 0;
   const disparities: { pairKey: string; i: number; j: number; dissimilarity: number; disparity: number; configurationDistance: number }[] = [];
-  pairs.forEach(({ i, j }, idx) => {
-    const dHat = fitted[idx];
+  for (const { i, j } of pairs) {
+    const dHat = normResult.errorCode ? NaN : normResult.normalizedDisparities[i][j];
     const dij = distance[i][j];
     rss += (dHat - dij) ** 2;
     sumSquaredDistances += dij * dij;
     sumSquaredDisparities += dHat * dHat;
     disparities.push({ pairKey: `${i}-${j}`, i, j, dissimilarity: dissimilarity[i][j], disparity: dHat, configurationDistance: dij });
-  });
+  }
 
   const stress1DistanceDenominator = sumSquaredDistances > 0 ? Math.sqrt(rss / sumSquaredDistances) : null;
   const stress1DisparityDenominator = sumSquaredDisparities > 0 ? Math.sqrt(rss / sumSquaredDisparities) : null;
-  const targetNormQ = pairs.length; // n(n-1)/2 when every active pair has weight 1
 
   return {
     rss,
@@ -89,10 +98,12 @@ function stressBreakdown(dissimilarity: number[][], distance: number[][], weight
     stress1DisparityDenominator,
     disparities,
     activePairCount: pairs.length,
-    targetNormQ,
-    preNormalizationDisparitySumSquares: sumSquaredDisparities,
-    postNormalizationDisparitySumSquares: sumSquaredDisparities,
-    disparityNormalizationApplied: false,
+    targetNormQ: normResult.normalizationTarget,
+    preNormalizationDisparitySumSquares: normResult.preNormalizationSumSquares,
+    postNormalizationDisparitySumSquares: normResult.postNormalizationSumSquares,
+    disparityNormalizationApplied: !normResult.errorCode,
+    disparityNormalizationFactor: normResult.normalizationFactor,
+    disparityNormalizationErrorCode: normResult.errorCode ?? null,
   };
 }
 

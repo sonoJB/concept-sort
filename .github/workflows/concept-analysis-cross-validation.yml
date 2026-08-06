@@ -82,9 +82,31 @@ name: Concept Analysis Cross-Validation
 # finding for a future round. No statistical algorithm code
 # (src/lib/conceptAnalysis/**) was touched. Final verification status:
 # FAILED (not VERIFIED — 2 of 11 required checks still fail). The push
-# trigger is removed again here, restoring manual-only dispatch.
+# trigger was removed after, restoring manual-only dispatch.
+#
+# TEMPORARY (attempt 6): the same one-shot, path-restricted push trigger is
+# re-added below for the FIRST engine change in this whole cross-validation
+# process: src/lib/conceptAnalysis/smacof.ts now normalizes disparities
+# (via a new src/lib/conceptAnalysis/disparityNormalization.ts helper) to
+# the classical q=n(n-1)/2 target norm after weighted PAVA and before Stress
+# computation / the Guttman transform — matching the confirmed behavior of
+# scikit-learn (source-inspected: `disparities *= np.sqrt(...)` in _mds.py)
+# and R's smacof package (normDiss/normDissN internals). No other engine
+# logic changed: weighted PAVA (isotonic.ts), the Guttman transform formula,
+# the pseudo-inverse, Stress-1's definition, Ward, and the seeded PRNG are
+# all untouched — confirmed via `git diff` scope before commit. All 233
+# pre-existing tests plus 74 new disparity-normalization tests (307 total)
+# pass locally with no regressions, no STRESS_INCREASED trips, and exact
+# seeded reproducibility preserved. Removed again in a follow-up commit
+# ("Restore manual-only workflow after disparity validation") right after
+# this run.
 on:
   workflow_dispatch: {}
+  push:
+    branches:
+      - feature/concept-map-analysis-prototype
+    paths:
+      - analysis-prototype/ci-trigger.txt
 
 permissions:
   contents: read
