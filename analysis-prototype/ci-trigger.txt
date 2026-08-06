@@ -1,6 +1,6 @@
 concept-analysis-cross-validation
-previous-run-id: 31112857902
+previous-run-id: 31115998027
 previous-status: FAILED
-attempt: 6
-engine-change: normalize-nonmetric-disparities
-normalization-target: n-times-n-minus-1-over-2
+attempt: 7
+diagnostic: reconcile-stress-definitions
+engine-change: none

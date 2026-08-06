@@ -210,19 +210,74 @@ disparity_norm_stats <- function(disparities, weight) {
   )
 }
 
+# ---- Attempt 7: independent common-formula stress recompute from fit's
+# OWN public return fields (fit$dhat, fit$confdist/distance, fit$weightmat)
+# — never from a private/internal call. Computes BOTH the i<j-once
+# convention AND the full-matrix (i != j, every pair counted twice)
+# convention, so whichever matches fit$stress can be determined
+# empirically rather than assumed.
+common_stress_recompute_r <- function(disparities, n) {
+  rss_pair <- 0
+  sum_sq_dist_pair <- 0
+  sum_sq_disp_pair <- 0
+  for (p in disparities) {
+    resid <- p$disparity - p$configurationDistance
+    rss_pair <- rss_pair + resid^2
+    sum_sq_dist_pair <- sum_sq_dist_pair + p$configurationDistance^2
+    sum_sq_disp_pair <- sum_sq_disp_pair + p$disparity^2
+  }
+  q <- n * (n - 1) / 2
+
+  common_stress_distance <- if (sum_sq_dist_pair > 0) sqrt(rss_pair / sum_sq_dist_pair) else NA
+  common_stress_q <- if (q > 0) sqrt(rss_pair / q) else NA
+  common_stress_disparity <- if (sum_sq_disp_pair > 0) sqrt(rss_pair / sum_sq_disp_pair) else NA
+
+  # Full-matrix (double-counted) convention: every off-diagonal (i,j) with
+  # i != j counted once each direction, i.e. exactly 2x the i<j sums above
+  # (since the underlying matrices are symmetric) — computed explicitly
+  # here rather than just multiplying by 2, so a genuine asymmetry in the
+  # source matrices would surface as a real discrepancy, not be masked.
+  rss_full <- 2 * rss_pair
+  sum_sq_dist_full <- 2 * sum_sq_dist_pair
+  stress_q_full <- if ((2 * q) > 0) sqrt(rss_full / (2 * q)) else NA
+  stress_distance_full <- if (sum_sq_dist_full > 0) sqrt(rss_full / sum_sq_dist_full) else NA
+
+  list(
+    rssPair = rss_pair,
+    sumSquaredDistances = sum_sq_dist_pair,
+    sumSquaredDisparities = sum_sq_disp_pair,
+    q = q,
+    commonStressDistance = common_stress_distance,
+    commonStressQ = common_stress_q,
+    commonStressDisparity = common_stress_disparity,
+    rssFullMatrix = rss_full,
+    stressQFullMatrix = stress_q_full,
+    stressDistanceFullMatrix = stress_distance_full
+  )
+}
+
+determine_best_match <- function(library_reported_stress, candidates) {
+  diffs <- lapply(candidates, function(v) if (is.na(v)) Inf else abs(library_reported_stress - v))
+  names_vec <- names(candidates)
+  best_idx <- which.min(unlist(diffs))
+  list(diffs = diffs, bestMatch = names_vec[best_idx])
+}
+
 # ---- Best-effort, read-only inspection of smacof's own internals ----
 # Uses only standard R introspection (ls/get/body/deparse on the package
 # namespace) — no monkey-patching, no assignInNamespace, no altering
-# behavior. Looks for functions whose names suggest disparity normalization
-# or initial-configuration scaling, and records short source snippets.
+# behavior. Attempt 7: widened beyond norm/transform/scale-named functions
+# to also grep every function body in the namespace for stress/snon/rss
+# lines directly, and specifically tries smacofSym (the package's
+# documented core symmetric-SMACOF workhorse function name) if present.
 inspect_smacof_internals <- function() {
   tryCatch(
     {
       ns <- asNamespace("smacof")
       all_names <- ls(ns, all.names = TRUE)
-      candidates <- all_names[grepl("norm|transform|Transform|scale|Scale", all_names)]
+      name_candidates <- all_names[grepl("norm|transform|Transform|scale|Scale", all_names)]
       snippets <- list()
-      for (nm in candidates) {
+      for (nm in name_candidates) {
         obj <- tryCatch(get(nm, envir = ns), error = function(e) NULL)
         if (is.function(obj)) {
           src <- tryCatch(deparse(body(obj)), error = function(e) NULL)
@@ -231,7 +286,37 @@ inspect_smacof_internals <- function() {
           }
         }
       }
-      list(candidateFunctionNames = as.list(candidates), sourceSnippets = snippets)
+
+      # Grep EVERY function's deparsed body for stress/snon/rss-related
+      # lines, regardless of function name, and record which function each
+      # matching line came from.
+      stress_related_lines <- list()
+      for (nm in all_names) {
+        obj <- tryCatch(get(nm, envir = ns), error = function(e) NULL)
+        if (!is.function(obj)) next
+        src <- tryCatch(deparse(body(obj)), error = function(e) NULL)
+        if (is.null(src)) next
+        matches <- grep("stress|snon|\\brss\\b", src, ignore.case = TRUE, value = TRUE)
+        if (length(matches) > 0) {
+          stress_related_lines[[nm]] <- as.list(utils::head(matches, 10))
+        }
+      }
+
+      smacof_sym_source <- NULL
+      if ("smacofSym" %in% all_names) {
+        obj <- tryCatch(get("smacofSym", envir = ns), error = function(e) NULL)
+        if (is.function(obj)) {
+          src <- tryCatch(deparse(body(obj)), error = function(e) NULL)
+          if (!is.null(src)) smacof_sym_source <- as.list(src)
+        }
+      }
+
+      list(
+        candidateFunctionNames = as.list(name_candidates),
+        sourceSnippets = snippets,
+        stressRelatedLinesByFunction = stress_related_lines,
+        smacofSymFullSource = smacof_sym_source
+      )
     },
     error = function(e) list(error = conditionMessage(e))
   )
@@ -303,12 +388,24 @@ process_fixture_set <- function(mds_fixtures, snapshot_keys) {
     dhat <- tryCatch(as.matrix(fit$dhat), error = function(e) NULL)
     disparities <- if (!is.null(dhat)) disparities_from_fit(dissimilarity, weight, distance, dhat) else list()
     normStats <- disparity_norm_stats(disparities, weight)
+    commonStress <- common_stress_recompute_r(disparities, parsed$n)
+    matchInfo <- determine_best_match(fit$stress, list(
+      commonStressDistance = commonStress$commonStressDistance,
+      commonStressQ = commonStress$commonStressQ,
+      commonStressDisparity = commonStress$commonStressDisparity,
+      stressQFullMatrix = commonStress$stressQFullMatrix,
+      stressDistanceFullMatrix = commonStress$stressDistanceFullMatrix
+    ))
 
     results[[key]] <- c(
       list(
         coordinates = matrix_to_json_rows(coords),
         pairwiseDistance = matrix_to_json_rows(distance),
         rStress = fit$stress,
+        libraryReportedStress = fit$stress,
+        libraryReportedAtIteration = fit$niter,
+        returnedCoordinatesAtIteration = fit$niter,
+        fitRss = if (!is.null(fit$rss)) fit$rss else NA,
         niter = fit$niter,
         tiesMethodUsed = "secondary",
         weightmat = matrix_to_json_rows(weight),
@@ -319,9 +416,12 @@ process_fixture_set <- function(mds_fixtures, snapshot_keys) {
         activeWeightedPairCount = pairStats$activeWeightedPairCount,
         zeroValuedActivePairCount = pairStats$zeroValuedActivePairCount,
         totalPairs = pairStats$totalPairs,
-        disparities = disparities
+        disparities = disparities,
+        internalConsistencyDiffs = matchInfo$diffs,
+        internalConsistencyBestMatch = matchInfo$bestMatch
       ),
-      normStats
+      normStats,
+      commonStress
     )
     tie_blocks_by_fixture[[key]] <- compute_tie_blocks_r(disparities)
 

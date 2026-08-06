@@ -87,15 +87,27 @@ function stressBreakdown(dissimilarity: number[][], distance: number[][], weight
     disparities.push({ pairKey: `${i}-${j}`, i, j, dissimilarity: dissimilarity[i][j], disparity: dHat, configurationDistance: dij });
   }
 
-  const stress1DistanceDenominator = sumSquaredDistances > 0 ? Math.sqrt(rss / sumSquaredDistances) : null;
-  const stress1DisparityDenominator = sumSquaredDisparities > 0 ? Math.sqrt(rss / sumSquaredDisparities) : null;
+  // ---- Attempt 7: three DISTINCTLY named common-formula stress metrics ----
+  // (never conflated with any library's own "reported stress"). q is the
+  // classical target norm, matching disparityNormalization.ts exactly.
+  const q = (n * (n - 1)) / 2;
+  const commonStressDistance = sumSquaredDistances > 0 ? Math.sqrt(rss / sumSquaredDistances) : null; // TS's own normalizedStress1 definition
+  const commonStressQ = q > 0 ? Math.sqrt(rss / q) : null;
+  const commonStressDisparity = sumSquaredDisparities > 0 ? Math.sqrt(rss / sumSquaredDisparities) : null;
 
   return {
-    rss,
+    rssPair: rss,
     sumSquaredDistances,
     sumSquaredDisparities,
-    stress1DistanceDenominator,
-    stress1DisparityDenominator,
+    q,
+    commonStressDistance,
+    commonStressQ,
+    commonStressDisparity,
+    // Legacy field names, kept for backward compatibility with attempt
+    // 4-6 output consumers that read these exact keys.
+    rss,
+    stress1DistanceDenominator: commonStressDistance,
+    stress1DisparityDenominator: commonStressDisparity,
     disparities,
     activePairCount: pairs.length,
     targetNormQ: normResult.normalizationTarget,
@@ -154,11 +166,26 @@ function processMdsFixtures(mdsFixtures: Record<string, any>, snapshotKeys: stri
       pairwiseDistance,
       rawStress: result.rawStress,
       normalizedStress1: result.normalizedStress1,
+      // libraryReportedStress/libraryStressDefinition: named distinctly from
+      // commonStress* below so a direct cross-language comparison never
+      // silently assumes two libraries' own reported values share a formula.
+      libraryReportedStress: result.normalizedStress1,
+      libraryStressDefinition:
+        "sqrt(rssPair / sumSquaredDistances), rssPair/sumSquaredDistances summed over i<j active pairs only (see src/lib/conceptAnalysis/stress.ts computeNormalizedStress1). Computed from the FINAL converged coordinates and the disparity normalized at that same final iteration (see smacof.ts runFromConfiguration) — same iteration state as the returned coordinates, confirmed by code audit (this is a single-pass engine call, not multi-stage).",
       converged: result.converged,
       iterations: result.iterations,
       stressHistory: result.stressHistory,
       stressMonotoneNonIncreasing: result.stressHistory.every((v: number, i: number) => i === 0 || v <= result.stressHistory[i - 1] + 1e-7),
       ...breakdown,
+      // Internal consistency: the engine's own reported normalizedStress1
+      // vs this script's INDEPENDENT recompute (commonStressDistance) from
+      // the same returned coordinates — these should match near machine
+      // precision, since both use the identical formula on the identical
+      // final state. A large gap here would indicate the recompute itself
+      // is wrong, not a cross-language algorithm difference.
+      internalConsistencyDiff: breakdown && Number.isFinite(result.normalizedStress1) && breakdown.commonStressDistance !== null
+        ? Math.abs(result.normalizedStress1 - breakdown.commonStressDistance)
+        : null,
     };
     if (breakdown) tieBlocksByFixture[key] = computeTieBlocks(breakdown.disparities);
 

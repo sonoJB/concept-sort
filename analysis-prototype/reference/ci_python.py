@@ -6,46 +6,42 @@ python-smacof-results.json / python-ward-results.json /
 python-version-metadata.json / python-diagnostic-smacof-results.json for
 compareReferences.ts to consume.
 
-Pinned dependencies are recorded in python-version-metadata.json at runtime
-(the actual resolved versions, not just what was requested) rather than only
-in the workflow file, since this script runs against two different
-scikit-learn version pins in two separate jobs (current vs legacy) — see
---label below.
-
 Usage:
   python ci_python.py <fixtures.json> <output-dir> [--label current|legacy] [--diagnostic-fixtures <path>]
 
-IMPORTANT, documented here rather than silently assumed:
+Attempt 7 rewrite of the disparity/stress recompute (stress_breakdown),
+per the exact spec approved this round:
+  1. pairwise distances from sklearn's returned embedding
+  2. active pairs extracted i<j
+  3. dissimilarity=0 pairs only reached via the zeroFree/strictNoTies
+     fixtures (ties/offDiagonalZero remain excluded from sklearn entirely —
+     unchanged policy, see below)
+  4-9. public sklearn.isotonic.IsotonicRegression(increasing=True), no
+     y_min/y_max, sample_weight=active weight, X=dissimilarity (the ACTUAL
+     value, not a rank index or manually pooled tie-block index — sklearn's
+     IsotonicRegression pools exactly-equal X values into one fitted Y
+     itself when sorting internally; this is a public, documented behavior)
+  10. same disparity normalization as the TypeScript engine:
+      factor = sqrt(q / sum(w * disparity^2)), q = n(n-1)/2
+  11. results restored to original pairKey order
+  12. metadata: unique dissimilarity count, tie block count, X_thresholds_,
+      y_thresholds_ (both PUBLIC post-fit attributes of IsotonicRegression),
+      normalizationFactor, pre/post-normalization sum of squares
+
+Three DISTINCTLY-named common-formula stress metrics are reported
+(commonStressDistance / commonStressQ / commonStressDisparity), separate
+from sklearn's own libraryReportedStress — never conflated. Internal
+consistency between libraryReportedStress and each common metric is
+reported so compareReferences.ts can determine, empirically, which
+denominator convention sklearn's own reported stress actually uses,
+without assuming it in advance.
+
+IMPORTANT, unchanged from earlier attempts:
 - sklearn.manifold.smacof's public signature does not accept a per-pair
-  weight matrix in any version checked so far. This script therefore only
-  calls it on fixtures whose weight matrix is uniform (all off-diagonal = 1)
-  — which is true for every fixture we run it on, since the offDiagonalZero
-  and ties fixtures are excluded from sklearn comparison anyway (see below).
-- sklearn's nonmetric SMACOF historically has ambiguous behavior for
-  dissimilarity=0 off-diagonal entries in some versions/code paths (treated
-  close to "missing" internally in parts of the ties-handling logic). Per
-  instructions, the offDiagonalZero fixture is NOT run through sklearn at
-  all — this is recorded explicitly in the metadata output, not silently
-  skipped.
-- Attempt-5 correction: sklearn.isotonic.IsotonicRegression DOES perform
-  proper tie handling (ties in x share one fitted y, matching the
-  "secondary" convention by construction) — this script's own
-  stress_breakdown() recompute below now explicitly pools ties in the
-  dissimilarity RANK KEY before calling IsotonicRegression, using x=pooled
-  tie-block index rather than x=arange(n_pairs), so tied dissimilarities are
-  guaranteed to receive one shared fitted disparity (matching isotonic.ts's
-  isotonicRegressionByRank behavior) rather than being silently broken by
-  Python's sort-stability. This does NOT change how sklearn's own internal
-  smacof() computes disparities during majorization — that remains sklearn's
-  own implementation, inspected read-only below (see
-  inspect_sklearn_smacof_source) rather than assumed.
-- This script independently RECOMPUTES stress from sklearn's returned
-  embedding using this project's own formulas, rather than trusting
-  sklearn's own internally-reported stress value to already be in the same
-  normalization convention. All of rss / sumSquaredDistances /
-  sumSquaredDisparities / both stress-1 denominator variants / sklearn's own
-  reported stress / disparity-normalization metadata are reported side by
-  side under distinct names — never conflated.
+  weight matrix in any version checked so far, and its nonmetric SMACOF has
+  historically ambiguous behavior for dissimilarity=0 entries — the ties
+  and offDiagonalZero fixtures remain excluded from sklearn comparison,
+  recorded explicitly (not silently skipped).
 """
 import argparse
 import hashlib
@@ -110,99 +106,89 @@ def validate_init_shape(init, dissimilarity, n_components):
         )
 
 
-def active_pairs(n, weight=None):
+def active_pairs(n, weight):
     pairs = [(i, j) for i in range(n) for j in range(i + 1, n)]
-    if weight is None:
-        return pairs
     return [(i, j) for (i, j) in pairs if weight[i][j] > 0]
 
 
-def stress_breakdown(dissimilarity, distance, n):
-    """Independently computes every stress-related quantity this project's
-    stress.ts distinguishes by name.
-
-    Tie handling (attempt-5 fix): dissimilarity values are pooled into tie
-    blocks (values within 1e-9 of each other) BEFORE isotonic regression, and
-    IsotonicRegression is fit on x=block_index (one x per DISTINCT
-    dissimilarity value, weighted by block size) rather than x=arange(n) —
-    this mirrors isotonic.ts's isotonicRegressionByRank secondary-tie
-    behavior: every pair sharing a dissimilarity value receives one shared
-    fitted disparity, not an artifact of sort-order stability.
-
-    Returns a dict with distinctly-named fields (see module docstring):
-      rss, sumSquaredDistances, sumSquaredDisparities,
-      stress1DistanceDenominator, stress1DisparityDenominator,
-      disparities (list of {pairKey, i, j, dissimilarity, disparity,
-      configurationDistance}), activePairCount, targetNormQ,
-      preNormalizationDisparitySumSquares,
-      postNormalizationDisparitySumSquares, disparityNormalizationApplied
-      (always False here — this recompute never rescales; sklearn's OWN
-      internal normalization, if any, is inspected separately via
-      inspect_sklearn_smacof_source, not replicated here).
+def stress_breakdown(dissimilarity, distance, weight, n):
+    """Independently computes rssPair/sumSquaredDistances/sumSquaredDisparities/q
+    and three DISTINCTLY-named common-formula stress metrics, using the
+    public sklearn.isotonic.IsotonicRegression directly on X=dissimilarity
+    (not a rank index, not a manually pooled tie-block index) per the
+    attempt-7 spec. See module docstring for the full 12-step procedure.
     """
-    pairs = active_pairs(n)
-    sorted_pairs = sorted(pairs, key=lambda p: dissimilarity[p[0]][p[1]])
+    pairs = active_pairs(n, weight)
+    x = np.array([dissimilarity[i][j] for (i, j) in pairs], dtype=float)
+    y = np.array([distance[i][j] for (i, j) in pairs], dtype=float)
+    w = np.array([weight[i][j] for (i, j) in pairs], dtype=float)
 
-    # Pool exact ties in the dissimilarity rank key into blocks.
-    tie_eps = 1e-9
-    block_of_pair = {}
-    block_targets = []
-    block_weights = []
-    for (i, j) in sorted_pairs:
-        d_val = dissimilarity[i][j]
-        if block_targets and abs(block_targets[-1][0] - d_val) <= tie_eps:
-            block_idx = len(block_targets) - 1
-        else:
-            block_targets.append((d_val, []))
-            block_idx = len(block_targets) - 1
-            block_weights.append(0)
-        block_targets[block_idx][1].append(distance[i][j])
-        block_weights[block_idx] += 1
-        block_of_pair[(i, j)] = block_idx
-
-    block_means = np.array([np.mean(vals) for _, vals in block_targets])
-    x = np.arange(len(block_means))
     ir = IsotonicRegression(increasing=True)
-    fitted_blocks = ir.fit_transform(x, block_means, sample_weight=np.array(block_weights))
+    fitted = ir.fit_transform(x, y, sample_weight=w)  # returned in ORIGINAL (x, y) order, not sorted
 
-    disparity_by_pair = {}
-    for (i, j) in pairs:
-        disparity_by_pair[(i, j)] = float(fitted_blocks[block_of_pair[(i, j)]])
+    unique_dissimilarity_count = int(len(np.unique(x)))
+    x_thresholds = ir.X_thresholds_.tolist() if hasattr(ir, "X_thresholds_") else None
+    y_thresholds = ir.y_thresholds_.tolist() if hasattr(ir, "y_thresholds_") else None
+    tie_block_count = len(x_thresholds) if x_thresholds is not None else unique_dissimilarity_count
+
+    q = n * (n - 1) / 2
+    pre_norm_sumsq = float(np.sum(w * fitted ** 2))
+    if pre_norm_sumsq > 0:
+        normalization_factor = float(np.sqrt(q / pre_norm_sumsq))
+    else:
+        normalization_factor = float("nan")
+    normalized = fitted * normalization_factor
+    post_norm_sumsq = float(np.sum(w * normalized ** 2))
 
     rss = 0.0
     sum_sq_dist = 0.0
     sum_sq_disp = 0.0
     disparities_out = []
-    for (i, j) in pairs:
-        d_hat = disparity_by_pair[(i, j)]
-        d_ij = distance[i][j]
-        rss += (d_hat - d_ij) ** 2
-        sum_sq_dist += d_ij ** 2
-        sum_sq_disp += d_hat ** 2
+    for idx, (i, j) in enumerate(pairs):
+        d_hat = float(normalized[idx])
+        d_ij = float(y[idx])
+        ww = float(w[idx])
+        rss += ww * (d_hat - d_ij) ** 2
+        sum_sq_dist += ww * d_ij ** 2
+        sum_sq_disp += ww * d_hat ** 2
         disparities_out.append({
             "pairKey": f"{i}-{j}",
             "i": i,
             "j": j,
             "dissimilarity": float(dissimilarity[i][j]),
             "disparity": d_hat,
-            "configurationDistance": float(d_ij),
+            "configurationDistance": d_ij,
         })
 
-    stress1_distance_denom = float(np.sqrt(rss / sum_sq_dist)) if sum_sq_dist > 0 else None
-    stress1_disparity_denom = float(np.sqrt(rss / sum_sq_disp)) if sum_sq_disp > 0 else None
+    common_stress_distance = float(np.sqrt(rss / sum_sq_dist)) if sum_sq_dist > 0 else None
+    common_stress_q = float(np.sqrt(rss / q)) if q > 0 else None
+    common_stress_disparity = float(np.sqrt(rss / sum_sq_disp)) if sum_sq_disp > 0 else None
 
     return {
-        "rss": float(rss),
+        "rssPair": float(rss),
         "sumSquaredDistances": float(sum_sq_dist),
         "sumSquaredDisparities": float(sum_sq_disp),
-        "stress1DistanceDenominator": stress1_distance_denom,
-        "stress1DisparityDenominator": stress1_disparity_denom,
+        "q": q,
+        "commonStressDistance": common_stress_distance,
+        "commonStressQ": common_stress_q,
+        "commonStressDisparity": common_stress_disparity,
         "disparities": disparities_out,
         "activePairCount": len(pairs),
-        "targetNormQ": len(pairs),
-        "preNormalizationDisparitySumSquares": float(sum_sq_disp),
-        "postNormalizationDisparitySumSquares": float(sum_sq_disp),
-        "disparityNormalizationApplied": False,
+        "uniqueDissimilarityCount": unique_dissimilarity_count,
+        "tieBlockCount": tie_block_count,
+        "xThresholds": x_thresholds,
+        "yThresholds": y_thresholds,
+        "normalizationFactor": normalization_factor,
+        "preNormalizationSumSquares": pre_norm_sumsq,
+        "postNormalizationSumSquares": post_norm_sumsq,
+        # Legacy aliases (attempt 4-6 field names), kept for output consumers.
+        "rss": float(rss),
+        "stress1DistanceDenominator": common_stress_distance,
+        "stress1DisparityDenominator": common_stress_disparity,
+        "targetNormQ": q,
+        "preNormalizationDisparitySumSquares": pre_norm_sumsq,
+        "postNormalizationDisparitySumSquares": post_norm_sumsq,
+        "disparityNormalizationApplied": True,
     }
 
 
@@ -243,8 +229,11 @@ def inspect_sklearn_smacof_source():
     """Read-only inspection of the installed sklearn._mds module: records
     the file's version, a content hash (so a specific inspected file is
     traceable), and the exact source line(s) implementing (a) the
-    convergence check and (b) any disparity-normalization step, WITHOUT
-    calling any private function or monkey-patching anything.
+    convergence check and (b) the disparity-normalization / stress-return
+    formula, WITHOUT calling any private function or monkey-patching
+    anything. Widened this round to also capture the full "normalized_stress"
+    computation block (previously only the disparity-rescale line and
+    convergence check were captured).
     """
     try:
         from sklearn.manifold import _mds as mds_module
@@ -253,21 +242,38 @@ def inspect_sklearn_smacof_source():
         with open(source_file, "r", encoding="utf-8") as f:
             source_text = f.read()
         file_hash = hashlib.sha256(source_text.encode("utf-8")).hexdigest()
+        lines = source_text.splitlines()
 
         convergence_lines = []
         normalization_lines = []
-        for lineno, line in enumerate(source_text.splitlines(), start=1):
+        stress_return_lines = []
+        for lineno, line in enumerate(lines, start=1):
             stripped = line.strip()
             if "eps" in stripped and ("stress" in stripped.lower() or "old_stress" in stripped or "<" in stripped or "break" in stripped):
                 convergence_lines.append({"line": lineno, "text": stripped})
             if "disparities" in stripped and ("sqrt" in stripped or "*=" in stripped or "normalize" in stripped.lower()):
                 normalization_lines.append({"line": lineno, "text": stripped})
+            if "normalized_stress" in stripped or ("stress" in stripped.lower() and "return" in stripped.lower()):
+                stress_return_lines.append({"line": lineno, "text": stripped})
+
+        # Also capture a wider context window (+/- 8 lines) around the first
+        # "normalized_stress" occurrence, since the actual formula often
+        # spans several lines (an if/else branch), not just the matched line.
+        context_block = []
+        for idx, line in enumerate(lines):
+            if "normalized_stress" in line:
+                start = max(0, idx - 8)
+                end = min(len(lines), idx + 9)
+                context_block = [{"line": i + 1, "text": lines[i]} for i in range(start, end)]
+                break
 
         return {
             "sourceFile": source_file,
             "sourceFileSha256": file_hash,
             "convergenceRelatedLines": convergence_lines[:20],
             "disparityNormalizationRelatedLines": normalization_lines[:20],
+            "stressReturnRelatedLines": stress_return_lines[:20],
+            "normalizedStressContextBlock": context_block,
         }
     except Exception as e:  # noqa: BLE001 - diagnostic best-effort, must not crash the run
         return {"error": str(e)}
@@ -291,6 +297,7 @@ def run_smacof_on_fixture(key, fx, snapshot_keys):
         )
 
     dissimilarity = np.array(fx["dissimilarity"])
+    weight = np.array(fx["weight"])
     init = np.array(fx["initialCoordinates"])
     n = dissimilarity.shape[0]
     n_components = fx["dimension"]
@@ -324,14 +331,31 @@ def run_smacof_on_fixture(key, fx, snapshot_keys):
         )
 
     distance = pairwise_distance(embedding)
-    breakdown = stress_breakdown(dissimilarity, distance, n)
+    breakdown = stress_breakdown(dissimilarity, distance, weight, n)
+
+    # ---- Internal consistency: which common-formula denominator does
+    # sklearn's OWN reported stress actually match? Determined empirically
+    # (never assumed) by comparing against all three candidates.
+    library_reported_stress = float(sklearn_stress)
+    candidates = {
+        "commonStressDistance": breakdown["commonStressDistance"],
+        "commonStressQ": breakdown["commonStressQ"],
+        "commonStressDisparity": breakdown["commonStressDisparity"],
+    }
+    diffs = {k: (abs(library_reported_stress - v) if v is not None else float("inf")) for k, v in candidates.items()}
+    best_match = min(diffs, key=diffs.get)
 
     result = {
         "coordinates": embedding.tolist(),
         "pairwiseDistance": distance.tolist(),
-        "sklearnReportedStress": float(sklearn_stress),
-        "recomputedRawStress": breakdown["rss"],
-        "recomputedNormalizedStress1": breakdown["stress1DistanceDenominator"],
+        "sklearnReportedStress": library_reported_stress,
+        "libraryReportedStress": library_reported_stress,
+        "libraryReportedAtIteration": int(n_iter),
+        "returnedCoordinatesAtIteration": int(n_iter),
+        "internalConsistencyDiffs": diffs,
+        "internalConsistencyBestMatch": best_match,
+        "recomputedRawStress": breakdown["rssPair"],
+        "recomputedNormalizedStress1": breakdown["commonStressDistance"],
         "nIter": int(n_iter),
         "initShape": list(init.shape),
         **breakdown,
@@ -341,7 +365,7 @@ def run_smacof_on_fixture(key, fx, snapshot_keys):
     snapshots = None
     if key in snapshot_keys:
         iteration0_distance = pairwise_distance(init)
-        iteration0_breakdown = stress_breakdown(dissimilarity, iteration0_distance, n)
+        iteration0_breakdown = stress_breakdown(dissimilarity, iteration0_distance, weight, n)
         snap_list = {}
         for iter_count in SNAPSHOT_ITERS:
             snap_embedding, snap_stress, snap_n_iter = smacof(
@@ -356,7 +380,7 @@ def run_smacof_on_fixture(key, fx, snapshot_keys):
                 return_n_iter=True,
             )
             snap_distance = pairwise_distance(snap_embedding)
-            snap_breakdown = stress_breakdown(dissimilarity, snap_distance, n)
+            snap_breakdown = stress_breakdown(dissimilarity, snap_distance, weight, n)
             snap_list[str(iter_count)] = {
                 "requestedIterations": iter_count,
                 "iterationsRun": int(snap_n_iter),
@@ -373,7 +397,7 @@ def run_smacof_on_fixture(key, fx, snapshot_keys):
                 **iteration0_breakdown,
             },
             "s1InitialDisparity": {
-                "note": "S1_INITIAL_DISPARITY: isotonic fit (tie-pooled) of S0's distances against the dissimilarity ranking.",
+                "note": "S1_INITIAL_DISPARITY: isotonic fit of S0's distances against the dissimilarity ranking, via public sklearn.isotonic.IsotonicRegression with X=dissimilarity.",
                 **iteration0_breakdown,
             },
             "snapshots": snap_list,
