@@ -26,23 +26,26 @@ name: Concept Analysis Cross-Validation
 # statistical comparison could run. Final verification status: NOT_RUN. The
 # push trigger was removed afterward, restoring manual-only dispatch.
 #
-# TEMPORARY (attempt 3): the same one-shot, path-restricted push trigger is
-# re-added below, now that two harness bugs have been fixed: (1)
-# ci_python.py no longer wraps `init` in an extra leading dimension before
-# calling sklearn's smacof() — it now passes the plain (n_samples,
-# n_components) array directly, with explicit shape validation beforehand
-# instead of a silent reshape; (2) the R job's dependency installation now
-# uses r-lib/actions/setup-r-dependencies@v2 with public RSPM binaries
-# instead of building `smacof`'s full source dependency tree (Hmisc, etc.)
-# from source. Removed again in a follow-up commit ("Restore manual-only
-# workflow after third validation attempt") right after this run.
+# Attempt 3 (run 31106809126) reused that same temporary trigger after (1)
+# fixing ci_python.py's init-shape bug and (2) switching the R job to
+# r-lib/actions/setup-r-dependencies@v2 with public RSPM binaries. Both
+# harness fixes worked: the Node job passed, the Python job now runs SMACOF
+# and Ward successfully, and R package installation itself succeeded.
+# However: (a) ci_r.R crashed at runtime with "Error in row[[j]] : subscript
+# out of bounds" in its matrix_from_list() helper — a separate, still-unfixed
+# bug in ci_r.R, out of scope for attempt 3 — so R still produced no output;
+# (b) real numeric comparisons now ran between TS and Python and FAILED: a
+# SMACOF stress/distance discrepancy on the zeroFree fixture (both sides
+# start from an identical init, but sklearn stops after 5 iterations vs TS's
+# 19, landing at a distinctly higher stress — a likely convergence-criterion
+# scale difference, not yet diagnosed further) and a Ward partition mismatch
+# at k=4/k=5 despite the underlying linkage matrix (merge order + heights)
+# being byte-identical between TS and SciPy — traced to ci_python.py's use of
+# scipy's fcluster(criterion="maxclust"), which does not guarantee exactly k
+# clusters. Final verification status: FAILED (not VERIFIED). The push
+# trigger is removed again here, restoring manual-only dispatch.
 on:
   workflow_dispatch: {}
-  push:
-    branches:
-      - feature/concept-map-analysis-prototype
-    paths:
-      - analysis-prototype/ci-trigger.txt
 
 permissions:
   contents: read
