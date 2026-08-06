@@ -94,19 +94,29 @@ name: Concept Analysis Cross-Validation
 # and R's smacof package (normDiss/normDissN internals). No other engine
 # logic changed: weighted PAVA (isotonic.ts), the Guttman transform formula,
 # the pseudo-inverse, Stress-1's definition, Ward, and the seeded PRNG are
-# all untouched — confirmed via `git diff` scope before commit. All 233
-# pre-existing tests plus 74 new disparity-normalization tests (307 total)
-# pass locally with no regressions, no STRESS_INCREASED trips, and exact
-# seeded reproducibility preserved. Removed again in a follow-up commit
-# ("Restore manual-only workflow after disparity validation") right after
-# this run.
+# all untouched. All 233 pre-existing tests plus 74 new
+# disparity-normalization tests (307 total) passed locally with no
+# regressions, no STRESS_INCREASED trips, and exact seeded reproducibility
+# preserved (run 31115998027).
+#
+# Attempt 6 results: raw pairwise-distance and disparity comparisons
+# improved dramatically — distance diffs dropped from ~0.22 to ~1.6e-5..5.5e-5
+# across zeroFree/ties/offDiagonalZero, and disparity vs R matched to
+# ~1e-16 (floating-point noise) on all three. strictNoTies now PASSES at raw
+# scale against both Python and R. ties' canonical disparity mismatch from
+# attempt 5 is RESOLVED (now PASS). The remaining FAILs are a newly-isolated,
+# narrower issue: raw Stress-1 values still differ by ~2.5e-3-6.3e-3 even
+# though the underlying geometry (distance, disparity) now matches almost
+# exactly — most consistent with TS's engine-reported normalizedStress1 and
+# R's/sklearn's own natively-reported stress value using formulas that are
+# not byte-identical (a comparison-methodology question, not yet confirmed
+# as a geometry mismatch). No statistical algorithm code was modified beyond
+# the explicitly-approved disparity normalization. Final verification
+# status: FAILED (not VERIFIED — most required checks now PASS, a
+# significant improvement from attempt 5's 9/11). The push trigger is
+# removed again here, restoring manual-only dispatch.
 on:
   workflow_dispatch: {}
-  push:
-    branches:
-      - feature/concept-map-analysis-prototype
-    paths:
-      - analysis-prototype/ci-trigger.txt
 
 permissions:
   contents: read
