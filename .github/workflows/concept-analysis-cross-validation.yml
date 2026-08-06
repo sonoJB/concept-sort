@@ -1,0 +1,212 @@
+name: Concept Analysis Cross-Validation
+
+# Manual-only. No push/pull_request/schedule trigger — this workflow must
+# never run automatically, and must never be able to affect Railway (which
+# is configured to deploy only from the `main` branch's own GitHub push
+# events, confirmed separately via the Railway API before this workflow was
+# added). This job does not touch Railway, production data, or any secret.
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+env:
+  # Pinned versions, recorded again in job output/artifact metadata so the
+  # exact environment used is always traceable from the artifact alone.
+  PYTHON_VERSION: "3.12"
+  NUMPY_VERSION: "1.26.4"
+  SCIPY_VERSION: "1.13.1"
+  SCIKIT_LEARN_VERSION: "1.5.1"
+  R_VERSION: "4.4.1"
+
+jobs:
+  node-reference-inputs:
+    name: A. node-reference-inputs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Record environment metadata
+        run: |
+          mkdir -p artifacts/metadata
+          node --version
+          node -e "console.log(JSON.stringify({nodeVersion: process.version, platform: process.platform, arch: process.arch, runnerOs: process.env.RUNNER_OS}, null, 2))" > artifacts/metadata/environment.json
+          cat artifacts/metadata/environment.json
+
+      - name: npm ci
+        run: npm ci
+
+      - name: Run internal verification suite (Node 22)
+        run: npx -y tsx analysis-prototype/scripts/verify.ts
+
+      - name: Hand-derived checks (Node 22)
+        run: |
+          npx -y tsx analysis-prototype/scripts/handcheck.ts
+          npx -y tsx analysis-prototype/scripts/handcheck_ward.ts
+
+      - name: Export shared fixtures (fixed dissimilarity/weight/initial-coordinates)
+        run: |
+          mkdir -p artifacts/inputs
+          npx -y tsx analysis-prototype/scripts/exportFixtures.ts artifacts/inputs/fixtures.json
+
+      - name: Run TypeScript reference (shared-init SMACOF, Ward, dimension diagnostics)
+        run: |
+          mkdir -p artifacts/typescript
+          npx -y tsx analysis-prototype/scripts/runTsReference.ts artifacts/inputs/fixtures.json artifacts/typescript
+
+      - name: Upload node-reference-inputs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: node-reference-inputs
+          path: artifacts
+          retention-days: 7
+
+  python-reference:
+    name: B. python-reference
+    runs-on: ubuntu-latest
+    needs: node-reference-inputs
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pinned Python packages
+        run: |
+          pip install \
+            numpy==${{ env.NUMPY_VERSION }} \
+            scipy==${{ env.SCIPY_VERSION }} \
+            scikit-learn==${{ env.SCIKIT_LEARN_VERSION }}
+          python --version
+          python -c "import numpy, scipy, sklearn; print('numpy', numpy.__version__); print('scipy', scipy.__version__); print('sklearn', sklearn.__version__)"
+
+      - name: Download shared fixtures
+        uses: actions/download-artifact@v4
+        with:
+          name: node-reference-inputs
+          path: downloaded
+
+      - name: Run Python reference
+        run: |
+          mkdir -p artifacts/python
+          python analysis-prototype/reference/ci_python.py downloaded/inputs/fixtures.json artifacts/python
+
+      - name: Upload python-reference artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-reference
+          path: artifacts/python
+          retention-days: 7
+
+  r-reference:
+    name: C. r-reference
+    runs-on: ubuntu-latest
+    needs: node-reference-inputs
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: ${{ env.R_VERSION }}
+
+      - name: Install pinned R packages
+        run: |
+          Rscript -e 'install.packages(c("jsonlite", "smacof"), repos="https://cloud.r-project.org")'
+          Rscript -e 'cat(R.version.string, "\n"); cat("smacof", as.character(packageVersion("smacof")), "\n"); cat("jsonlite", as.character(packageVersion("jsonlite")), "\n")'
+
+      - name: Download shared fixtures
+        uses: actions/download-artifact@v4
+        with:
+          name: node-reference-inputs
+          path: downloaded
+
+      - name: Run R reference
+        run: |
+          mkdir -p artifacts/r
+          Rscript analysis-prototype/reference/ci_r.R downloaded/inputs/fixtures.json artifacts/r
+
+      - name: Upload r-reference artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: r-reference
+          path: artifacts/r
+          retention-days: 7
+
+  compare:
+    name: Compare TS vs Python vs R
+    runs-on: ubuntu-latest
+    needs: [node-reference-inputs, python-reference, r-reference]
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: npm ci
+        run: npm ci
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: node-reference-inputs
+          path: downloaded/node
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-reference
+          path: downloaded/python
+        continue-on-error: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: r-reference
+          path: downloaded/r
+        continue-on-error: true
+
+      - name: Run comparison
+        run: |
+          mkdir -p artifacts/comparison
+          npx -y tsx analysis-prototype/scripts/compareReferences.ts \
+            downloaded/node/inputs/fixtures.json \
+            downloaded/node/typescript \
+            downloaded/python \
+            downloaded/r \
+            artifacts/comparison
+
+      - name: Write step summary
+        if: always()
+        run: cat artifacts/comparison/comparison-summary.md >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Assemble final combined artifact
+        if: always()
+        run: |
+          mkdir -p final/concept-analysis-validation/metadata
+          mkdir -p final/concept-analysis-validation/inputs
+          mkdir -p final/concept-analysis-validation/typescript
+          mkdir -p final/concept-analysis-validation/python
+          mkdir -p final/concept-analysis-validation/r
+          mkdir -p final/concept-analysis-validation/comparison
+          cp -r downloaded/node/metadata/. final/concept-analysis-validation/metadata/ || true
+          cp -r downloaded/node/inputs/. final/concept-analysis-validation/inputs/ || true
+          cp -r downloaded/node/typescript/. final/concept-analysis-validation/typescript/ || true
+          cp -r downloaded/python/. final/concept-analysis-validation/python/ || true
+          cp -r downloaded/r/. final/concept-analysis-validation/r/ || true
+          cp -r artifacts/comparison/. final/concept-analysis-validation/comparison/ || true
+          # No production DB, no rrrvvnux data, no adminToken/participantName/
+          # phoneNumber, no env vars, and no GitHub/Railway tokens are ever
+          # written to these directories by any script in this workflow.
+
+      - name: Upload final combined artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: concept-analysis-validation
+          path: final/concept-analysis-validation
+          retention-days: 7
