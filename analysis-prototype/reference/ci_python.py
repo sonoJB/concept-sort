@@ -55,6 +55,30 @@ def pairwise_distance(coords):
     return d
 
 
+def validate_init_shape(init, dissimilarity, n_components):
+    """Defensive validation for the SMACOF init array, run immediately before
+    every smacof() call. sklearn's public smacof() expects `init` shaped
+    exactly (n_samples, n_components) — a plain 2D array, not wrapped in an
+    extra leading dimension. Raises PYTHON_INIT_SHAPE_INVALID with a precise
+    message instead of silently reshaping on mismatch.
+    """
+    n = dissimilarity.shape[0]
+    if dissimilarity.ndim != 2 or dissimilarity.shape[0] != dissimilarity.shape[1]:
+        raise ValueError(f"PYTHON_INIT_SHAPE_INVALID: dissimilarity is not square, got shape {dissimilarity.shape}")
+    if init.ndim != 2:
+        raise ValueError(f"PYTHON_INIT_SHAPE_INVALID: init.ndim must be 2, got {init.ndim} (shape {init.shape})")
+    if init.shape[0] != n:
+        raise ValueError(
+            f"PYTHON_INIT_SHAPE_INVALID: init.shape[0] ({init.shape[0]}) must equal "
+            f"dissimilarity.shape[0] ({n})"
+        )
+    if init.shape[1] != n_components:
+        raise ValueError(
+            f"PYTHON_INIT_SHAPE_INVALID: init.shape[1] ({init.shape[1]}) must equal "
+            f"n_components ({n_components})"
+        )
+
+
 def recompute_normalized_stress1(dissimilarity, distance, n):
     """Independent re-implementation of this project's Stress-1 formula:
     disparities fit via weighted isotonic regression on ascending
@@ -91,13 +115,20 @@ for key, fx in fixtures["mds"].items():
     dissimilarity = np.array(fx["dissimilarity"])
     init = np.array(fx["initialCoordinates"])
     n = dissimilarity.shape[0]
+    n_components = fx["dimension"]
+
+    # sklearn's public smacof() expects init shaped (n_samples, n_components)
+    # directly — a plain 2D array. No reshape here; validate instead of
+    # coercing, so a genuine shape mismatch surfaces as a clear error rather
+    # than being silently "fixed" into some other unintended shape.
+    validate_init_shape(init, dissimilarity, n_components)
 
     try:
         embedding, sklearn_stress, n_iter = smacof(
             dissimilarity,
             metric=False,
-            n_components=fx["dimension"],
-            init=init.reshape(1, *init.shape),
+            n_components=n_components,
+            init=init,
             n_init=1,
             max_iter=fx["maxIter"],
             eps=fx["eps"],
@@ -112,8 +143,8 @@ for key, fx in fixtures["mds"].items():
         embedding, sklearn_stress, n_iter = smacof(
             dissimilarity,
             metric=False,
-            n_components=fx["dimension"],
-            init=init.reshape(1, *init.shape),
+            n_components=n_components,
+            init=init,
             n_init=1,
             max_iter=fx["maxIter"],
             eps=fx["eps"],
@@ -131,6 +162,7 @@ for key, fx in fixtures["mds"].items():
         "recomputedRawStress": raw_stress,
         "recomputedNormalizedStress1": normalized_stress1,
         "nIter": int(n_iter),
+        "initShape": list(init.shape),
     }
 
 with open(f"{output_dir}/python-smacof-results.json", "w", encoding="utf-8") as f:

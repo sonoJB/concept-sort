@@ -24,9 +24,25 @@ name: Concept Analysis Cross-Validation
 # in ci_python.py, and a CRAN dependency-resolution failure for the `smacof`
 # package's transitive deps in the R job) before any cross-language
 # statistical comparison could run. Final verification status: NOT_RUN. The
-# push trigger is removed again here, restoring manual-only dispatch.
+# push trigger was removed afterward, restoring manual-only dispatch.
+#
+# TEMPORARY (attempt 3): the same one-shot, path-restricted push trigger is
+# re-added below, now that two harness bugs have been fixed: (1)
+# ci_python.py no longer wraps `init` in an extra leading dimension before
+# calling sklearn's smacof() — it now passes the plain (n_samples,
+# n_components) array directly, with explicit shape validation beforehand
+# instead of a silent reshape; (2) the R job's dependency installation now
+# uses r-lib/actions/setup-r-dependencies@v2 with public RSPM binaries
+# instead of building `smacof`'s full source dependency tree (Hmisc, etc.)
+# from source. Removed again in a follow-up commit ("Restore manual-only
+# workflow after third validation attempt") right after this run.
 on:
   workflow_dispatch: {}
+  push:
+    branches:
+      - feature/concept-map-analysis-prototype
+    paths:
+      - analysis-prototype/ci-trigger.txt
 
 permissions:
   contents: read
@@ -144,11 +160,30 @@ jobs:
       - uses: r-lib/actions/setup-r@v2
         with:
           r-version: ${{ env.R_VERSION }}
+          use-public-rspm: true
 
-      - name: Install pinned R packages
+      # Installs smacof and jsonlite (the only two packages ci_r.R actually
+      # imports) from RStudio Package Manager's public binary repository
+      # instead of building from CRAN source. This avoids compiling smacof's
+      # full transitive dependency tree (Hmisc, weights, and Hmisc's own
+      # optional deps htmlTable/rmarkdown) on the runner, which failed in
+      # attempt 2. No dependency is skipped or excluded — setup-r-dependencies
+      # resolves and installs the full dependency graph, just from prebuilt
+      # binaries rather than source.
+      - name: Install R dependencies (smacof, jsonlite) via public RSPM binaries
+        uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          packages: |
+            any::smacof
+            any::jsonlite
+
+      - name: Verify R packages actually load and record exact versions
         run: |
-          Rscript -e 'install.packages(c("jsonlite", "smacof"), repos="https://cloud.r-project.org")'
-          Rscript -e 'cat(R.version.string, "\n"); cat("smacof", as.character(packageVersion("smacof")), "\n"); cat("jsonlite", as.character(packageVersion("jsonlite")), "\n")'
+          R --version
+          Rscript -e 'cat(as.character(packageVersion("smacof")), "\n")'
+          Rscript -e 'cat(as.character(packageVersion("jsonlite")), "\n")'
+          Rscript -e 'library(smacof); library(jsonlite); cat("r-packages-ok\n")'
+          Rscript -e 'sessionInfo()'
 
       - name: Download shared fixtures
         uses: actions/download-artifact@v4
