@@ -136,15 +136,20 @@ name: Concept Analysis Cross-Validation
 # recompute was also rewritten to use sklearn.isotonic.IsotonicRegression
 # with X=dissimilarity value directly (not a rank/tie-block index), per the
 # exact approved 12-step procedure. No src/lib/conceptAnalysis file was
-# touched. Removed again in a follow-up commit ("Restore manual-only
-# workflow after stress validation") right after this run.
+# touched.
+#
+# Attempt 7 (run 31118243440) never actually executed any of this code: the
+# `A. node-reference-inputs` job sat queued/in-progress for ~15 minutes and
+# was then CANCELLED by the GitHub Actions platform, and the downstream
+# `Compare` job did the same (~15 min, then cancelled) while the Python/R
+# jobs were SKIPPED (their `needs` dependency never completed). Zero
+# artifacts were produced. This is a runner-availability/infrastructure
+# anomaly on GitHub's side — not a workflow YAML or script defect — no code
+# from this attempt was exercised even once. Final verification status:
+# NOT_RUN. The push trigger is removed again here, restoring manual-only
+# dispatch.
 on:
   workflow_dispatch: {}
-  push:
-    branches:
-      - feature/concept-map-analysis-prototype
-    paths:
-      - analysis-prototype/ci-trigger.txt
 
 permissions:
   contents: read
