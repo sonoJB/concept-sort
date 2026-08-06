@@ -17,20 +17,16 @@ name: Concept Analysis Cross-Validation
 # prisma.config.ts, which this workflow must not set) before any
 # statistical comparison ran, and the trigger was removed afterward.
 #
-# TEMPORARY (attempt 2): the same one-shot, path-restricted push trigger is
-# re-added below, now that `npm ci` has been changed to
-# `npm ci --ignore-scripts` (this prototype never needs the generated
-# Prisma client, so skipping the postinstall hook avoids the DATABASE_URL
-# requirement without ever setting one, real or dummy). Removed again in a
-# follow-up commit ("Restore manual-only workflow after validation retry")
-# right after this run.
+# Attempt 2 (run 31103725730) reused that same temporary trigger after
+# changing `npm ci` to `npm ci --ignore-scripts`. The Node job (including the
+# full internal test suite) passed, but the Python and R reference jobs both
+# failed at the environment/script level (an incorrect sklearn `init` shape
+# in ci_python.py, and a CRAN dependency-resolution failure for the `smacof`
+# package's transitive deps in the R job) before any cross-language
+# statistical comparison could run. Final verification status: NOT_RUN. The
+# push trigger is removed again here, restoring manual-only dispatch.
 on:
   workflow_dispatch: {}
-  push:
-    branches:
-      - feature/concept-map-analysis-prototype
-    paths:
-      - analysis-prototype/ci-trigger.txt
 
 permissions:
   contents: read
