@@ -13,12 +13,21 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 import { computeGroupBounds } from "@/lib/groupBounds";
+import { resolveEffectiveConsentKo } from "@/lib/consent";
+import { GENDER_OPTIONS, SCHOOL_LEVEL_OPTIONS, GRADE_OPTIONS } from "@/lib/participantOptions";
+import { getParticipantMessages, type MessageShape, type ParticipantLocale } from "@/messages/participant";
+import type { ErrorCode } from "@/lib/errorCodes";
 
-const GUIDE_LINK_TEXT = "[유사성 분류 방법 안내문]";
-
-type Statement = { id: string; text: string };
+type StatementInput = {
+  id: string;
+  order: number;
+  text: string;
+  textJa: string | null;
+  jaStatus: string;
+};
 type Group = { id: string; label: string };
-type Step = "name" | "consent" | "declined" | "demographics" | "sorting";
+type Step = "country" | "name" | "consent" | "declined" | "demographics" | "sorting" | "submitted";
+type CountryCode = "KR" | "JP";
 
 const POOL_ID = "pool";
 
@@ -29,31 +38,29 @@ const POOL_ID = "pool";
 const FIXED_PANEL_WIDTH =
   "md:w-[280px] md:min-w-[280px] md:max-w-[280px] md:shrink-0";
 
-const CONSENT_BODY = `본 연구는 청소년이 인식한 사이버폭력 특징에 대한 개념을 탐색하는 연구입니다. 본 연구의 참여에 앞서 연구에 대한 설명과 동의서를 읽어 보십시오. 귀하의 서명은 연구에 대한 설명을 읽었으며 연구 참여에 동의하였다는 것을 의미합니다.
+function localeToCountry(locale: ParticipantLocale): CountryCode {
+  return locale === "ja" ? "JP" : "KR";
+}
+function countryToLocale(country: CountryCode): ParticipantLocale {
+  return country === "JP" ? "ja" : "ko";
+}
 
-1. 연구 목적
-본 연구의 목적은 청소년이 인식한 사이버폭력 특징의 개념을 체계화하고 분석하며 이를 활용하는 방안을 제안하는 데 있습니다. 도출된 사이버폭력 특징의 구성요소는 향후 한-일 양국 간 인식 비교 연구의 이론적 기초 자료로 활용될 예정입니다.
+/** Resolves a submit-API errorCode to localized text; never falls back to the server's Korean string when locale is ja. */
+function localizedError(
+  t: MessageShape,
+  errorCode: string | undefined,
+  locale: ParticipantLocale,
+  koFallback: string,
+  n?: number
+): string {
+  const entry = errorCode && errorCode in t.errors ? t.errors[errorCode as ErrorCode] : undefined;
+  if (typeof entry === "function") return entry(n ?? 0);
+  if (typeof entry === "string") return entry;
+  return locale === "ko" ? koFallback : t.errors.SUBMISSION_FAILED as string;
+}
 
-2. 연구 참여 내용
-본 연구진은 사전 인터뷰를 통해 청소년이 인식한 사이버폭력 특징에 대한 개념을 진술문 형태로 추출하였고 이를 유사성 분류 카드(진술문)로 제작하였습니다.
-
-3. 개인정보와 비밀 보장
-본 연구진은 귀하의 개인정보 보호를 포함한 연구윤리를 준수할 것입니다. 본 연구의 참여로 수집되는 개인정보는 성명과 성별, 소속, 연령, 연락처 등의 개인식별 정보이며, 이는 연구목적을 위해 코드화하여 처리하고 통계적으로 수치화됩니다. 연구에서 얻어진 개인정보가 학회지나 학회에 활용될 때 귀하의 이름과 개인식별 정보는 사용하지 않습니다.
-
-2026. 08.
-이화여자대학교 오인수 교수 연구팀`;
-
-function Card({
-  id,
-  number,
-  text,
-}: {
-  id: string;
-  number: number;
-  text: string;
-}) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } =
-    useDraggable({ id });
+function Card({ id, number, text }: { id: string; number: number; text: string }) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id });
 
   return (
     <div
@@ -61,9 +68,7 @@ function Card({
       {...listeners}
       {...attributes}
       style={{
-        transform: transform
-          ? `translate3d(${transform.x}px, ${transform.y}px, 0)`
-          : undefined,
+        transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
         touchAction: "none",
       }}
       className={`flex min-w-0 select-none items-start gap-2 rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-[13px] leading-5 shadow-xs cursor-grab active:cursor-grabbing ${
@@ -96,11 +101,62 @@ function DropZone({
         setNodeRef(node);
         innerRef?.(node);
       }}
-      className={`${className ?? ""} ${
-        isOver ? "ring-2 ring-blue-400 bg-blue-50" : ""
-      }`}
+      className={`${className ?? ""} ${isOver ? "ring-2 ring-blue-400 bg-blue-50" : ""}`}
     >
       {children}
+    </div>
+  );
+}
+
+function CountryStep({ onSelect }: { onSelect: (country: CountryCode) => void }) {
+  const [selected, setSelected] = useState<CountryCode | null>(null);
+
+  const options: { code: CountryCode; label: string }[] = [
+    { code: "KR", label: "Korea (한국)" },
+    { code: "JP", label: "Japan (日本)" },
+  ];
+
+  return (
+    <div className="max-w-xl mx-auto py-16 px-1 space-y-6">
+      <div className="space-y-1 text-center">
+        <h1 className="text-xl font-bold">참여 국가를 선택해 주세요</h1>
+        <h1 className="text-xl font-bold">参加する国を選択してください</h1>
+        <p className="text-sm text-slate-500">Please select your country.</p>
+      </div>
+
+      <div
+        role="radiogroup"
+        aria-label="참여 국가 선택 / 参加する国の選択"
+        className="grid grid-cols-1 gap-3 sm:grid-cols-2"
+      >
+        {options.map((opt) => {
+          const isSelected = selected === opt.code;
+          return (
+            <button
+              key={opt.code}
+              type="button"
+              role="radio"
+              aria-checked={isSelected}
+              onClick={() => setSelected(opt.code)}
+              className={`rounded-xl border-2 px-5 py-8 text-center text-lg font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 ${
+                isSelected
+                  ? "border-slate-900 bg-slate-900 text-white"
+                  : "border-slate-300 bg-white text-slate-700 hover:border-slate-400"
+              }`}
+            >
+              {opt.label}
+            </button>
+          );
+        })}
+      </div>
+
+      <button
+        onClick={() => selected && onSelect(selected)}
+        disabled={!selected}
+        className="w-full rounded-lg bg-slate-900 px-6 py-3 text-white font-medium hover:bg-slate-700 transition-colors disabled:opacity-50"
+      >
+        다음 / 次へ
+      </button>
     </div>
   );
 }
@@ -109,66 +165,148 @@ export function SortBoard({
   slug,
   title,
   prompt,
+  consentKo,
+  legacyConsentFallbackEnabled,
+  titleJa,
+  promptJa,
+  consentJa,
+  koreanAvailable,
+  japaneseAvailable,
   statements,
+  previewMode = false,
+  previewLocale,
 }: {
   slug: string;
   title: string;
   prompt: string;
-  statements: Statement[];
+  consentKo: string | null;
+  legacyConsentFallbackEnabled: boolean;
+  titleJa: string | null;
+  promptJa: string | null;
+  consentJa: string | null;
+  koreanAvailable: boolean;
+  japaneseAvailable: boolean;
+  statements: StatementInput[];
+  previewMode?: boolean;
+  previewLocale?: ParticipantLocale;
 }) {
-  const { maxCardsPerGroup, minGroups, maxGroups } = computeGroupBounds(
-    statements.length
-  );
+  const { maxCardsPerGroup, minGroups, maxGroups } = computeGroupBounds(statements.length);
+  const storageKey = `concept-sort:${slug}:country`;
 
-  const [step, setStep] = useState<Step>("name");
+  // Whichever language is the *only* one available skips the country step
+  // entirely and uses that language's server-assigned country code — never
+  // trusting sessionStorage in that case, per the finalized single-language
+  // participation rule.
+  const singleLocale: ParticipantLocale | null =
+    koreanAvailable && !japaneseAvailable ? "ko" : japaneseAvailable && !koreanAvailable ? "ja" : null;
+  const bothAvailable = koreanAvailable && japaneseAvailable;
+
+  const [country, setCountryState] = useState<CountryCode | null>(() => {
+    if (previewMode) return localeToCountry(previewLocale ?? "ko");
+    if (singleLocale) return localeToCountry(singleLocale);
+    return null; // deterministic for SSR — real sessionStorage restore happens post-mount below
+  });
+  const [step, setStep] = useState<Step>(() => {
+    if (previewMode || singleLocale) return "name";
+    return "country";
+  });
+
+  // Restore a previously chosen country from sessionStorage after mount
+  // (client-only, so it can never cause an SSR/hydration mismatch). Ignored
+  // entirely in preview mode and for single-language projects.
+  useEffect(() => {
+    if (previewMode || singleLocale) return;
+    const timer = setTimeout(() => {
+      try {
+        const stored = sessionStorage.getItem(storageKey);
+        if (
+          (stored === "KR" && koreanAvailable) ||
+          (stored === "JP" && japaneseAvailable)
+        ) {
+          setCountryState(stored);
+          setStep((s) => (s === "country" ? "name" : s));
+        }
+      } catch {
+        // sessionStorage unavailable (privacy mode etc.) — just start at country step.
+      }
+    }, 0);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const locale: ParticipantLocale = country ? countryToLocale(country) : "ko";
+  const t = getParticipantMessages(locale);
+
+  // Reflects the active locale on <html lang> while this board is mounted,
+  // restoring whatever it was before on unmount so other pages aren't affected.
+  useEffect(() => {
+    if (!country) return;
+    const prev = document.documentElement.lang;
+    document.documentElement.lang = locale;
+    return () => {
+      document.documentElement.lang = prev;
+    };
+  }, [country, locale]);
+
+  function chooseCountry(next: CountryCode) {
+    setCountryState(next);
+    if (!previewMode) {
+      try {
+        sessionStorage.setItem(storageKey, next);
+      } catch {
+        // ignore — non-fatal, just means the choice won't survive a refresh
+      }
+    }
+    setStep("name");
+  }
+
+  const displayTitle = locale === "ko" ? title : titleJa ?? "";
+  const displayPrompt = locale === "ko" ? prompt : promptJa ?? "";
+  const displayConsent =
+    locale === "ko"
+      ? resolveEffectiveConsentKo({ consentKo, legacyConsentFallbackEnabled })
+      : consentJa;
+
+  const localizedStatements = statements.map((s) => ({
+    id: s.id,
+    text: locale === "ko" ? s.text : s.textJa ?? "",
+  }));
+
   const [participantName, setParticipantName] = useState("");
-  const [consentChoice, setConsentChoice] = useState<
-    "agree" | "disagree" | null
-  >(null);
-  const [gender, setGender] = useState<"남자" | "여자" | "">("");
+  const [consentChoice, setConsentChoice] = useState<"agree" | "disagree" | null>(null);
+  const [gender, setGender] = useState("");
   const [age, setAge] = useState("");
-  const [schoolLevel, setSchoolLevel] = useState<
-    "중학교" | "고등학교" | ""
-  >("");
-  const [grade, setGrade] = useState<"1학년" | "2학년" | "3학년" | "">("");
+  const [schoolLevel, setSchoolLevel] = useState("");
+  const [grade, setGrade] = useState("");
   const [phoneNumber, setPhoneNumber] = useState("");
-  const [demographicsError, setDemographicsError] = useState<string | null>(
-    null
-  );
+  const [demographicsError, setDemographicsError] = useState<string | null>(null);
 
   const [groups, setGroups] = useState<Group[]>(() =>
-    Array.from({ length: minGroups }, (_, i) => ({
-      id: `g${i + 1}`,
-      label: "",
-    }))
+    Array.from({ length: minGroups }, (_, i) => ({ id: `g${i + 1}`, label: "" }))
   );
-  const [assignment, setAssignment] = useState<Record<string, string | null>>(
-    () => Object.fromEntries(statements.map((s) => [s.id, null]))
+  const [assignment, setAssignment] = useState<Record<string, string | null>>(() =>
+    Object.fromEntries(statements.map((s) => [s.id, null]))
   );
   const [activeId, setActiveId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [highlightedGroupId, setHighlightedGroupId] = useState<string | null>(
-    null
-  );
+  const [highlightedGroupId, setHighlightedGroupId] = useState<string | null>(null);
   const labelInputRefs = useRef<Map<string, HTMLInputElement>>(new Map());
   const groupWrapperRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const poolPanelRef = useRef<HTMLDivElement | null>(null);
   const groupBoardRef = useRef<HTMLDivElement | null>(null);
   const pendingFocusIdRef = useRef<string | null>(null);
 
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
-  );
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
   const statementById = useMemo(
-    () => new Map(statements.map((s, i) => [s.id, { ...s, number: i + 1 }])),
-    [statements]
+    () => new Map(localizedStatements.map((s, i) => [s.id, { ...s, number: i + 1 }])),
+    [localizedStatements]
   );
 
-  const pooled = statements.filter((s) => assignment[s.id] === null);
+  const pooled = localizedStatements.filter((s) => assignment[s.id] === null);
 
   // Scrolls a group into view. On the desktop horizontal board, this moves
   // only the board's own scrollLeft (never the page or the left panel); on
@@ -187,9 +325,7 @@ export function SortBoard({
     if (!group) return;
 
     const behavior: ScrollBehavior =
-      typeof document !== "undefined" && document.visibilityState === "hidden"
-        ? "instant"
-        : "smooth";
+      typeof document !== "undefined" && document.visibilityState === "hidden" ? "instant" : "smooth";
 
     if (board && board.scrollWidth > board.clientWidth) {
       const targetLeft = group.offsetLeft - board.clientWidth + group.offsetWidth + 16;
@@ -219,10 +355,7 @@ export function SortBoard({
       labelInputRefs.current.get(id)?.focus({ preventScroll: true });
     };
 
-    if (
-      typeof document !== "undefined" &&
-      document.visibilityState === "hidden"
-    ) {
+    if (typeof document !== "undefined" && document.visibilityState === "hidden") {
       runFocus();
       return;
     }
@@ -261,13 +394,9 @@ export function SortBoard({
     const containerId = String(over.id);
 
     if (containerId !== POOL_ID && assignment[statementId] !== containerId) {
-      const currentSize = statements.filter(
-        (s) => assignment[s.id] === containerId
-      ).length;
+      const currentSize = localizedStatements.filter((s) => assignment[s.id] === containerId).length;
       if (currentSize + 1 > maxCardsPerGroup) {
-        window.alert(
-          `하나의 묶음에는 전체 진술문의 1/3 이상을 묶을 수 없습니다. 상단의 ${GUIDE_LINK_TEXT}을 다시 한번 숙지해 주세요.`
-        );
+        window.alert((t.errors.GROUP_TOO_LARGE as (n: number) => string)(maxCardsPerGroup));
         return;
       }
     }
@@ -310,9 +439,7 @@ export function SortBoard({
   }
 
   function updateLabel(groupId: string, label: string) {
-    setGroups((prev) =>
-      prev.map((g) => (g.id === groupId ? { ...g, label } : g))
-    );
+    setGroups((prev) => prev.map((g) => (g.id === groupId ? { ...g, label } : g)));
   }
 
   function handleConsentNext() {
@@ -321,16 +448,14 @@ export function SortBoard({
   }
 
   function handleDemographicsSubmit() {
-    if (!gender) return setDemographicsError("성별을 선택해 주세요.");
+    if (!gender) return setDemographicsError(t.errors.GENDER_REQUIRED as string);
     if (!age.trim() || !Number.isInteger(Number(age)) || Number(age) <= 0) {
-      return setDemographicsError("연령을 숫자로 올바르게 입력해 주세요.");
+      return setDemographicsError(t.errors.AGE_INVALID as string);
     }
-    if (!schoolLevel) return setDemographicsError("학교급을 선택해 주세요.");
-    if (!grade) return setDemographicsError("학년을 선택해 주세요.");
+    if (!schoolLevel) return setDemographicsError(t.errors.SCHOOL_LEVEL_REQUIRED as string);
+    if (!grade) return setDemographicsError(t.errors.GRADE_REQUIRED as string);
     if (!phoneNumber.trim()) {
-      return setDemographicsError(
-        "답례품 발송을 위한 스마트폰 번호를 입력해 주세요."
-      );
+      return setDemographicsError(t.errors.PHONE_REQUIRED as string);
     }
     setDemographicsError(null);
     setStep("sorting");
@@ -340,13 +465,8 @@ export function SortBoard({
     setError(null);
 
     if (pooled.length > 0) {
-      poolPanelRef.current?.scrollIntoView({
-        behavior: "smooth",
-        block: "nearest",
-      });
-      setError(
-        `아직 분류되지 않은 진술문이 ${pooled.length}개 있습니다. 모든 진술문을 하나 이상의 묶음에 배치해 주세요. 상단의 ${GUIDE_LINK_TEXT}을 클릭하여 방법을 다시 확인해 주세요.`
-      );
+      poolPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      setError((t.errors.UNASSIGNED_STATEMENTS as (n: number) => string)(pooled.length));
       return;
     }
 
@@ -354,53 +474,38 @@ export function SortBoard({
       .map((g) => ({
         id: g.id,
         label: g.label,
-        statementIds: statements
-          .filter((s) => assignment[s.id] === g.id)
-          .map((s) => s.id),
+        statementIds: localizedStatements.filter((s) => assignment[s.id] === g.id).map((s) => s.id),
       }))
       .filter((g) => g.statementIds.length > 0);
 
     if (payloadGroupsWithId.length === 0) {
-      setError(
-        `최소 1개 이상의 묶음에 진술문을 배치해 주세요. 상단의 ${GUIDE_LINK_TEXT}을 클릭하여 방법을 다시 확인해 주세요.`
-      );
+      setError((t.errors.UNASSIGNED_STATEMENTS as (n: number) => string)(localizedStatements.length));
       return;
     }
 
     if (payloadGroupsWithId.length === 1) {
       flashGroup(payloadGroupsWithId[0].id);
-      setError(
-        `모든 카드를 하나의 묶음으로 만들 수 없습니다. 상단의 ${GUIDE_LINK_TEXT}을 클릭하여 방법을 다시 확인해 주세요.`
-      );
+      setError(t.errors.ONE_GROUP_ONLY as string);
       return;
     }
 
-    const offendingSmall = payloadGroupsWithId.find(
-      (g) => g.statementIds.length < 2
-    );
+    const offendingSmall = payloadGroupsWithId.find((g) => g.statementIds.length < 2);
     if (offendingSmall) {
       flashGroup(offendingSmall.id);
-      setError(
-        `묶음은 반드시 2장 이상의 카드로 구성되어야 합니다. 상단의 ${GUIDE_LINK_TEXT}을 클릭하여 방법을 다시 확인해 주세요.`
-      );
+      setError(t.errors.GROUP_TOO_SMALL as string);
       return;
     }
 
-    const offendingBig = payloadGroupsWithId.find(
-      (g) => g.statementIds.length > maxCardsPerGroup
-    );
+    const offendingBig = payloadGroupsWithId.find((g) => g.statementIds.length > maxCardsPerGroup);
     if (offendingBig) {
       flashGroup(offendingBig.id);
-      setError(
-        `하나의 묶음에는 전체 진술문의 1/3 이상을 묶을 수 없습니다. 상단의 ${GUIDE_LINK_TEXT}을 다시 한번 숙지해 주세요.`
-      );
+      setError((t.errors.GROUP_TOO_LARGE as (n: number) => string)(maxCardsPerGroup));
       return;
     }
 
-    const payloadGroups = payloadGroupsWithId.map(({ label, statementIds }) => ({
-      label,
-      statementIds,
-    }));
+    if (previewMode) return; // submit button stays disabled; this is unreachable in the UI
+
+    const payloadGroups = payloadGroupsWithId.map(({ label, statementIds }) => ({ label, statementIds }));
 
     setSubmitting(true);
     try {
@@ -410,6 +515,7 @@ export function SortBoard({
         body: JSON.stringify({
           participantName,
           consentAgreed: true,
+          countryCode: country,
           gender,
           age: Number(age),
           schoolLevel,
@@ -420,13 +526,18 @@ export function SortBoard({
       });
       const data = await res.json();
       if (!res.ok) {
-        setError(data.error ?? "제출에 실패했습니다.");
+        setError(localizedError(t, data.errorCode, locale, data.error));
         setSubmitting(false);
         return;
       }
       setSubmitted(true);
+      try {
+        sessionStorage.removeItem(storageKey);
+      } catch {
+        // non-fatal
+      }
     } catch {
-      setError("네트워크 오류가 발생했습니다.");
+      setError(t.errors.NETWORK_ERROR as string);
       setSubmitting(false);
     }
   }
@@ -434,44 +545,54 @@ export function SortBoard({
   if (submitted) {
     return (
       <div className="max-w-xl mx-auto text-center py-24 space-y-3">
-        <h1 className="text-2xl font-bold">
-          모든 분류가 완료되었습니다. 감사합니다.
-        </h1>
+        <h1 className="text-2xl font-bold">{t.submitted.heading}</h1>
       </div>
     );
+  }
+
+  if (step === "country") {
+    return <CountryStep onSelect={chooseCountry} />;
   }
 
   if (step === "name") {
     return (
       <div className="max-w-xl mx-auto py-16 space-y-6">
         <div>
-          <h1 className="text-2xl font-bold">{title}</h1>
-          {prompt && (
-            <p className="text-slate-600 mt-2 whitespace-pre-line">
-              {prompt}
-            </p>
+          <h1 className="text-2xl font-bold">{displayTitle}</h1>
+          {displayPrompt && (
+            <p className="text-slate-600 mt-2 whitespace-pre-line">{displayPrompt}</p>
           )}
         </div>
         <div>
           <label htmlFor="name" className="block text-sm font-medium mb-1">
-            이름 또는 닉네임
+            {t.nameStep.label}
           </label>
           <input
             id="name"
             type="text"
             value={participantName}
             onChange={(e) => setParticipantName(e.target.value)}
-            placeholder="예: 참가자1"
+            placeholder={t.nameStep.placeholder}
             className="w-full rounded-lg border border-slate-300 px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-slate-400"
           />
         </div>
-        <button
-          onClick={() => setStep("consent")}
-          disabled={!participantName.trim()}
-          className="w-full rounded-lg bg-slate-900 px-6 py-3 text-white font-medium hover:bg-slate-700 transition-colors disabled:opacity-50"
-        >
-          다음
-        </button>
+        <div className="flex gap-3">
+          {bothAvailable && !previewMode && (
+            <button
+              onClick={() => setStep("country")}
+              className="rounded-lg border border-slate-300 px-6 py-3 font-medium hover:bg-slate-100 transition-colors"
+            >
+              {t.common.back}
+            </button>
+          )}
+          <button
+            onClick={() => setStep("consent")}
+            disabled={!participantName.trim()}
+            className="flex-1 rounded-lg bg-slate-900 px-6 py-3 text-white font-medium hover:bg-slate-700 transition-colors disabled:opacity-50"
+          >
+            {t.common.next}
+          </button>
+        </div>
       </div>
     );
   }
@@ -479,15 +600,13 @@ export function SortBoard({
   if (step === "consent") {
     return (
       <div className="max-w-2xl mx-auto py-16 space-y-6">
-        <h1 className="text-xl font-bold">
-          [연구 참여 및 정보사용 동의서]
-        </h1>
+        <h1 className="text-xl font-bold">{t.consentStep.heading}</h1>
         <div className="rounded-xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-700 whitespace-pre-line leading-relaxed max-h-[50vh] overflow-y-auto">
-          {CONSENT_BODY}
+          {displayConsent}
         </div>
 
         <div>
-          <p className="text-sm font-medium mb-2">연구 참여 동의 여부</p>
+          <p className="text-sm font-medium mb-2">{t.consentStep.questionLabel}</p>
           <div className="flex gap-4">
             <label className="flex items-center gap-2 text-sm">
               <input
@@ -496,7 +615,7 @@ export function SortBoard({
                 checked={consentChoice === "agree"}
                 onChange={() => setConsentChoice("agree")}
               />
-              동의
+              {t.consentStep.agree}
             </label>
             <label className="flex items-center gap-2 text-sm">
               <input
@@ -505,17 +624,14 @@ export function SortBoard({
                 checked={consentChoice === "disagree"}
                 onChange={() => setConsentChoice("disagree")}
               />
-              동의하지 않음
+              {t.consentStep.disagree}
             </label>
           </div>
         </div>
 
         <div>
-          <label
-            htmlFor="signatureName"
-            className="block text-sm font-medium mb-1"
-          >
-            연구 참여자 성명
+          <label htmlFor="signatureName" className="block text-sm font-medium mb-1">
+            {t.consentStep.signatureLabel}
           </label>
           <input
             id="signatureName"
@@ -531,7 +647,7 @@ export function SortBoard({
           disabled={!participantName.trim() || !consentChoice}
           className="w-full rounded-lg bg-slate-900 px-6 py-3 text-white font-medium hover:bg-slate-700 transition-colors disabled:opacity-50"
         >
-          다음
+          {t.common.next}
         </button>
       </div>
     );
@@ -540,10 +656,8 @@ export function SortBoard({
   if (step === "declined") {
     return (
       <div className="max-w-xl mx-auto text-center py-24 space-y-3">
-        <h1 className="text-xl font-bold">
-          동의하지 않으신 경우 연구에 참여하실 수 없습니다.
-        </h1>
-        <p className="text-slate-600">참여를 고려해 주셔서 감사합니다.</p>
+        <h1 className="text-xl font-bold">{t.declinedStep.heading}</h1>
+        <p className="text-slate-600">{t.declinedStep.body}</p>
       </div>
     );
   }
@@ -551,20 +665,20 @@ export function SortBoard({
   if (step === "demographics") {
     return (
       <div className="max-w-xl mx-auto py-16 space-y-6">
-        <h1 className="text-xl font-bold">[인적사항]</h1>
+        <h1 className="text-xl font-bold">{t.demographics.heading}</h1>
 
         <div>
-          <p className="text-sm font-medium mb-2">성별</p>
+          <p className="text-sm font-medium mb-2">{t.demographics.genderLabel}</p>
           <div className="flex gap-4">
-            {(["남자", "여자"] as const).map((option) => (
-              <label key={option} className="flex items-center gap-2 text-sm">
+            {GENDER_OPTIONS.map((option) => (
+              <label key={option.value} className="flex items-center gap-2 text-sm">
                 <input
                   type="radio"
                   name="gender"
-                  checked={gender === option}
-                  onChange={() => setGender(option)}
+                  checked={gender === option.value}
+                  onChange={() => setGender(option.value)}
                 />
-                {option}
+                {option[locale]}
               </label>
             ))}
           </div>
@@ -572,7 +686,7 @@ export function SortBoard({
 
         <div>
           <label htmlFor="age" className="block text-sm font-medium mb-1">
-            연령(숫자만 입력)
+            {t.demographics.ageLabel}
           </label>
           <input
             id="age"
@@ -585,34 +699,34 @@ export function SortBoard({
         </div>
 
         <div>
-          <p className="text-sm font-medium mb-2">학교급</p>
+          <p className="text-sm font-medium mb-2">{t.demographics.schoolLevelLabel}</p>
           <div className="flex gap-4">
-            {(["중학교", "고등학교"] as const).map((option) => (
-              <label key={option} className="flex items-center gap-2 text-sm">
+            {SCHOOL_LEVEL_OPTIONS.map((option) => (
+              <label key={option.value} className="flex items-center gap-2 text-sm">
                 <input
                   type="radio"
                   name="schoolLevel"
-                  checked={schoolLevel === option}
-                  onChange={() => setSchoolLevel(option)}
+                  checked={schoolLevel === option.value}
+                  onChange={() => setSchoolLevel(option.value)}
                 />
-                {option}
+                {option[locale]}
               </label>
             ))}
           </div>
         </div>
 
         <div>
-          <p className="text-sm font-medium mb-2">학년</p>
+          <p className="text-sm font-medium mb-2">{t.demographics.gradeLabel}</p>
           <div className="flex gap-4">
-            {(["1학년", "2학년", "3학년"] as const).map((option) => (
-              <label key={option} className="flex items-center gap-2 text-sm">
+            {GRADE_OPTIONS.map((option) => (
+              <label key={option.value} className="flex items-center gap-2 text-sm">
                 <input
                   type="radio"
                   name="grade"
-                  checked={grade === option}
-                  onChange={() => setGrade(option)}
+                  checked={grade === option.value}
+                  onChange={() => setGrade(option.value)}
                 />
-                {option}
+                {option[locale]}
               </label>
             ))}
           </div>
@@ -620,14 +734,14 @@ export function SortBoard({
 
         <div>
           <label htmlFor="phone" className="block text-sm font-medium mb-1">
-            답례품(기프티콘) 발송을 위한 스마트폰 번호
+            {t.demographics.phoneLabel}
           </label>
           <input
             id="phone"
             type="tel"
             value={phoneNumber}
             onChange={(e) => setPhoneNumber(e.target.value)}
-            placeholder="예: 010-1234-5678"
+            placeholder={t.demographics.phonePlaceholder}
             className="w-full rounded-lg border border-slate-300 px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-slate-400"
           />
         </div>
@@ -642,7 +756,7 @@ export function SortBoard({
           onClick={handleDemographicsSubmit}
           className="w-full rounded-lg bg-slate-900 px-6 py-3 text-white font-medium hover:bg-slate-700 transition-colors"
         >
-          제출하기
+          {t.demographics.submitLabel}
         </button>
       </div>
     );
@@ -653,31 +767,22 @@ export function SortBoard({
   return (
     <div className="mx-auto flex w-full max-w-none flex-col px-3 py-3 md:h-dvh md:overflow-hidden">
       <div className="shrink-0">
-        <h1 className="text-xl font-bold">{title}</h1>
+        <h1 className="text-xl font-bold">{displayTitle}</h1>
       </div>
 
       <div className="mt-3 shrink-0 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900 space-y-1">
         <p>
           <a
-            href={`/p/${slug}/guide`}
+            href={`/p/${slug}/guide?lang=${locale}`}
             target="_blank"
             rel="noopener noreferrer"
             className="font-semibold underline decoration-2 underline-offset-2 hover:text-blue-700"
           >
-            {GUIDE_LINK_TEXT}
+            {t.guide.linkText}
           </a>{" "}
-          <span className="text-xs text-blue-700">
-            클릭하시면 유사성 분류 방법(지침)이 활성화됩니다.
-          </span>
+          <span className="text-xs text-blue-700">{t.guide.linkDescription}</span>
         </p>
-        <p>
-          왼쪽의 진술문을 오른쪽의 묶음으로 드래그해서, 서로 의미가
-          비슷하다고 생각되는 진술문끼리 같은 묶음에 넣어 주세요. 묶음은
-          최소 {minGroups}개에서 최대 {maxGroups}개까지 만들 수 있으며,
-          아래 버튼으로 직접 추가하거나 삭제할 수 있습니다. 모든 진술문을
-          하나 이상의 묶음에 배치한 후 제출해 주세요. 자세한 지침은 위
-          링크를 클릭해 언제든 다시 확인할 수 있습니다.
-        </p>
+        <p>{t.guide.instructions(minGroups, maxGroups)}</p>
       </div>
 
       <DndContext
@@ -695,16 +800,11 @@ export function SortBoard({
             className={`flex flex-col rounded-xl border-2 border-dashed border-slate-300 md:min-h-0 md:overflow-hidden ${FIXED_PANEL_WIDTH}`}
           >
             <p className="shrink-0 px-4 pt-3 pb-2 text-xs font-medium text-slate-500">
-              진술문 ({pooled.length}개 남음)
+              {t.sorting.unassignedLabel(pooled.length)}
             </p>
             <div className="flex flex-col gap-2 px-4 pb-4 md:min-h-0 md:flex-1 md:overflow-y-auto md:overscroll-contain">
               {pooled.map((s) => (
-                <Card
-                  key={s.id}
-                  id={s.id}
-                  number={statementById.get(s.id)!.number}
-                  text={s.text}
-                />
+                <Card key={s.id} id={s.id} number={statementById.get(s.id)!.number} text={s.text} />
               ))}
             </div>
           </DropZone>
@@ -712,12 +812,9 @@ export function SortBoard({
           <div className="flex min-w-0 flex-col md:min-h-0 md:flex-1">
             <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 pb-2">
               <p className="text-sm font-medium text-slate-600">
-                묶음 ({groups.length}개 / 최소 {minGroups}개, 최대 {maxGroups}
-                개)
+                {t.sorting.groupsLabel(groups.length, minGroups, maxGroups)}
               </p>
-              <p className="hidden text-xs text-slate-400 md:inline">
-                묶음은 좌우로 스크롤하여 확인할 수 있습니다.
-              </p>
+              <p className="hidden text-xs text-slate-400 md:inline">{t.sorting.scrollHint}</p>
             </div>
 
             <div
@@ -725,9 +822,7 @@ export function SortBoard({
               className="relative flex flex-col gap-3 md:min-h-0 md:flex-1 md:flex-row md:flex-nowrap md:items-stretch md:gap-3 md:overflow-x-auto md:overflow-y-hidden md:overscroll-x-contain md:pb-2 md:pr-2 [scrollbar-gutter:stable] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-300"
             >
               {groups.map((group, idx) => {
-                const items = statements.filter(
-                  (s) => assignment[s.id] === group.id
-                );
+                const items = localizedStatements.filter((s) => assignment[s.id] === group.id);
                 const isHighlighted = highlightedGroupId === group.id;
                 return (
                   <DropZone
@@ -738,9 +833,7 @@ export function SortBoard({
                       else groupWrapperRefs.current.delete(group.id);
                     }}
                     className={`flex min-w-0 flex-col overflow-hidden rounded-xl border bg-slate-50 transition-colors duration-700 md:h-full md:self-stretch ${FIXED_PANEL_WIDTH} ${
-                      isHighlighted
-                        ? "border-emerald-400 bg-emerald-50"
-                        : "border-slate-300"
+                      isHighlighted ? "border-emerald-400 bg-emerald-50" : "border-slate-300"
                     }`}
                   >
                     <div className="flex shrink-0 items-center gap-1.5 px-3 pt-3 pb-2">
@@ -751,30 +844,25 @@ export function SortBoard({
                         }}
                         value={group.label}
                         onChange={(e) => updateLabel(group.id, e.target.value)}
-                        placeholder={`묶음 ${idx + 1} 이름 (선택)`}
+                        placeholder={t.sorting.groupNamePlaceholder(idx + 1)}
                         className="min-w-0 flex-1 rounded-md border border-slate-300 bg-white px-2 py-1.5 text-[13px] focus:outline-none focus:ring-2 focus:ring-slate-400"
                       />
                       <span className="shrink-0 whitespace-nowrap text-[11px] text-slate-500">
-                        {idx + 1} · {items.length}개
+                        {idx + 1} · {t.sorting.cardCount(items.length)}
                       </span>
                       {groups.length > minGroups && (
                         <button
                           onClick={() => removeGroup(group.id)}
                           className="shrink-0 px-1 py-0.5 text-xs text-slate-400 hover:text-red-500"
-                          aria-label="묶음 삭제"
+                          aria-label={t.sorting.deleteGroup}
                         >
-                          삭제
+                          {t.sorting.deleteGroup}
                         </button>
                       )}
                     </div>
                     <div className="flex min-h-[64px] min-w-0 flex-col gap-1.5 px-2.5 pb-3 md:min-h-0 md:flex-1 md:overflow-y-auto md:overscroll-y-contain md:pr-2 md:[scrollbar-gutter:stable] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-300">
                       {items.map((s) => (
-                        <Card
-                          key={s.id}
-                          id={s.id}
-                          number={statementById.get(s.id)!.number}
-                          text={s.text}
-                        />
+                        <Card key={s.id} id={s.id} number={statementById.get(s.id)!.number} text={s.text} />
                       ))}
                     </div>
                   </DropZone>
@@ -786,7 +874,7 @@ export function SortBoard({
                 disabled={groups.length >= maxGroups}
                 className="flex h-11 w-full shrink-0 items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 text-sm font-medium text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed md:w-[180px] md:self-start"
               >
-                + 새 묶음
+                {t.sorting.addGroup}
               </button>
             </div>
           </div>
@@ -803,9 +891,7 @@ export function SortBoard({
 
       <div className="mt-3 shrink-0 border-t border-slate-200 pt-3">
         {pooled.length > 0 && (
-          <p className="mb-2 text-xs text-amber-700">
-            미분류 진술문 {pooled.length}개 남음
-          </p>
+          <p className="mb-2 text-xs text-amber-700">{t.sorting.unassignedLabel(pooled.length)}</p>
         )}
         {error && (
           <p className="mb-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
@@ -814,10 +900,11 @@ export function SortBoard({
         )}
         <button
           onClick={handleSubmit}
-          disabled={submitting}
+          disabled={submitting || previewMode}
+          title={previewMode ? "미리보기 모드에서는 제출할 수 없습니다." : undefined}
           className="rounded-lg bg-slate-900 px-6 py-3 text-white font-medium hover:bg-slate-700 transition-colors disabled:opacity-50"
         >
-          {submitting ? "제출 중..." : "제출하기"}
+          {submitting ? t.common.submitting : t.common.submit}
         </button>
       </div>
     </div>

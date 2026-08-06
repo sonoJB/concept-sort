@@ -12,23 +12,51 @@ datasource db {
 }
 
 model Project {
-  id         String    @id @default(cuid())
-  slug       String    @unique
-  adminToken String    @unique
+  id         String   @id @default(cuid())
+  slug       String   @unique
+  adminToken String   @unique
   title      String
-  prompt     String    @default("")
-  createdAt  DateTime  @default(now())
+  prompt     String   @default("")
+  createdAt  DateTime @default(now())
 
-  statements  Statement[]
+  // Multilingual project content and per-language activation. Korean text
+  // (title/prompt) stays the base/reference content for cross-language
+  // comparison; Japanese content lives entirely in the *Ja fields with no
+  // fallback to Korean.
+  titleJa         String?
+  promptJa        String?
+  consentKo       String?
+  consentJa       String?
+  koreanEnabled   Boolean @default(false)
+  japaneseEnabled Boolean @default(false)
+
+  // Scopes the legacy hardcoded Korean consent body (CONSENT_BODY in
+  // SortBoard.tsx) to only the specific pre-existing project it belongs to.
+  // Defaults to false so future projects with a null consentKo are treated
+  // as "Korean content not ready" rather than silently inheriting another
+  // study's consent text.
+  legacyConsentFallbackEnabled Boolean @default(false)
+
+  koPreviewConfirmedAt DateTime?
+  jaPreviewConfirmedAt DateTime?
+
+  statements   Statement[]
   sortSessions SortSession[]
 }
 
 model Statement {
-  id        String   @id @default(cuid())
+  id        String  @id @default(cuid())
   projectId String
-  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   text      String
-  order     Int      @default(0)
+  order     Int     @default(0)
+
+  // Japanese translation + review status. Not auto-populated from `text`.
+  // jaStatus is a plain String (not a Prisma enum: SQLite has no native
+  // enum support) restricted at the application layer to
+  // "MISSING" | "DRAFT" | "REVIEWING" | "APPROVED".
+  textJa   String?
+  jaStatus String  @default("MISSING")
 
   groupItems SortGroupItem[]
 }
@@ -46,6 +74,10 @@ model SortSession {
   schoolLevel   String
   grade         String
   phoneNumber   String
+
+  // Which country's participation flow this response came through
+  // ("KR" | "JP"). Existing rows stay null — never backfilled.
+  countryCode String?
 
   groups SortGroup[]
 }

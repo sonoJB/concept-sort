@@ -21,6 +21,8 @@ export default function NewProjectPage() {
   const [title, setTitle] = useState(DEFAULT_TITLE);
   const [prompt, setPrompt] = useState(DEFAULT_PROMPT);
   const [statementsText, setStatementsText] = useState("");
+  const [wantKorean, setWantKorean] = useState(true);
+  const [wantJapanese, setWantJapanese] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -51,7 +53,8 @@ export default function NewProjectPage() {
         setSubmitting(false);
         return;
       }
-      router.push(`/p/${data.slug}/admin/${data.adminToken}`);
+      const nextTab = !wantKorean && wantJapanese ? "ja" : "ko";
+      router.push(`/p/${data.slug}/admin/${data.adminToken}?tab=${nextTab}`);
     } catch {
       setError("네트워크 오류가 발생했습니다.");
       setSubmitting(false);
@@ -62,17 +65,42 @@ export default function NewProjectPage() {
     <main className="flex-1 px-6 py-12">
       <div className="max-w-2xl mx-auto space-y-8">
         <div>
-          <h1 className="text-2xl font-bold">새 프로젝트 만들기</h1>
+          <h1 className="text-2xl font-bold">새 프로젝트 만들기 (1단계: 초안)</h1>
           <p className="text-slate-600 mt-1">
-            참가자들이 분류할 진술문(카드)을 등록하세요. 한 줄에 하나씩
-            입력하면 됩니다.
+            내부 관리용 한국어 제목과 진술문으로 초안을 생성합니다. 참가자에게
+            공개되는 언어별 화면(제목/안내/동의서)은 생성 후 관리자 화면의
+            한국어·日本語 탭에서 별도로 작성하고 활성화합니다.
           </p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-6">
           <div>
+            <label className="block text-sm font-medium mb-1.5">
+              향후 작성할 언어 (관리자 탭 안내용 — 참가자 공개와는 무관합니다)
+            </label>
+            <div className="flex gap-4 text-sm">
+              <label className="flex items-center gap-1.5">
+                <input
+                  type="checkbox"
+                  checked={wantKorean}
+                  onChange={(e) => setWantKorean(e.target.checked)}
+                />
+                한국어 자료 작성
+              </label>
+              <label className="flex items-center gap-1.5">
+                <input
+                  type="checkbox"
+                  checked={wantJapanese}
+                  onChange={(e) => setWantJapanese(e.target.checked)}
+                />
+                日本語 자료 작성
+              </label>
+            </div>
+          </div>
+
+          <div>
             <label htmlFor="title" className="block text-sm font-medium mb-1">
-              프로젝트 제목
+              내부 관리용 한국어 연구 제목
             </label>
             <input
               id="title"
@@ -135,7 +163,7 @@ export default function NewProjectPage() {
             disabled={submitting}
             className="w-full rounded-lg bg-slate-900 px-6 py-3 text-white font-medium hover:bg-slate-700 transition-colors disabled:opacity-50"
           >
-            {submitting ? "생성 중..." : "프로젝트 생성"}
+            {submitting ? "생성 중..." : "초안 생성 (한국어·日本語 모두 비활성 상태로 시작)"}
           </button>
         </form>
       </div>

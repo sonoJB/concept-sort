@@ -20,9 +20,20 @@ export async function POST(
   }
 
   const count = await prisma.statement.count({ where: { projectId: check.project.id } });
-  const statement = await prisma.statement.create({
-    data: { projectId: check.project.id, text, order: count },
-  });
+  const [statement] = await prisma.$transaction([
+    prisma.statement.create({
+      data: { projectId: check.project.id, text, order: count },
+    }),
+    prisma.project.update({
+      where: { id: check.project.id },
+      data: {
+        koPreviewConfirmedAt: null,
+        jaPreviewConfirmedAt: null,
+        koreanEnabled: false,
+        japaneseEnabled: false,
+      },
+    }),
+  ]);
 
   return NextResponse.json({ id: statement.id, text: statement.text });
 }
@@ -44,9 +55,20 @@ export async function DELETE(
     return NextResponse.json({ error: "statementId가 필요합니다." }, { status: 400 });
   }
 
-  await prisma.statement.deleteMany({
-    where: { id: statementId, projectId: check.project.id },
-  });
+  await prisma.$transaction([
+    prisma.statement.deleteMany({
+      where: { id: statementId, projectId: check.project.id },
+    }),
+    prisma.project.update({
+      where: { id: check.project.id },
+      data: {
+        koPreviewConfirmedAt: null,
+        jaPreviewConfirmedAt: null,
+        koreanEnabled: false,
+        japaneseEnabled: false,
+      },
+    }),
+  ]);
 
   return NextResponse.json({ ok: true });
 }
