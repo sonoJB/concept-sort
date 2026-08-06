@@ -1,12 +1,26 @@
 name: Concept Analysis Cross-Validation
 
-# Manual-only. No push/pull_request/schedule trigger — this workflow must
-# never run automatically, and must never be able to affect Railway (which
-# is configured to deploy only from the `main` branch's own GitHub push
-# events, confirmed separately via the Railway API before this workflow was
-# added). This job does not touch Railway, production data, or any secret.
+# TEMPORARY: a one-shot, path-restricted push trigger was added below so
+# GitHub Actions can discover and run this workflow at all — GitHub will
+# not list/dispatch a workflow_dispatch-only workflow that exists solely on
+# a non-default branch (confirmed: GET .../actions/workflows returned
+# total_count: 0 before this change). This push trigger is scoped to
+# EXACTLY the feature/concept-map-analysis-prototype branch and EXACTLY the
+# analysis-prototype/ci-trigger.txt path, so no other file change on this
+# branch (and no change anywhere else) can fire it. It is removed again in
+# a follow-up commit ("Restore manual-only concept analysis workflow") right
+# after the cross-validation run this trigger exists to produce. This job
+# still never touches Railway, production data, or any secret, and
+# Railway is separately confirmed (via its API) to deploy only from `main`
+# push events — this branch's push events are invisible to Railway
+# regardless of this trigger.
 on:
   workflow_dispatch: {}
+  push:
+    branches:
+      - feature/concept-map-analysis-prototype
+    paths:
+      - analysis-prototype/ci-trigger.txt
 
 permissions:
   contents: read
