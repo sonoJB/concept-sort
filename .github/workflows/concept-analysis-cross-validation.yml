@@ -62,25 +62,29 @@ name: Concept Analysis Cross-Validation
 # FAILED (not VERIFIED). The push trigger was removed after, restoring
 # manual-only dispatch.
 #
-# TEMPORARY (attempt 5): the same one-shot, path-restricted push trigger is
-# re-added below for a diagnostic-only round (no VERIFIED-gating logic
-# loosened): a new tie-free "strictNoTies" fixture isolates tie-handling
-# from disparity-normalization/scale questions; TS/Python/R all now report
-# pairKey-labeled disparities, tie-block groupings, and disparity
-# normalization metadata (targetNormQ vs actual sum-of-squares); the
-# comparator adds scale-equivalence classification (RAW_SCALE_EXACT /
-# SCALE_EQUIVALENT / SHAPE_DIFFERENT) via best-fit-scale, canonical
-# q-rescaling, and 2D rigid/similarity Procrustes analysis, ADDITIVE to the
-# existing raw comparisons (nothing removed, no tolerance loosened).
-# Removed again in a follow-up commit ("Restore manual-only workflow after
-# fifth validation attempt") right after this run.
+# Attempt 5 (run 31112857902) reused that same temporary trigger for a
+# diagnostic-only round. Results: (1) the new tie-free "strictNoTies"
+# fixture ALSO shows a small SCALE_EQUIVALENT gap (bestFitScale≈1.0099,
+# similarity-Procrustes RMS≈2.1e-4) — since it has zero ties, this rules out
+# tie-handling as the (sole) root cause; (2) zeroFree's divergence is now
+# fully explained as SCALE_EQUIVALENT (similarity-Procrustes RMS≈8e-6,
+# essentially exact after allowing scale) with identical tie-block structure
+# vs both Python and R; (3) direct read-only source inspection of installed
+# scikit-learn found the literal line `disparities *= np.sqrt(...)` in
+# _mds.py (a disparity renormalization step TS's fitDisparities() in
+# smacof.ts does not perform — confirmed by code audit), and R's smacof
+# package namespace exposes normDiss/normDissN-named internals consistent
+# with the same pattern — a source-grounded root-cause candidate for the
+# scale drift, not a bug in the Guttman update itself; (4) the `ties`
+# fixture's canonical (scale-normalized) DISPARITY comparison still FAILED
+# (5.4e-2 vs 1e-3 tolerance) even though canonical DISTANCE matched almost
+# exactly and tie-block structure matched exactly — an unresolved secondary
+# finding for a future round. No statistical algorithm code
+# (src/lib/conceptAnalysis/**) was touched. Final verification status:
+# FAILED (not VERIFIED — 2 of 11 required checks still fail). The push
+# trigger is removed again here, restoring manual-only dispatch.
 on:
   workflow_dispatch: {}
-  push:
-    branches:
-      - feature/concept-map-analysis-prototype
-    paths:
-      - analysis-prototype/ci-trigger.txt
 
 permissions:
   contents: read
