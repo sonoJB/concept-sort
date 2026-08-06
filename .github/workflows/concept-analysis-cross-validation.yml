@@ -1,26 +1,24 @@
 name: Concept Analysis Cross-Validation
 
-# TEMPORARY: a one-shot, path-restricted push trigger was added below so
-# GitHub Actions can discover and run this workflow at all — GitHub will
-# not list/dispatch a workflow_dispatch-only workflow that exists solely on
-# a non-default branch (confirmed: GET .../actions/workflows returned
-# total_count: 0 before this change). This push trigger is scoped to
-# EXACTLY the feature/concept-map-analysis-prototype branch and EXACTLY the
-# analysis-prototype/ci-trigger.txt path, so no other file change on this
-# branch (and no change anywhere else) can fire it. It is removed again in
-# a follow-up commit ("Restore manual-only concept analysis workflow") right
-# after the cross-validation run this trigger exists to produce. This job
-# still never touches Railway, production data, or any secret, and
-# Railway is separately confirmed (via its API) to deploy only from `main`
-# push events — this branch's push events are invisible to Railway
-# regardless of this trigger.
+# Manual-only. No push/pull_request/schedule trigger — this workflow must
+# never run automatically, and must never be able to affect Railway (which
+# is configured to deploy only from the `main` branch's own GitHub push
+# events, confirmed separately via the Railway API). This job does not
+# touch Railway, production data, or any secret.
+#
+# History: a one-shot, path-restricted push trigger (scoped to exactly this
+# feature branch and exactly analysis-prototype/ci-trigger.txt) was added
+# temporarily in commit "Trigger concept analysis validation on feature
+# branch" solely so GitHub Actions could discover this workflow at all
+# (workflow_dispatch-only workflows on a non-default branch are invisible to
+# the dispatch API — GET .../actions/workflows returned total_count: 0
+# before that commit). That run failed at the `npm ci` / `prisma generate`
+# environment step (DATABASE_URL required by prisma.config.ts, which this
+# workflow must not set) before any statistical comparison ran — see
+# analysis-prototype/results/ for the reported NOT_RUN outcome. This commit
+# removes the push trigger again per the original one-shot intent.
 on:
   workflow_dispatch: {}
-  push:
-    branches:
-      - feature/concept-map-analysis-prototype
-    paths:
-      - analysis-prototype/ci-trigger.txt
 
 permissions:
   contents: read
