@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ConceptMap, type ConceptPoint } from "@/components/ConceptMap";
 import { DeleteConfirmModal } from "@/components/DeleteConfirmModal";
+import { AnalysisPanel } from "@/components/analysis/AnalysisPanel";
 import { toCsv, downloadCsv } from "@/lib/csv";
 import { JA_RESPONSIBLE_PARTY_NOTICE } from "@/lib/consent";
 import type { LocaleContentStatus, OperatingState } from "@/lib/localeContentStatus";
@@ -13,13 +13,6 @@ type Statement = {
   order: number;
   textJa: string | null;
   jaStatus: string;
-};
-
-type AnalysisResponse = {
-  submissionCount: number;
-  clusterCount?: number;
-  points: ConceptPoint[];
-  clusters: { clusterId: number; statementIds: string[] }[];
 };
 
 type Participant = {
@@ -97,9 +90,6 @@ export function AdminDashboard({
   const [newStatement, setNewStatement] = useState("");
   const [submissionCount, setSubmissionCount] = useState(initialSubmissionCount);
   const [copied, setCopied] = useState(false);
-  const [clusterCount, setClusterCount] = useState<number | null>(null);
-  const [analysis, setAnalysis] = useState<AnalysisResponse | null>(null);
-  const [loadingAnalysis, setLoadingAnalysis] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [participants, setParticipants] = useState<Participant[] | null>(null);
   const [loadingParticipants, setLoadingParticipants] = useState(false);
@@ -180,29 +170,6 @@ export function AdminDashboard({
     }
   }
 
-  async function loadAnalysis(k?: number) {
-    setLoadingAnalysis(true);
-    setError(null);
-    try {
-      const url = new URL(`/api/projects/${slug}/analysis`, window.location.origin);
-      url.searchParams.set("token", adminToken);
-      if (k) url.searchParams.set("k", String(k));
-      const res = await fetch(url.toString());
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error ?? "분석에 실패했습니다.");
-        setLoadingAnalysis(false);
-        return;
-      }
-      setAnalysis(data);
-      setClusterCount(data.clusterCount ?? null);
-    } catch {
-      setError("네트워크 오류가 발생했습니다.");
-    } finally {
-      setLoadingAnalysis(false);
-    }
-  }
-
   async function loadParticipants(): Promise<Participant[] | null> {
     setLoadingParticipants(true);
     setParticipantsError(null);
@@ -267,11 +234,7 @@ export function AdminDashboard({
       );
       setSelectedParticipantIds(new Set());
       setDeleteModal(null);
-      await Promise.all([
-        loadParticipants(),
-        refreshSubmissionCount(),
-        analysis ? loadAnalysis(clusterCount ?? undefined) : Promise.resolve(),
-      ]);
+      await Promise.all([loadParticipants(), refreshSubmissionCount()]);
     } catch {
       setDeleteError("네트워크 오류가 발생했습니다.");
     } finally {
@@ -622,6 +585,9 @@ export function AdminDashboard({
 
       {tab === "ko" && (
         <div className="space-y-10">
+          {error && (
+            <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>
+          )}
           <section className="space-y-3">
             <h2 className="text-lg font-semibold">참가자 링크</h2>
             <div className="flex items-center gap-2">
@@ -763,6 +729,9 @@ export function AdminDashboard({
 
       {tab === "ja" && (
         <div className="space-y-10">
+          {error && (
+            <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>
+          )}
           <section className="space-y-3">
             <h2 className="text-lg font-semibold">日本語 研究資料</h2>
             <p className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded px-3 py-2 whitespace-pre-line">
@@ -972,67 +941,23 @@ export function AdminDashboard({
       {tab === "analysis" && (
         <section className="space-y-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold">결과 · 개념도</h2>
-            <div className="flex gap-2">
-              <button
-                onClick={() => loadAnalysis()}
-                disabled={loadingAnalysis || submissionCount === 0}
-                className="rounded-lg bg-slate-900 px-4 py-2 text-white text-sm font-medium hover:bg-slate-700 disabled:opacity-50"
-              >
-                {loadingAnalysis ? "계산 중..." : "결과 보기"}
-              </button>
-              <button
-                onClick={handleDownloadMatrixCsv}
-                disabled={loadingMatrix || submissionCount === 0}
-                className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium hover:bg-slate-100 disabled:opacity-50"
-              >
-                {loadingMatrix ? "생성 중..." : "집단행렬 CSV 다운로드"}
-              </button>
-            </div>
+            <h2 className="text-lg font-semibold">개념도 분석</h2>
+            <button
+              onClick={handleDownloadMatrixCsv}
+              disabled={loadingMatrix || submissionCount === 0}
+              className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium hover:bg-slate-100 disabled:opacity-50"
+            >
+              {loadingMatrix ? "생성 중..." : "집단행렬 CSV 다운로드"}
+            </button>
           </div>
 
-          {submissionCount === 0 && (
-            <p className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
-              분석할 참여 기록이 없습니다.
-            </p>
-          )}
-
-          {error && (
-            <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-              {error}
-            </p>
-          )}
           {matrixError && (
             <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
               {matrixError}
             </p>
           )}
 
-          {analysis && submissionCount > 0 && (
-            <div className="space-y-4">
-              <div className="flex items-center gap-3">
-                <label htmlFor="k" className="text-sm text-slate-600">
-                  군집 수
-                </label>
-                <input
-                  id="k"
-                  type="range"
-                  min={2}
-                  max={Math.max(2, statements.length - 1)}
-                  value={clusterCount ?? 2}
-                  onChange={(e) => {
-                    const k = Number(e.target.value);
-                    setClusterCount(k);
-                    loadAnalysis(k);
-                  }}
-                  className="flex-1"
-                />
-                <span className="text-sm font-medium w-6 text-center">{clusterCount ?? "-"}</span>
-              </div>
-
-              <ConceptMap points={analysis.points} />
-            </div>
-          )}
+          <AnalysisPanel slug={slug} adminToken={adminToken} />
         </section>
       )}
 
