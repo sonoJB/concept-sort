@@ -3,15 +3,21 @@ import { prisma } from "@/lib/db";
 import {
   computeGroupBounds,
   describeMaxGroupBreakdown,
+  describeMaxGroupBreakdownJa,
   describeMinGroupBreakdown,
+  describeMinGroupBreakdownJa,
 } from "@/lib/groupBounds";
 
 export default async function GuidePage({
   params,
+  searchParams,
 }: {
   params: Promise<{ slug: string }>;
+  searchParams: Promise<{ lang?: string }>;
 }) {
   const { slug } = await params;
+  const { lang } = await searchParams;
+  const locale = lang === "ja" ? "ja" : "ko";
 
   const project = await prisma.project.findUnique({
     where: { slug },
@@ -22,6 +28,47 @@ export default async function GuidePage({
 
   const n = project._count.statements;
   const { maxCardsPerGroup, minGroups, maxGroups } = computeGroupBounds(n);
+
+  if (locale === "ja") {
+    const minBreakdown = describeMinGroupBreakdownJa(n, maxCardsPerGroup, minGroups);
+    const maxBreakdown = describeMaxGroupBreakdownJa(n, maxGroups);
+    return (
+      <main className="flex-1 px-6 py-12">
+        <div className="max-w-2xl mx-auto space-y-4">
+          <h1 className="text-xl font-bold">［類似性分類の方法］</h1>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-700 leading-relaxed space-y-2">
+            <p className="font-medium">
+              ※ 類似性分類を行う際は、次の5つのルールを必ず守ってください。
+            </p>
+            <p>① 1つのグループは、必ず2枚以上のカードで構成してください。</p>
+            <p>
+              ② すべてのカードを1つのグループにまとめることはできません。（全{n}
+              枚のカードを1つのグループにすることはできません。）
+            </p>
+            <p>
+              ③ 1つのグループに{maxCardsPerGroup + 1}枚以上のカードを入れることはできません。
+              全カードの3分の1以上が1つのグループに含まれることを防ぐためです。
+            </p>
+            <p>
+              ④ 残ったカードに共通点がない場合でも、それらをすべて「その他」という1つの
+              グループにまとめることはできません。お手数ですが、カード同士の類似性を改めて
+              確認し、別のテーマ（グループ名）を考えてください。類似性のあるカード同士でグ
+              ループを作ってください。
+            </p>
+            <p>
+              ⑤ 分類されないカード（記述文）がないようにしてください。全{n}
+              枚のカードを、必ずいずれか1つのグループに含めてください。
+            </p>
+            <p>
+              - 最少：{minGroups}グループ（{minBreakdown}）<br />- 最多：{maxGroups}
+              グループ（{maxBreakdown}）
+            </p>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
   const minBreakdown = describeMinGroupBreakdown(n, maxCardsPerGroup, minGroups);
   const maxBreakdown = describeMaxGroupBreakdown(n, maxGroups);
 

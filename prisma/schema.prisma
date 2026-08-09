@@ -12,23 +12,54 @@ datasource db {
 }
 
 model Project {
-  id         String    @id @default(cuid())
-  slug       String    @unique
-  adminToken String    @unique
+  id         String   @id @default(cuid())
+  slug       String   @unique
+  adminToken String   @unique
   title      String
-  prompt     String    @default("")
-  createdAt  DateTime  @default(now())
+  prompt     String   @default("")
+  createdAt  DateTime @default(now())
 
-  statements  Statement[]
+  // Multilingual project content and per-language activation. Korean text
+  // (title/prompt) stays the base/reference content for cross-language
+  // comparison; Japanese content lives entirely in the *Ja fields with no
+  // fallback to Korean.
+  titleJa         String?
+  promptJa        String?
+  consentKo       String?
+  consentJa       String?
+  koreanEnabled   Boolean @default(false)
+  japaneseEnabled Boolean @default(false)
+
+  // Scopes the legacy hardcoded Korean consent body (CONSENT_BODY in
+  // SortBoard.tsx) to only the specific pre-existing project it belongs to.
+  // Defaults to false so future projects with a null consentKo are treated
+  // as "Korean content not ready" rather than silently inheriting another
+  // study's consent text.
+  legacyConsentFallbackEnabled Boolean @default(false)
+
+  koPreviewConfirmedAt DateTime?
+  jaPreviewConfirmedAt DateTime?
+
+  statements   Statement[]
   sortSessions SortSession[]
+
+  analysisRuns   AnalysisRun[]
+  executionLocks AnalysisExecutionLock[]
 }
 
 model Statement {
-  id        String   @id @default(cuid())
+  id        String  @id @default(cuid())
   projectId String
-  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   text      String
-  order     Int      @default(0)
+  order     Int     @default(0)
+
+  // Japanese translation + review status. Not auto-populated from `text`.
+  // jaStatus is a plain String (not a Prisma enum: SQLite has no native
+  // enum support) restricted at the application layer to
+  // "MISSING" | "DRAFT" | "REVIEWING" | "APPROVED".
+  textJa   String?
+  jaStatus String  @default("MISSING")
 
   groupItems SortGroupItem[]
 }
@@ -46,6 +77,10 @@ model SortSession {
   schoolLevel   String
   grade         String
   phoneNumber   String
+
+  // Which country's participation flow this response came through
+  // ("KR" | "JP"). Existing rows stay null — never backfilled.
+  countryCode String?
 
   groups SortGroup[]
 }
@@ -67,4 +102,171 @@ model SortGroupItem {
   statement   Statement @relation(fields: [statementId], references: [id], onDelete: Cascade)
 
   @@unique([groupId, statementId])
+}
+
+// --- Concept-map analysis (Gate 1 FINAL — approved schema baseline) ---
+//
+// All "enum-like" fields below are plain String (not Prisma enum: SQLite has
+// no native enum support, matching the existing Statement.jaStatus
+// convention). Allowed values are enforced at the application layer:
+//   AnalysisRun.scope             "KR" | "JP" | "ALL"
+//   AnalysisRun.executionStatus   "RUNNING" | "COMPLETED" | "FAILED"
+//   AnalysisRun.wardStatus        "NOT_RUN" | "COMPLETED" | "FAILED"
+//   AnalysisRunDimension.dimensionStatus  "COMPLETED" | "FAILED"
+//   AnalysisInterpretation.status  "DRAFT" | "FINALIZED"
+//   AnalysisClusterLabel.language  "ko" | "ja"
+//
+// AnalysisRun rows are immutable once executionStatus reaches a terminal
+// state (COMPLETED/FAILED) — the calculation itself is never rewritten,
+// only new runs are created. Official run success = primary 2D MDS success
+// AND official Ward success; other dimensions failing does not fail the run.
+
+model AnalysisRun {
+  id        String  @id @default(cuid())
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  scope     String
+
+  executionStatus  String
+  errorCode        String?
+  errorMessageSafe String?
+  startedAt        DateTime  @default(now())
+  finishedAt       DateTime?
+
+  // Freshness-comparison hashes (run-time snapshot values; current-vs-stored
+  // comparison happens at read time, never persisted as a "freshness" truth).
+  numericDataHash        String
+  statementStructureHash String
+  statementContentHashKo String
+  statementContentHashJa String
+  parameterHash          String
+
+  // Canonical PII-free snapshots. parametersSnapshot is the source of truth
+  // for parameterHash; explicit columns below are search/audit projections
+  // of values also present inside parametersSnapshot, not a second truth.
+  sourceSnapshotAt   DateTime
+  inputSnapshot      String
+  parametersSnapshot String
+
+  algorithmVersion      String
+  engineSourceCommitSha String
+  primaryMapDimension   Int
+  wardSourceDimension   Int
+  linkageMethod         String
+  dimensionsEvaluated   String
+  include3dSupplement   Boolean
+
+  // Run-time contextual summary (snapshot-time counts, not a live query).
+  statementCount           Int
+  nKr                      Int
+  nJp                      Int
+  nTotal                   Int
+  includedParticipantCount Int
+  excludedNullCountry      Int
+  excludedIncomplete       Int
+  excludedInvalid          Int
+
+  // Official Ward result (single result per run, computed from
+  // wardSourceDimension's MDS coordinates — Ward itself has no coordinates).
+  wardStatus           String
+  wardLinkageSnapshot  String?
+  wardErrorCode        String?
+  wardErrorMessageSafe String?
+
+  dimensions      AnalysisRunDimension[]
+  interpretations AnalysisInterpretation[]
+  executionLock   AnalysisExecutionLock?
+
+  @@index([projectId, scope, startedAt])
+  @@index([projectId, executionStatus])
+}
+
+model AnalysisRunDimension {
+  id            String      @id @default(cuid())
+  analysisRunId String
+  analysisRun   AnalysisRun @relation(fields: [analysisRunId], references: [id], onDelete: Cascade)
+  dimension     Int
+
+  // COMPLETED requires the result fields below to be populated; FAILED
+  // requires errorCode and leaves result fields null. converged=false is
+  // NOT a failure — it is a valid COMPLETED result that did not meet the
+  // convergence threshold; dimensionStatus only reflects hard failures.
+  dimensionStatus String
+
+  coordinates          String?
+  rawStress            Float?
+  commonStressDistance Float?
+  commonStressQ        Float?
+  converged            Boolean?
+  iterations           Int?
+  bestInitIndex        Int?
+  bestSeed             Int?
+  stressHistory        String?
+  normalizationMeta    String?
+
+  errorCode        String?
+  errorMessageSafe String?
+
+  @@unique([analysisRunId, dimension])
+}
+
+model AnalysisInterpretation {
+  id            String      @id @default(cuid())
+  analysisRunId String
+  analysisRun   AnalysisRun @relation(fields: [analysisRunId], references: [id], onDelete: Cascade)
+
+  // DRAFT: axisLabels/quadrantLabels/notes/labels are mutable in place.
+  // FINALIZED: fully immutable; further edits require a new DRAFT revision.
+  status  String
+  version Int
+
+  // History pointer only — deleting the referenced prior revision must not
+  // block deletion, so this is SetNull rather than Cascade/Restrict.
+  previousInterpretationId String?
+  previousInterpretation   AnalysisInterpretation?  @relation("InterpretationHistory", fields: [previousInterpretationId], references: [id], onDelete: SetNull)
+  laterRevisions           AnalysisInterpretation[] @relation("InterpretationHistory")
+
+  // Fixed at creation, including while status=DRAFT — changing k always
+  // creates a new interpretation so cluster labels never carry over.
+  selectedClusterCount Int
+
+  axisLabels     String?
+  quadrantLabels String?
+  notes          String?
+
+  createdAt   DateTime  @default(now())
+  finalizedAt DateTime?
+
+  labels AnalysisClusterLabel[]
+
+  @@unique([analysisRunId, version])
+}
+
+model AnalysisClusterLabel {
+  id                       String                 @id @default(cuid())
+  analysisInterpretationId String
+  analysisInterpretation   AnalysisInterpretation @relation(fields: [analysisInterpretationId], references: [id], onDelete: Cascade)
+  clusterIndex             Int
+  language                 String
+  label                    String
+  memo                     String?
+
+  @@unique([analysisInterpretationId, clusterIndex, language])
+}
+
+// One active lock per (projectId, scope) and per AnalysisRun — enforced by
+// the two unique constraints below. Created in the same transaction as its
+// AnalysisRun (see Gate 1 FINAL section 10) and deleted on terminal
+// transition; a lock surviving past its run's terminal state is an orphan
+// recovered lazily on the next read (domain layer, not schema).
+model AnalysisExecutionLock {
+  id            String      @id @default(cuid())
+  projectId     String
+  project       Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  scope         String
+  analysisRunId String      @unique
+  analysisRun   AnalysisRun @relation(fields: [analysisRunId], references: [id], onDelete: Cascade)
+  acquiredAt    DateTime    @default(now())
+
+  @@unique([projectId, scope])
 }

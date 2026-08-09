@@ -40,3 +40,32 @@ export function describeMaxGroupBreakdown(
     2 + remainder
   }장으로 구성된 1개 묶음`;
 }
+
+/** Japanese formatter for the same minimum-group breakdown — same numbers, translated wording. */
+export function describeMinGroupBreakdownJa(
+  statementCount: number,
+  maxCardsPerGroup: number,
+  minGroups: number
+): string {
+  const remainder = statementCount - (minGroups - 1) * maxCardsPerGroup;
+  if (remainder === maxCardsPerGroup) {
+    return `カード${maxCardsPerGroup}枚で構成された${minGroups}グループ`;
+  }
+  return `カード${remainder}枚で構成された1グループ、カード${maxCardsPerGroup}枚で構成された${
+    minGroups - 1
+  }グループ`;
+}
+
+/** Japanese formatter for the same maximum-group breakdown — same numbers, translated wording. */
+export function describeMaxGroupBreakdownJa(
+  statementCount: number,
+  maxGroups: number
+): string {
+  const remainder = statementCount - maxGroups * 2;
+  if (remainder === 0) {
+    return `カード2枚で構成された${maxGroups}グループ`;
+  }
+  return `カード2枚で構成された${maxGroups - 1}グループ、カード${
+    2 + remainder
+  }枚で構成された1グループ`;
+}

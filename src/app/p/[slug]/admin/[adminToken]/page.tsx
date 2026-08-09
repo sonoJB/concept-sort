@@ -4,10 +4,14 @@ import { AdminDashboard } from "@/components/AdminDashboard";
 
 export default async function AdminPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ slug: string; adminToken: string }>;
+  searchParams: Promise<{ tab?: string }>;
 }) {
   const { slug, adminToken } = await params;
+  const { tab } = await searchParams;
+  const initialTab = tab === "ja" || tab === "readiness" ? tab : "ko";
 
   const project = await prisma.project.findUnique({
     where: { slug },
@@ -26,8 +30,24 @@ export default async function AdminPage({
         adminToken={project.adminToken}
         title={project.title}
         prompt={project.prompt}
-        initialStatements={project.statements.map((s) => ({ id: s.id, text: s.text }))}
+        titleJa={project.titleJa}
+        promptJa={project.promptJa}
+        consentKo={project.consentKo}
+        consentJa={project.consentJa}
+        koreanEnabled={project.koreanEnabled}
+        japaneseEnabled={project.japaneseEnabled}
+        legacyConsentFallbackEnabled={project.legacyConsentFallbackEnabled}
+        koPreviewConfirmedAt={project.koPreviewConfirmedAt?.toISOString() ?? null}
+        jaPreviewConfirmedAt={project.jaPreviewConfirmedAt?.toISOString() ?? null}
+        initialStatements={project.statements.map((s) => ({
+          id: s.id,
+          text: s.text,
+          order: s.order,
+          textJa: s.textJa,
+          jaStatus: s.jaStatus,
+        }))}
         initialSubmissionCount={project._count.sortSessions}
+        initialTab={initialTab}
       />
     </main>
   );

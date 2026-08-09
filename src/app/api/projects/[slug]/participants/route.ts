@@ -30,6 +30,7 @@ export async function GET(
 
   const participants = sessions.map((session) => ({
     id: session.id,
+    countryCode: session.countryCode,
     participantName: session.participantName,
     consentAgreed: session.consentAgreed,
     gender: session.gender,

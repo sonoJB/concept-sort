@@ -1,0 +1,25 @@
+/** Stable machine-readable codes returned alongside the existing Korean `error` string. */
+export const ERROR_CODES = [
+  "COUNTRY_REQUIRED",
+  "COUNTRY_NOT_AVAILABLE",
+  "PARTICIPANT_NAME_REQUIRED",
+  "CONSENT_REQUIRED",
+  "GENDER_REQUIRED",
+  "AGE_INVALID",
+  "SCHOOL_LEVEL_REQUIRED",
+  "GRADE_REQUIRED",
+  "PHONE_REQUIRED",
+  "UNASSIGNED_STATEMENTS",
+  "ONE_GROUP_ONLY",
+  "GROUP_TOO_SMALL",
+  "GROUP_TOO_LARGE",
+  "TOO_FEW_GROUPS",
+  "TOO_MANY_GROUPS",
+  "INVALID_STATEMENT",
+  "JAPANESE_CONTENT_NOT_READY",
+  "PROJECT_NOT_FOUND",
+  "SUBMISSION_FAILED",
+  "NETWORK_ERROR",
+] as const;
+
+export type ErrorCode = (typeof ERROR_CODES)[number];
