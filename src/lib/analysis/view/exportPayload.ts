@@ -49,6 +49,10 @@ export type ExportPayload = {
     selectedClusterCount: number | null;
     interpretationVersion: number | null;
     interpretationStatus: string | null;
+    /** Researcher-authored interpretation metadata — verbatim from AnalysisInterpretation, null when not entered. Never auto-generated. */
+    axisLabels: string | null;
+    quadrantLabels: string | null;
+    notes: string | null;
     view3d: { azimuthDeg: number; elevationDeg: number } | null;
   };
   statements: { id: string; order: number; text: string; jaStatus: string | null }[];
@@ -105,7 +109,14 @@ export type ExportPayloadInputs = {
     errorMessageSafe: string | null;
   }[];
   exportLanguage: "ko" | "ja";
-  interpretation: { version: number; status: string; selectedClusterCount: number } | null;
+  interpretation: {
+    version: number;
+    status: string;
+    selectedClusterCount: number;
+    axisLabels: string | null;
+    quadrantLabels: string | null;
+    notes: string | null;
+  } | null;
   interpretationLabels: { clusterIndex: number; language: string; label: string; memo: string | null }[];
   view3d?: { azimuthDeg: number; elevationDeg: number };
 };
@@ -184,6 +195,9 @@ export function buildExportPayload(inputs: ExportPayloadInputs): ExportPayload {
       selectedClusterCount: inputs.interpretation?.selectedClusterCount ?? null,
       interpretationVersion: inputs.interpretation?.version ?? null,
       interpretationStatus: inputs.interpretation?.status ?? null,
+      axisLabels: inputs.interpretation?.axisLabels ?? null,
+      quadrantLabels: inputs.interpretation?.quadrantLabels ?? null,
+      notes: inputs.interpretation?.notes ?? null,
       view3d: dimensions.some((d) => d.dimension === 3 && d.dimensionStatus === "COMPLETED")
         ? (inputs.view3d ?? { azimuthDeg: 35, elevationDeg: 20 })
         : null,

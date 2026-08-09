@@ -42,7 +42,7 @@ export function Map2D({
   const origin = originInScreenSpace(points);
 
   return (
-    <svg viewBox={`0 0 ${FIGURE_WIDTH} ${FIGURE_HEIGHT}`} width="100%" height="auto" role="img" aria-label="2D concept map">
+    <svg viewBox={`0 0 ${FIGURE_WIDTH} ${FIGURE_HEIGHT}`} width="100%" role="img" aria-label="2D concept map">
       <title>2차원 개념도</title>
       <rect x={0} y={0} width={FIGURE_WIDTH} height={FIGURE_HEIGHT} fill="#ffffff" />
       {origin && showQuadrantLines && (

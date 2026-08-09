@@ -163,7 +163,29 @@ export function AnalysisPanel({ slug, adminToken }: { slug: string; adminToken: 
   }
 
   const selectedInterpretation = interpretations.find((i) => i.id === selectedInterpretationId) ?? null;
-  const isDraft = selectedInterpretation?.status !== "FINALIZED";
+  // The live preview AND every export/ZIP builder must agree on the SAME
+  // snapshot: the export payload's own interpretationStatus, never the
+  // separately-refreshed interpretations list. A same-interpretation status
+  // mutation (e.g. DRAFT -> FINALIZED) changes list state on save, but the
+  // export payload is a different fetch — deriving isDraft from the list
+  // let the map/exports show FINALIZED-adjacent UI while payload (and thus
+  // any export built from it) still described stale DRAFT content. No
+  // interpretation/no payload defaults to draft-like (matches prior
+  // behavior where selectedInterpretation === null also read as draft).
+  const isDraft = payload ? payload.meta.interpretationStatus !== "FINALIZED" : true;
+
+  // Single entry point for every InterpretationEditor mutation (axis/quadrant
+  // label edits, notes, cluster labels, finalize) — invalidates the current
+  // export payload immediately so stale export controls (and the official
+  // ZIP guard, which reads payload.meta.interpretationStatus) can never be
+  // used during the refetch window, then refreshes both the interpretations
+  // list and the export payload from the same mutation-completion boundary.
+  async function handleInterpretationChanged() {
+    if (!selectedRunId) return;
+    setPayload(null);
+    setBlockReason(null);
+    await Promise.all([loadInterpretations(selectedRunId), loadExportPayload(selectedRunId)]);
+  }
 
   const clusterAssignmentsMapPoints = (() => {
     if (!payload) return [];
@@ -271,13 +293,7 @@ export function AnalysisPanel({ slug, adminToken }: { slug: string; adminToken: 
               draft={isDraft}
             />
 
-            <ExportPanel
-              payload={payload}
-              safeSlug={safeSlugFor(slug)}
-              isDraft={isDraft}
-              interpretationStatus={selectedInterpretation?.status ?? null}
-              showQuadrantLines={showQuadrant}
-            />
+            <ExportPanel payload={payload} safeSlug={safeSlugFor(slug)} showQuadrantLines={showQuadrant} />
           </div>
         )}
       </section>
@@ -380,7 +396,7 @@ export function AnalysisPanel({ slug, adminToken }: { slug: string; adminToken: 
               slug={slug}
               adminToken={adminToken}
               interpretation={selectedInterpretation}
-              onChanged={() => selectedRunId && loadInterpretations(selectedRunId)}
+              onChanged={handleInterpretationChanged}
               onFinalizeConfirm={() =>
                 window.confirm("확정 후에는 이 해석본을 직접 수정할 수 없으며, 변경하려면 새 해석본을 생성해야 합니다. 계속하시겠습니까?")
               }

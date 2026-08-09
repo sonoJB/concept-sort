@@ -33,6 +33,15 @@ export type Map2DSvgOptions = {
   showQuadrantLines?: boolean;
   axisLabels?: { positiveX?: string; negativeX?: string; positiveY?: string; negativeY?: string } | null;
   quadrantLabels?: { q1?: string; q2?: string; q3?: string; q4?: string } | null;
+  /**
+   * Single researcher-authored quadrant annotation (AnalysisInterpretation.quadrantLabels
+   * is one free-text field, not four per-quadrant slots — no delimiter
+   * convention exists anywhere in this codebase to split it into q1..q4, so
+   * it is never forced into the structured quadrantLabels shape above;
+   * rendered as one caption instead). Only meaningful when showQuadrantLines
+   * is also set.
+   */
+  quadrantCaption?: string | null;
   draft?: boolean;
   footer?: string;
 };
@@ -68,6 +77,12 @@ export function buildMap2DSvg(points: ScaledPoint2D[], rawPoints: MapPoint2D[], 
     if (negativeX) parts.push(`<text x="10" y="${FIGURE_HEIGHT / 2 - 6}" font-size="11" font-family="sans-serif" fill="#334155">${escapeXml(negativeX)}</text>`);
     if (positiveY) parts.push(`<text x="${FIGURE_WIDTH / 2 + 6}" y="14" font-size="11" font-family="sans-serif" fill="#334155">${escapeXml(positiveY)}</text>`);
     if (negativeY) parts.push(`<text x="${FIGURE_WIDTH / 2 + 6}" y="${FIGURE_HEIGHT - 6}" font-size="11" font-family="sans-serif" fill="#334155">${escapeXml(negativeY)}</text>`);
+  }
+
+  if (options.showQuadrantLines && options.quadrantCaption) {
+    parts.push(
+      `<text x="12" y="20" font-size="11" font-family="sans-serif" fill="#334155">${escapeXml(options.quadrantCaption)}</text>`
+    );
   }
 
   if (options.draft) {

@@ -39,6 +39,17 @@ function buildStandaloneHtmlShell(
           .join("")}</tbody></table>`
       : "";
 
+  const interpretationMetaRows = [
+    m.axisLabels ? `<tr><td>축 라벨</td><td>${escapeXml(m.axisLabels)}</td></tr>` : "",
+    m.quadrantLabels ? `<tr><td>사분면 라벨</td><td>${escapeXml(m.quadrantLabels)}</td></tr>` : "",
+    m.notes ? `<tr><td>메모</td><td>${escapeXml(m.notes)}</td></tr>` : "",
+  ]
+    .filter(Boolean)
+    .join("");
+  const interpretationMetaHtml = interpretationMetaRows
+    ? `<h2>연구자 해석 메모</h2><table><tbody>${interpretationMetaRows}</tbody></table>`
+    : "";
+
   const figuresHtml = figures
     .map((f) => `<h2>${escapeXml(f.heading)}</h2>${f.note ? `<p class="meta">${escapeXml(f.note)}</p>` : ""}${f.svg}`)
     .join("\n");
@@ -71,6 +82,8 @@ ${draft ? '<p class="draft">DRAFT — 연구자 해석 미확정</p>' : ""}
 ${figuresHtml}
 
 ${dendrogramSvg ? `<h2>Ward 군집 dendrogram (2차원 MDS 좌표 기반)</h2>${dendrogramSvg}` : ""}
+
+${interpretationMetaHtml}
 
 ${clusterLabelsHtml}
 

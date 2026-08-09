@@ -25,30 +25,44 @@ function mapPointsFromPayload(payload: ExportPayload, dimension: number): MapPoi
 export function ExportPanel({
   payload,
   safeSlug,
-  isDraft,
-  interpretationStatus,
   showQuadrantLines,
 }: {
   payload: ExportPayload;
   safeSlug: string;
-  isDraft: boolean;
-  interpretationStatus: string | null;
   showQuadrantLines: boolean;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The payload passed in IS the export snapshot every builder below reads
+  // from — deriving status here (instead of accepting it as a separate
+  // prop) makes it structurally impossible for a caller to gate the
+  // official ZIP on a different, possibly-stale status source (e.g. a
+  // separately-refreshed interpretations list) than the one the ZIP's own
+  // contents were built from.
+  const interpretationStatus = payload.meta.interpretationStatus;
+  const isDraft = interpretationStatus !== "FINALIZED";
   const finalZipAllowed = isFinalZipAllowed(interpretationStatus);
+
+  // Single researcher-entered string, mirroring the same convention already
+  // used for the live preview (AnalysisPanel.tsx maps it to positiveX only)
+  // — never split or auto-assigned to other axis directions.
+  const axisLabelsOption = payload.meta.axisLabels ? { positiveX: payload.meta.axisLabels } : null;
 
   function build2dSvg() {
     const points2d = mapPointsFromPayload(payload, payload.meta.primaryMapDimension);
     const scaled = buildMapPoints2D(points2d);
-    return buildMap2DSvg(scaled, points2d, { showQuadrantLines, draft: isDraft });
+    return buildMap2DSvg(scaled, points2d, { showQuadrantLines, axisLabels: axisLabelsOption, draft: isDraft });
   }
 
   function buildQuadrantSvg() {
     const points2d = mapPointsFromPayload(payload, payload.meta.primaryMapDimension);
     const scaled = buildMapPoints2D(points2d);
-    return buildMap2DSvg(scaled, points2d, { showQuadrantLines: true, draft: isDraft });
+    return buildMap2DSvg(scaled, points2d, {
+      showQuadrantLines: true,
+      axisLabels: axisLabelsOption,
+      quadrantCaption: payload.meta.quadrantLabels,
+      draft: isDraft,
+    });
   }
 
   function build3dSvgAndView() {

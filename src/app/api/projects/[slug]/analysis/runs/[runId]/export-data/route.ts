@@ -65,7 +65,14 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   }
 
   const interpretationId = request.nextUrl.searchParams.get("interpretationId");
-  let interpretation: { version: number; status: string; selectedClusterCount: number } | null = null;
+  let interpretation: {
+    version: number;
+    status: string;
+    selectedClusterCount: number;
+    axisLabels: string | null;
+    quadrantLabels: string | null;
+    notes: string | null;
+  } | null = null;
   let interpretationLabels: { clusterIndex: number; language: string; label: string; memo: string | null }[] = [];
 
   if (interpretationId) {
@@ -76,7 +83,14 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     if (!found || found.analysisRunId !== run.id) {
       return NextResponse.json({ errorCode: "INTERPRETATION_NOT_FOUND" }, { status: 404 });
     }
-    interpretation = { version: found.version, status: found.status, selectedClusterCount: found.selectedClusterCount };
+    interpretation = {
+      version: found.version,
+      status: found.status,
+      selectedClusterCount: found.selectedClusterCount,
+      axisLabels: found.axisLabels,
+      quadrantLabels: found.quadrantLabels,
+      notes: found.notes,
+    };
     interpretationLabels = found.labels.map((l) => ({ clusterIndex: l.clusterIndex, language: l.language, label: l.label, memo: l.memo }));
   }
 

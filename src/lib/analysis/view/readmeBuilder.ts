@@ -3,6 +3,13 @@ import { SHEPARD_UNAVAILABLE_MESSAGE } from "./uiState";
 
 export function buildReadmeText(payload: ExportPayload): string {
   const m = payload.meta;
+  const interpretationMetaLines = [
+    m.axisLabels ? `axis_labels: ${m.axisLabels}` : null,
+    m.quadrantLabels ? `quadrant_labels: ${m.quadrantLabels}` : null,
+    m.notes ? `notes: ${m.notes}` : null,
+  ]
+    .filter((line): line is string => line !== null)
+    .join("\n");
   return `개념도 분석 결과 묶음 안내
 ========================
 
@@ -32,5 +39,5 @@ included_n: ${m.includedParticipantCount} (KR ${m.nKr} / JP ${m.nJp})
 export_generated_at: ${m.exportGeneratedAt}
 export_language: ${m.exportLanguage}
 interpretation: ${m.interpretationStatus ?? "-"} (version ${m.interpretationVersion ?? "-"}, k=${m.selectedClusterCount ?? "-"})
-`;
+${interpretationMetaLines ? interpretationMetaLines + "\n" : ""}`;
 }
