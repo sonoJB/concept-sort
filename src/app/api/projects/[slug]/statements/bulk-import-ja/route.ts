@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireAdminProject } from "@/lib/auth";
 import { isValidJaStatus } from "@/lib/localeContentStatus";
+import { validateNumberedLines } from "@/lib/statementNumbering";
 
 /**
  * Bulk paste-in entry for Japanese translations: replaces textJa/jaStatus
@@ -46,12 +47,10 @@ export async function POST(
   }
 
   const trimmed: string[] = lines.map((l: string) => l.trim());
-  const blankIndex = trimmed.findIndex((l) => l.length === 0);
-  if (blankIndex !== -1) {
-    return NextResponse.json(
-      { error: `${blankIndex + 1}번째 줄이 비어 있습니다. 빈 줄 없이 정확히 진술문 수만큼 입력해 주세요.` },
-      { status: 400 }
-    );
+
+  const numberingCheck = validateNumberedLines(trimmed);
+  if (!numberingCheck.ok) {
+    return NextResponse.json({ error: numberingCheck.error }, { status: 400 });
   }
 
   const statements = await prisma.statement.findMany({
