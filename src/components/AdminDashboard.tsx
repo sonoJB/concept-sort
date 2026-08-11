@@ -6,6 +6,7 @@ import { AnalysisPanel } from "@/components/analysis/AnalysisPanel";
 import { toCsv, downloadCsv } from "@/lib/csv";
 import { JA_RESPONSIBLE_PARTY_NOTICE } from "@/lib/consent";
 import type { LocaleContentStatus, OperatingState } from "@/lib/localeContentStatus";
+import { validateNumberedLines, splitBulkLines } from "@/lib/statementNumbering";
 
 type Statement = {
   id: string;
@@ -87,7 +88,6 @@ export function AdminDashboard({
 }) {
   const [tab, setTab] = useState<Tab>(initialTab);
   const [statements, setStatements] = useState(initialStatements);
-  const [newStatement, setNewStatement] = useState("");
   const [submissionCount, setSubmissionCount] = useState(initialSubmissionCount);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -142,16 +142,34 @@ export function AdminDashboard({
   const [jaImportBusy, setJaImportBusy] = useState(false);
   const [jaImportError, setJaImportError] = useState<string | null>(null);
 
+  // Bulk Korean entry/edit — one line per Statement, numbering is content.
+  const [koBulkText, setKoBulkText] = useState(() =>
+    [...initialStatements]
+      .sort((a, b) => a.order - b.order)
+      .map((s) => s.text)
+      .join("\n")
+  );
+  const [koBulkPreview, setKoBulkPreview] = useState<
+    { order: number; id: string | null; before: string | null; after: string; changed: boolean }[] | null
+  >(null);
+  const [koBulkPreviewError, setKoBulkPreviewError] = useState<string | null>(null);
+  const [koBulkSaving, setKoBulkSaving] = useState(false);
+  const [koBulkSaveError, setKoBulkSaveError] = useState<string | null>(null);
+  const [koBulkSavedCount, setKoBulkSavedCount] = useState<number | null>(null);
+  const [koBulkShowConfirm, setKoBulkShowConfirm] = useState(false);
+
   // Bulk Japanese entry (paste 47 lines at once)
-  const [jaBulkText, setJaBulkText] = useState("");
-  const [jaBulkStripNumbering, setJaBulkStripNumbering] = useState(false);
+  const [jaBulkText, setJaBulkText] = useState(() => {
+    const ordered = [...initialStatements].sort((a, b) => a.order - b.order);
+    const hasAnyJa = ordered.some((s) => s.textJa?.trim());
+    return hasAnyJa ? ordered.map((s) => s.textJa ?? "").join("\n") : "";
+  });
   const [jaBulkStatus, setJaBulkStatus] = useState<"DRAFT" | "REVIEWING" | "APPROVED">("DRAFT");
   const [jaBulkAckOverwrite, setJaBulkAckOverwrite] = useState(false);
   const [jaBulkPreview, setJaBulkPreview] = useState<
     { order: number; korean: string; japanese: string }[] | null
   >(null);
   const [jaBulkPreviewError, setJaBulkPreviewError] = useState<string | null>(null);
-  const [jaBulkNumberingNote, setJaBulkNumberingNote] = useState<string | null>(null);
   const [jaBulkSaving, setJaBulkSaving] = useState(false);
   const [jaBulkSaveError, setJaBulkSaveError] = useState<string | null>(null);
   const [jaBulkSavedCount, setJaBulkSavedCount] = useState<number | null>(null);
@@ -328,30 +346,6 @@ export function AdminDashboard({
     }
   }
 
-  async function addStatement() {
-    const text = newStatement.trim();
-    if (!text) return;
-    const res = await fetch(`/api/projects/${slug}/statements`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, adminToken }),
-    });
-    const data = await res.json();
-    if (res.ok) {
-      setStatements((prev) => [
-        ...prev,
-        { id: data.id, text: data.text, order: prev.length, textJa: null, jaStatus: "MISSING" },
-      ]);
-      setNewStatement("");
-      setKoPreview(null);
-      setJaPreview(null);
-      setKoEnabled(false);
-      setJaEnabled(false);
-    } else {
-      setError(data.error ?? "추가에 실패했습니다.");
-    }
-  }
-
   async function deleteStatement(id: string) {
     const res = await fetch(`/api/projects/${slug}/statements`, {
       method: "DELETE",
@@ -359,7 +353,19 @@ export function AdminDashboard({
       body: JSON.stringify({ statementId: id, adminToken }),
     });
     if (res.ok) {
-      setStatements((prev) => prev.filter((s) => s.id !== id));
+      setStatements((prev) => {
+        const next = prev.filter((s) => s.id !== id);
+        // Re-sync both bulk textareas so their line count matches the new
+        // Statement count — otherwise the next preview attempt would
+        // spuriously fail the count check against stale local text.
+        const ordered = [...next].sort((a, b) => a.order - b.order);
+        setKoBulkText(ordered.map((s) => s.text).join("\n"));
+        const hasAnyJa = ordered.some((s) => s.textJa?.trim());
+        setJaBulkText(hasAnyJa ? ordered.map((s) => s.textJa ?? "").join("\n") : "");
+        setKoBulkPreview(null);
+        setJaBulkPreview(null);
+        return next;
+      });
       setKoPreview(null);
       setJaPreview(null);
       setKoEnabled(false);
@@ -501,49 +507,12 @@ export function AdminDashboard({
     }
   }
 
-  /**
-   * Only strips a leading number prefix (1. / 1) / 1．/ ...) when EVERY line
-   * starts with one and the numbers form an unbroken 1..N sequence matching
-   * line count. Any ambiguity (missing prefix on some lines, out-of-order,
-   * gaps) leaves every line untouched — never a partial/guessed strip.
-   */
-  function stripSequentialNumberingIfSafe(
-    lines: string[]
-  ): { lines: string[]; stripped: boolean; note: string | null } {
-    const prefixPattern = /^(\d+)[.)．、]\s*/;
-    const matches = lines.map((l) => l.match(prefixPattern));
-    if (matches.some((m) => m === null)) {
-      return { lines, stripped: false, note: "일부 줄에 번호가 없어 번호 제거를 건너뛰었습니다." };
-    }
-    const numbers = matches.map((m) => Number(m![1]));
-    const isSequential = numbers.every((n, i) => n === i + 1);
-    if (!isSequential) {
-      return { lines, stripped: false, note: "번호가 1부터 연속되지 않아 번호 제거를 건너뛰었습니다." };
-    }
-    return {
-      lines: lines.map((l) => l.replace(prefixPattern, "")),
-      stripped: true,
-      note: null,
-    };
-  }
-
   function buildJaBulkPreview() {
     setJaBulkSaveError(null);
     setJaBulkSavedCount(null);
     setJaBulkPreviewError(null);
-    setJaBulkNumberingNote(null);
 
-    const rawLines = jaBulkText.trim().length === 0 ? [] : jaBulkText.trim().split(/\r\n|\r|\n/);
-
-    let lines = rawLines;
-    if (jaBulkStripNumbering) {
-      const result = stripSequentialNumberingIfSafe(rawLines);
-      lines = result.lines;
-      if (result.note) setJaBulkNumberingNote(result.note);
-    }
-
-    lines = lines.map((l) => l.trim());
-
+    const lines = splitBulkLines(jaBulkText);
     const orderedStatements = [...statements].sort((a, b) => a.order - b.order);
 
     if (lines.length !== orderedStatements.length) {
@@ -553,15 +522,60 @@ export function AdminDashboard({
       );
       return;
     }
-    const blankIndex = lines.findIndex((l) => l.length === 0);
-    if (blankIndex !== -1) {
+
+    const numberingCheck = validateNumberedLines(lines);
+    if (!numberingCheck.ok) {
       setJaBulkPreview(null);
-      setJaBulkPreviewError(`${blankIndex + 1}번째 줄이 비어 있습니다. 빈 줄 없이 입력해 주세요.`);
+      setJaBulkPreviewError(numberingCheck.error);
       return;
     }
 
     setJaBulkPreview(
       orderedStatements.map((s, i) => ({ order: s.order, korean: s.text, japanese: lines[i] }))
+    );
+  }
+
+  function buildKoBulkPreview() {
+    setKoBulkSaveError(null);
+    setKoBulkSavedCount(null);
+    setKoBulkPreviewError(null);
+    setKoBulkShowConfirm(false);
+
+    const lines = splitBulkLines(koBulkText);
+    const orderedStatements = [...statements].sort((a, b) => a.order - b.order);
+
+    // A zero-statement project accepts any N >= 1 lines as the initial set;
+    // an existing project must match its current Statement count exactly.
+    if (orderedStatements.length > 0 && lines.length !== orderedStatements.length) {
+      setKoBulkPreview(null);
+      setKoBulkPreviewError(
+        `입력된 줄 수(${lines.length})가 현재 진술문 수(${orderedStatements.length})와 일치하지 않습니다. 진술문 순서대로 한 줄에 하나씩 입력해 주세요.`
+      );
+      return;
+    }
+
+    const numberingCheck = validateNumberedLines(lines);
+    if (!numberingCheck.ok) {
+      setKoBulkPreview(null);
+      setKoBulkPreviewError(numberingCheck.error);
+      return;
+    }
+
+    if (orderedStatements.length === 0) {
+      setKoBulkPreview(
+        lines.map((line, i) => ({ order: i, id: null, before: null, after: line, changed: true }))
+      );
+      return;
+    }
+
+    setKoBulkPreview(
+      orderedStatements.map((s, i) => ({
+        order: s.order,
+        id: s.id,
+        before: s.text,
+        after: lines[i],
+        changed: lines[i] !== s.text,
+      }))
     );
   }
 
@@ -609,6 +623,63 @@ export function AdminDashboard({
       setJaBulkSaveError("네트워크 오류가 발생했습니다.");
     } finally {
       setJaBulkSaving(false);
+    }
+  }
+
+  async function submitKoBulkSave(confirmed: boolean) {
+    if (!koBulkPreview) return;
+    const changedCount = koBulkPreview.filter((p) => p.changed).length;
+    if (changedCount === 0) {
+      // Nothing changed — no DB write needed.
+      setKoBulkShowConfirm(false);
+      setKoBulkSavedCount(0);
+      return;
+    }
+    if (!confirmed) {
+      setKoBulkShowConfirm(true);
+      return;
+    }
+    setKoBulkShowConfirm(false);
+    setKoBulkSaving(true);
+    setKoBulkSaveError(null);
+    try {
+      const res = await fetch(`/api/projects/${slug}/statements/bulk-update-ko`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          adminToken,
+          lines: koBulkPreview.map((p) => p.after),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setKoBulkSaveError(data.error ?? "일괄 저장에 실패했습니다.");
+        return;
+      }
+      const returned = data.statements as { id: string; order: number; text: string }[];
+      if (data.createdCount > 0) {
+        // Zero-statement project: the returned rows are the newly created
+        // Statements, complete with real IDs.
+        setStatements(
+          returned.map((s) => ({ id: s.id, text: s.text, order: s.order, textJa: null, jaStatus: "MISSING" }))
+        );
+      } else {
+        const byId = new Map(returned.map((s) => [s.id, s]));
+        setStatements((prev) =>
+          prev.map((s) => {
+            const match = byId.get(s.id);
+            return match ? { ...s, text: match.text } : s;
+          })
+        );
+      }
+      setKoBulkSavedCount((data.updatedCount ?? 0) + (data.createdCount ?? 0));
+      setKoBulkPreview(null);
+      setKoPreview(null);
+      setKoEnabled(false);
+    } catch {
+      setKoBulkSaveError("네트워크 오류가 발생했습니다.");
+    } finally {
+      setKoBulkSaving(false);
     }
   }
 
@@ -807,49 +878,151 @@ export function AdminDashboard({
           </section>
 
           <section className="space-y-3">
-            <h2 className="text-lg font-semibold">한국어 진술문 목록 ({statements.length}개)</h2>
+            <h2 className="text-lg font-semibold">한국어 진술문 일괄 입력</h2>
+            <p className="text-xs text-slate-500">
+              한국어 진술문을 순서대로 한 줄에 하나씩 입력해 주세요. 번호(1., 2., ...)도 진술문
+              본문에 직접 포함해 주세요.
+            </p>
+            <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+              현재 진술문: {statements.length}개 · 입력된 줄:{" "}
+              {splitBulkLines(koBulkText).length}개
+            </p>
             {locked && (
               <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                이미 제출된 응답이 있어 진술문을 추가/삭제할 수 없습니다. 목록을 변경하면 기존
-                결과와의 일관성이 깨질 수 있습니다.
+                이미 제출된 응답이 있습니다. 진술문 개수를 바꾸면 기존 결과와의 일관성이 깨질 수
+                있으니, 문구 교정 등 개수가 그대로인 수정만 권장합니다.
               </p>
             )}
-            <ul className="space-y-1.5">
-              {statements.map((s) => (
-                <li
-                  key={s.id}
-                  className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2 text-sm"
-                >
-                  <span>{s.text}</span>
-                  {!locked && (
-                    <button
-                      onClick={() => deleteStatement(s.id)}
-                      className="text-slate-400 hover:text-red-500 text-xs"
-                    >
-                      삭제
-                    </button>
-                  )}
-                </li>
-              ))}
-            </ul>
-            {!locked && (
-              <div className="flex gap-2">
-                <input
-                  value={newStatement}
-                  onChange={(e) => setNewStatement(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && addStatement()}
-                  placeholder="새 진술문 추가"
-                  className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                />
-                <button
-                  onClick={addStatement}
-                  className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium hover:bg-slate-100"
-                >
-                  추가
-                </button>
+            <textarea
+              rows={14}
+              value={koBulkText}
+              onChange={(e) => {
+                setKoBulkText(e.target.value);
+                setKoBulkPreview(null);
+                setKoBulkPreviewError(null);
+                setKoBulkShowConfirm(false);
+              }}
+              placeholder={"1. 진술문\n2. 진술문\n3. 진술문\n..."}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono"
+            />
+
+            <button
+              onClick={buildKoBulkPreview}
+              disabled={!koBulkText.trim()}
+              className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium hover:bg-slate-100 disabled:opacity-50"
+            >
+              검증/미리보기
+            </button>
+
+            {koBulkPreviewError && (
+              <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                {koBulkPreviewError}
+              </p>
+            )}
+
+            {koBulkPreview && (
+              <div className="space-y-3">
+                {(() => {
+                  const changed = koBulkPreview.filter((p) => p.changed);
+                  return (
+                    <>
+                      <p className="text-sm font-medium">
+                        입력된 진술문: {koBulkPreview.length}개 · 변경됨: {changed.length}개
+                      </p>
+                      {changed.length > 0 && (
+                        <div className="max-h-96 overflow-y-auto space-y-2 rounded-lg border border-slate-200 p-2">
+                          {changed.map((p) => (
+                            <div key={p.order} className="rounded-lg border border-slate-100 p-2 text-sm">
+                              <p className="text-xs text-slate-400">#{p.order + 1}</p>
+                              {p.before !== null && (
+                                <p className="text-slate-400 line-through">이전: {p.before}</p>
+                              )}
+                              <p>이후: {p.after}</p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {koBulkShowConfirm && (
+                        <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 space-y-2">
+                          <p className="text-sm text-red-700">
+                            한국어 진술문 {koBulkPreview.length}개 중 {changed.length}개가
+                            변경됩니다. 변경하면 기존 미리보기 확인 및 언어 활성화 상태에 영향을
+                            줄 수 있습니다. 저장하시겠습니까?
+                          </p>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => submitKoBulkSave(true)}
+                              className="rounded-lg bg-red-700 px-3 py-1.5 text-white text-xs font-medium hover:bg-red-800"
+                            >
+                              확인, 저장
+                            </button>
+                            <button
+                              onClick={() => setKoBulkShowConfirm(false)}
+                              className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium hover:bg-slate-100"
+                            >
+                              취소
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      <button
+                        onClick={() => submitKoBulkSave(false)}
+                        disabled={koBulkSaving || changed.length === 0}
+                        className="rounded-lg bg-slate-900 px-4 py-2 text-white text-sm font-medium hover:bg-slate-700 disabled:opacity-50"
+                      >
+                        {koBulkSaving
+                          ? "저장 중..."
+                          : changed.length === 0
+                            ? "변경 사항 없음"
+                            : "한국어 진술문 전체 저장"}
+                      </button>
+                    </>
+                  );
+                })()}
               </div>
             )}
+
+            {koBulkSaveError && (
+              <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                {koBulkSaveError}
+              </p>
+            )}
+            {koBulkSavedCount !== null && (
+              <p className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+                {koBulkSavedCount > 0
+                  ? `${koBulkSavedCount}개 진술문이 저장되었습니다.`
+                  : "변경 사항이 없어 저장하지 않았습니다."}
+              </p>
+            )}
           </section>
+
+          {statements.length > 0 && !locked && (
+            <section className="space-y-2">
+              <h2 className="text-sm font-semibold text-slate-600">
+                개별 진술문 삭제 (구조 변경 — 진술문 개수를 바꿔야 할 때만 사용)
+              </h2>
+              <ul className="space-y-1.5">
+                {[...statements]
+                  .sort((a, b) => a.order - b.order)
+                  .map((s) => (
+                    <li
+                      key={s.id}
+                      className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                    >
+                      <span>{s.text}</span>
+                      <button
+                        onClick={() => deleteStatement(s.id)}
+                        className="text-slate-400 hover:text-red-500 text-xs"
+                      >
+                        삭제
+                      </button>
+                    </li>
+                  ))}
+              </ul>
+            </section>
+          )}
         </div>
       )}
 
@@ -928,10 +1101,11 @@ export function AdminDashboard({
           </section>
 
           <section className="space-y-3">
-            <h2 className="text-lg font-semibold">日本語 記述文 일괄 입력</h2>
+            <h2 className="text-lg font-semibold">일본어 진술문 일괄 입력</h2>
             <p className="text-xs text-slate-500">
-              일본어 번역문을 진술문 순서대로 한 줄에 하나씩 입력해 주세요. 이 기능은 번역을 생성하지
-              않습니다 — 이미 준비된 번역문을 한 번에 입력하기 위한 도구입니다.
+              일본어 번역문을 진술문 순서대로 한 줄에 하나씩 입력해 주세요. 번호(1., 2., ...)도
+              본문에 직접 포함해 주세요. 이 기능은 번역을 생성하지 않습니다 — 이미 준비된 번역문을
+              한 번에 입력하기 위한 도구입니다.
             </p>
             {(() => {
               const orderedStatements = [...statements].sort((a, b) => a.order - b.order);
@@ -968,23 +1142,10 @@ export function AdminDashboard({
                 setJaBulkText(e.target.value);
                 setJaBulkPreview(null);
                 setJaBulkPreviewError(null);
-                setJaBulkNumberingNote(null);
               }}
-              placeholder={`진술문 순서대로 한 줄에 하나씩 입력 (기대: ${statements.length}줄)`}
+              placeholder={`1. 진술문\n2. 진술문\n... (기대: ${statements.length}줄)`}
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono"
             />
-
-            <label className="flex items-center gap-2 text-xs text-slate-600">
-              <input
-                type="checkbox"
-                checked={jaBulkStripNumbering}
-                onChange={(e) => {
-                  setJaBulkStripNumbering(e.target.checked);
-                  setJaBulkPreview(null);
-                }}
-              />
-              연속 번호 1~N 자동 제거 (모든 줄이 1., 2., 3. ... 형태로 시작할 때만 적용)
-            </label>
 
             <div className="flex items-center gap-3">
               <label className="text-xs text-slate-600">저장할 상태:</label>
@@ -1007,11 +1168,6 @@ export function AdminDashboard({
               매핑 미리보기 생성
             </button>
 
-            {jaBulkNumberingNote && (
-              <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                {jaBulkNumberingNote}
-              </p>
-            )}
             {jaBulkPreviewError && (
               <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
                 {jaBulkPreviewError}
