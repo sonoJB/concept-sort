@@ -142,6 +142,21 @@ export function AdminDashboard({
   const [jaImportBusy, setJaImportBusy] = useState(false);
   const [jaImportError, setJaImportError] = useState<string | null>(null);
 
+  // Bulk Japanese entry (paste 47 lines at once)
+  const [jaBulkText, setJaBulkText] = useState("");
+  const [jaBulkStripNumbering, setJaBulkStripNumbering] = useState(false);
+  const [jaBulkStatus, setJaBulkStatus] = useState<"DRAFT" | "REVIEWING" | "APPROVED">("DRAFT");
+  const [jaBulkAckOverwrite, setJaBulkAckOverwrite] = useState(false);
+  const [jaBulkPreview, setJaBulkPreview] = useState<
+    { order: number; korean: string; japanese: string }[] | null
+  >(null);
+  const [jaBulkPreviewError, setJaBulkPreviewError] = useState<string | null>(null);
+  const [jaBulkNumberingNote, setJaBulkNumberingNote] = useState<string | null>(null);
+  const [jaBulkSaving, setJaBulkSaving] = useState(false);
+  const [jaBulkSaveError, setJaBulkSaveError] = useState<string | null>(null);
+  const [jaBulkSavedCount, setJaBulkSavedCount] = useState<number | null>(null);
+  const [jaBulkShowApprovedConfirm, setJaBulkShowApprovedConfirm] = useState(false);
+
   // Readiness / activation
   const [readiness, setReadiness] = useState<{ ko: LocaleContentStatus; ja: LocaleContentStatus } | null>(
     null
@@ -486,6 +501,117 @@ export function AdminDashboard({
     }
   }
 
+  /**
+   * Only strips a leading number prefix (1. / 1) / 1．/ ...) when EVERY line
+   * starts with one and the numbers form an unbroken 1..N sequence matching
+   * line count. Any ambiguity (missing prefix on some lines, out-of-order,
+   * gaps) leaves every line untouched — never a partial/guessed strip.
+   */
+  function stripSequentialNumberingIfSafe(
+    lines: string[]
+  ): { lines: string[]; stripped: boolean; note: string | null } {
+    const prefixPattern = /^(\d+)[.)．、]\s*/;
+    const matches = lines.map((l) => l.match(prefixPattern));
+    if (matches.some((m) => m === null)) {
+      return { lines, stripped: false, note: "일부 줄에 번호가 없어 번호 제거를 건너뛰었습니다." };
+    }
+    const numbers = matches.map((m) => Number(m![1]));
+    const isSequential = numbers.every((n, i) => n === i + 1);
+    if (!isSequential) {
+      return { lines, stripped: false, note: "번호가 1부터 연속되지 않아 번호 제거를 건너뛰었습니다." };
+    }
+    return {
+      lines: lines.map((l) => l.replace(prefixPattern, "")),
+      stripped: true,
+      note: null,
+    };
+  }
+
+  function buildJaBulkPreview() {
+    setJaBulkSaveError(null);
+    setJaBulkSavedCount(null);
+    setJaBulkPreviewError(null);
+    setJaBulkNumberingNote(null);
+
+    const rawLines = jaBulkText.trim().length === 0 ? [] : jaBulkText.trim().split(/\r\n|\r|\n/);
+
+    let lines = rawLines;
+    if (jaBulkStripNumbering) {
+      const result = stripSequentialNumberingIfSafe(rawLines);
+      lines = result.lines;
+      if (result.note) setJaBulkNumberingNote(result.note);
+    }
+
+    lines = lines.map((l) => l.trim());
+
+    const orderedStatements = [...statements].sort((a, b) => a.order - b.order);
+
+    if (lines.length !== orderedStatements.length) {
+      setJaBulkPreview(null);
+      setJaBulkPreviewError(
+        `입력된 줄 수(${lines.length})가 현재 진술문 수(${orderedStatements.length})와 일치하지 않습니다. 진술문 순서대로 한 줄에 하나씩 입력해 주세요.`
+      );
+      return;
+    }
+    const blankIndex = lines.findIndex((l) => l.length === 0);
+    if (blankIndex !== -1) {
+      setJaBulkPreview(null);
+      setJaBulkPreviewError(`${blankIndex + 1}번째 줄이 비어 있습니다. 빈 줄 없이 입력해 주세요.`);
+      return;
+    }
+
+    setJaBulkPreview(
+      orderedStatements.map((s, i) => ({ order: s.order, korean: s.text, japanese: lines[i] }))
+    );
+  }
+
+  async function submitJaBulkSave(confirmApproved: boolean) {
+    if (!jaBulkPreview) return;
+    if (jaBulkStatus === "APPROVED" && !confirmApproved) {
+      setJaBulkShowApprovedConfirm(true);
+      return;
+    }
+    setJaBulkShowApprovedConfirm(false);
+    setJaBulkSaving(true);
+    setJaBulkSaveError(null);
+    try {
+      const res = await fetch(`/api/projects/${slug}/statements/bulk-import-ja`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          adminToken,
+          lines: jaBulkPreview.map((p) => p.japanese),
+          jaStatus: jaBulkStatus,
+          confirmApproved: jaBulkStatus === "APPROVED" ? true : undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setJaBulkSaveError(data.error ?? "일괄 저장에 실패했습니다.");
+        return;
+      }
+      const byId = new Map(
+        (data.statements as { id: string; textJa: string | null; jaStatus: string }[]).map((s) => [s.id, s])
+      );
+      setStatements((prev) =>
+        prev.map((s) => {
+          const match = byId.get(s.id);
+          return match ? { ...s, textJa: match.textJa, jaStatus: match.jaStatus } : s;
+        })
+      );
+      setJaBulkSavedCount(data.updatedCount ?? null);
+      setJaBulkPreview(null);
+      setJaBulkText("");
+      setJaBulkAckOverwrite(false);
+      setJaPreview(null);
+      setJaEnabled(false);
+    } catch {
+      setJaBulkSaveError("네트워크 오류가 발생했습니다.");
+    } finally {
+      setJaBulkSaving(false);
+    }
+  }
+
   function downloadJaExport() {
     const url = new URL(`/api/projects/${slug}/statements/export-ja`, window.location.origin);
     url.searchParams.set("token", adminToken);
@@ -802,11 +928,175 @@ export function AdminDashboard({
           </section>
 
           <section className="space-y-3">
-            <h2 className="text-lg font-semibold">日本語 記述文 ({statements.length}개)</h2>
+            <h2 className="text-lg font-semibold">日本語 記述文 일괄 입력</h2>
+            <p className="text-xs text-slate-500">
+              일본어 번역문을 진술문 순서대로 한 줄에 하나씩 입력해 주세요. 이 기능은 번역을 생성하지
+              않습니다 — 이미 준비된 번역문을 한 번에 입력하기 위한 도구입니다.
+            </p>
+            {(() => {
+              const orderedStatements = [...statements].sort((a, b) => a.order - b.order);
+              const existingJaCount = orderedStatements.filter((s) => s.textJa?.trim()).length;
+              const statusCounts = orderedStatements.reduce<Record<string, number>>((acc, s) => {
+                acc[s.jaStatus] = (acc[s.jaStatus] ?? 0) + 1;
+                return acc;
+              }, {});
+              return (
+                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 space-y-1">
+                  <p>
+                    현재 진술문 수: {orderedStatements.length}개 · 일본어 입력됨: {existingJaCount}개
+                  </p>
+                  <p>
+                    상태 분포:{" "}
+                    {Object.entries(statusCounts)
+                      .map(([k, v]) => `${JA_STATUS_LABELS[k] ?? k} ${v}`)
+                      .join(" / ")}
+                  </p>
+                  {existingJaCount > 0 && (
+                    <p className="text-amber-700">
+                      기존 일본어 번역이 있습니다. 일괄 저장 시 해당 진술문의 일본어 번역이
+                      덮어쓰기됩니다.
+                    </p>
+                  )}
+                </div>
+              );
+            })()}
+
+            <textarea
+              rows={10}
+              value={jaBulkText}
+              onChange={(e) => {
+                setJaBulkText(e.target.value);
+                setJaBulkPreview(null);
+                setJaBulkPreviewError(null);
+                setJaBulkNumberingNote(null);
+              }}
+              placeholder={`진술문 순서대로 한 줄에 하나씩 입력 (기대: ${statements.length}줄)`}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono"
+            />
+
+            <label className="flex items-center gap-2 text-xs text-slate-600">
+              <input
+                type="checkbox"
+                checked={jaBulkStripNumbering}
+                onChange={(e) => {
+                  setJaBulkStripNumbering(e.target.checked);
+                  setJaBulkPreview(null);
+                }}
+              />
+              연속 번호 1~N 자동 제거 (모든 줄이 1., 2., 3. ... 형태로 시작할 때만 적용)
+            </label>
+
+            <div className="flex items-center gap-3">
+              <label className="text-xs text-slate-600">저장할 상태:</label>
+              <select
+                value={jaBulkStatus}
+                onChange={(e) => setJaBulkStatus(e.target.value as "DRAFT" | "REVIEWING" | "APPROVED")}
+                className="rounded-lg border border-slate-300 px-2 py-1.5 text-xs"
+              >
+                <option value="DRAFT">초안 (DRAFT)</option>
+                <option value="REVIEWING">검토 중 (REVIEWING)</option>
+                <option value="APPROVED">승인 (APPROVED)</option>
+              </select>
+            </div>
+
+            <button
+              onClick={buildJaBulkPreview}
+              disabled={!jaBulkText.trim()}
+              className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium hover:bg-slate-100 disabled:opacity-50"
+            >
+              매핑 미리보기 생성
+            </button>
+
+            {jaBulkNumberingNote && (
+              <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                {jaBulkNumberingNote}
+              </p>
+            )}
+            {jaBulkPreviewError && (
+              <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                {jaBulkPreviewError}
+              </p>
+            )}
+
+            {jaBulkPreview && (
+              <div className="space-y-3">
+                <p className="text-sm font-medium">
+                  입력된 진술문: {jaBulkPreview.length} / {statements.length}
+                </p>
+                <div className="max-h-96 overflow-y-auto space-y-2 rounded-lg border border-slate-200 p-2">
+                  {jaBulkPreview.map((p) => (
+                    <div key={p.order} className="rounded-lg border border-slate-100 p-2 text-sm">
+                      <p className="text-xs text-slate-400">#{p.order + 1}</p>
+                      <p className="text-slate-500">한국어: {p.korean}</p>
+                      <p>일본어: {p.japanese}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {statements.some((s) => s.textJa?.trim()) && (
+                  <label className="flex items-center gap-2 text-xs text-amber-700">
+                    <input
+                      type="checkbox"
+                      checked={jaBulkAckOverwrite}
+                      onChange={(e) => setJaBulkAckOverwrite(e.target.checked)}
+                    />
+                    기존 일본어 번역이 덮어쓰기되는 것을 확인했습니다.
+                  </label>
+                )}
+
+                {jaBulkShowApprovedConfirm && (
+                  <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 space-y-2">
+                    <p className="text-sm text-red-700">
+                      {jaBulkPreview.length}개 일본어 진술문을 모두 APPROVED로 저장하시겠습니까?
+                    </p>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => submitJaBulkSave(true)}
+                        className="rounded-lg bg-red-700 px-3 py-1.5 text-white text-xs font-medium hover:bg-red-800"
+                      >
+                        확인, APPROVED로 저장
+                      </button>
+                      <button
+                        onClick={() => setJaBulkShowApprovedConfirm(false)}
+                        className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium hover:bg-slate-100"
+                      >
+                        취소
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                <button
+                  onClick={() => submitJaBulkSave(false)}
+                  disabled={
+                    jaBulkSaving ||
+                    (statements.some((s) => s.textJa?.trim()) && !jaBulkAckOverwrite)
+                  }
+                  className="rounded-lg bg-slate-900 px-4 py-2 text-white text-sm font-medium hover:bg-slate-700 disabled:opacity-50"
+                >
+                  {jaBulkSaving ? "저장 중..." : `${jaBulkPreview.length}개 일괄 저장`}
+                </button>
+              </div>
+            )}
+
+            {jaBulkSaveError && (
+              <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                {jaBulkSaveError}
+              </p>
+            )}
+            {jaBulkSavedCount !== null && (
+              <p className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+                {jaBulkSavedCount}개 진술문이 저장되었습니다. 아래 개별 편집 목록에도 반영되었습니다.
+              </p>
+            )}
+          </section>
+
+          <section className="space-y-3">
+            <h2 className="text-lg font-semibold">日本語 記述文 개별 편집 ({statements.length}개)</h2>
             <div className="space-y-2">
               {statements.map((s) => (
                 <JaStatementRow
-                  key={s.id}
+                  key={`${s.id}:${s.textJa ?? ""}:${s.jaStatus}`}
                   statement={s}
                   onSave={saveJaStatement}
                   saving={jaRowSaving === s.id}
