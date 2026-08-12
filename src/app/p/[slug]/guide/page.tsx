@@ -33,7 +33,7 @@ export default async function GuidePage({
   const override = getStudyGuidePageOverride(slug, locale);
   if (override) {
     return (
-      <main className="flex-1 px-6 py-12">
+      <main lang={locale} className="flex-1 px-6 py-12">
         <div className="max-w-2xl mx-auto space-y-4">
           <h1 className="text-xl font-bold">{override.title}</h1>
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-700 leading-relaxed space-y-2">
@@ -57,7 +57,7 @@ export default async function GuidePage({
     const minBreakdown = describeMinGroupBreakdownJa(n, maxCardsPerGroup, minGroups);
     const maxBreakdown = describeMaxGroupBreakdownJa(n, maxGroups);
     return (
-      <main className="flex-1 px-6 py-12">
+      <main lang="ja" className="flex-1 px-6 py-12">
         <div className="max-w-2xl mx-auto space-y-4">
           <h1 className="text-xl font-bold">［類似性分類の方法］</h1>
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-700 leading-relaxed space-y-2">
@@ -97,7 +97,7 @@ export default async function GuidePage({
   const maxBreakdown = describeMaxGroupBreakdown(n, maxGroups);
 
   return (
-    <main className="flex-1 px-6 py-12">
+    <main lang="ko" className="flex-1 px-6 py-12">
       <div className="max-w-2xl mx-auto space-y-4">
         <h1 className="text-xl font-bold">[유사성 분류 방법 안내문]</h1>
         <div className="rounded-xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-700 leading-relaxed space-y-2">

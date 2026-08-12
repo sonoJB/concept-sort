@@ -821,6 +821,7 @@ export function AdminDashboard({
             <div>
               <label className="block text-sm font-medium mb-1">연구 소개 및 참여 안내</label>
               <textarea
+                lang="ko"
                 rows={8}
                 value={koPrompt}
                 onChange={(e) => setKoPrompt(e.target.value)}
@@ -838,6 +839,7 @@ export function AdminDashboard({
                 </p>
               )}
               <textarea
+                lang="ko"
                 rows={10}
                 value={koConsent}
                 onChange={(e) => setKoConsent(e.target.value)}
@@ -894,6 +896,7 @@ export function AdminDashboard({
               </p>
             )}
             <textarea
+              lang="ko"
               rows={14}
               value={koBulkText}
               onChange={(e) => {
@@ -1051,6 +1054,7 @@ export function AdminDashboard({
                 研究の紹介および参加案内
               </label>
               <textarea
+                lang="ja"
                 rows={8}
                 value={jaPrompt}
                 onChange={(e) => setJaPrompt(e.target.value)}
@@ -1062,6 +1066,7 @@ export function AdminDashboard({
                 研究参加および個人情報の利用に関する同意書
               </label>
               <textarea
+                lang="ja"
                 rows={10}
                 value={jaConsent}
                 onChange={(e) => setJaConsent(e.target.value)}
@@ -1136,6 +1141,7 @@ export function AdminDashboard({
             })()}
 
             <textarea
+              lang="ja"
               rows={10}
               value={jaBulkText}
               onChange={(e) => {
@@ -1611,6 +1617,7 @@ function JaStatementRow({
         <p className="flex-1 text-sm text-slate-500">{statement.text}</p>
       </div>
       <textarea
+        lang="ja"
         rows={2}
         value={textJa}
         onChange={(e) => setTextJa(e.target.value)}
