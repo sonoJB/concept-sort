@@ -145,7 +145,7 @@ function CountryStep({
     <div className="max-w-xl mx-auto py-16 px-1 space-y-6">
       <div className="space-y-1 text-center">
         <h1 className="text-xl font-bold">참여 국가를 선택해 주세요</h1>
-        <h1 className="text-xl font-bold">参加する国を選択してください</h1>
+        <h1 lang="ja" className="text-xl font-bold">参加する国を選択してください</h1>
         <p className="text-sm text-slate-500">Please select your country.</p>
       </div>
 
@@ -162,6 +162,7 @@ function CountryStep({
               type="button"
               role="radio"
               aria-checked={isSelected}
+              lang={opt.code === "JP" ? "ja" : undefined}
               onClick={() => pick(opt.code)}
               className={`rounded-xl border-2 px-5 py-8 text-center text-lg font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 ${
                 isSelected
@@ -571,7 +572,7 @@ export function SortBoard({
 
   if (submitted) {
     return (
-      <div className="max-w-xl mx-auto text-center py-24 space-y-3">
+      <div lang={locale} className="max-w-xl mx-auto text-center py-24 space-y-3">
         <h1 className="text-2xl font-bold">{t.submitted.heading}</h1>
       </div>
     );
@@ -583,7 +584,7 @@ export function SortBoard({
 
   if (step === "name") {
     return (
-      <div className="max-w-xl mx-auto py-16 space-y-6">
+      <div lang={locale} className="max-w-xl mx-auto py-16 space-y-6">
         <div>
           <h1 className="text-2xl font-bold">{displayTitle}</h1>
           {displayPrompt && (
@@ -626,7 +627,7 @@ export function SortBoard({
 
   if (step === "consent") {
     return (
-      <div className="max-w-2xl mx-auto py-16 space-y-6">
+      <div lang={locale} className="max-w-2xl mx-auto py-16 space-y-6">
         <h1 className="text-xl font-bold">{t.consentStep.heading}</h1>
         <div className="rounded-xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-700 whitespace-pre-line leading-relaxed max-h-[50vh] overflow-y-auto">
           {displayConsent}
@@ -682,7 +683,7 @@ export function SortBoard({
 
   if (step === "declined") {
     return (
-      <div className="max-w-xl mx-auto text-center py-24 space-y-3">
+      <div lang={locale} className="max-w-xl mx-auto text-center py-24 space-y-3">
         <h1 className="text-xl font-bold">{t.declinedStep.heading}</h1>
         <p className="text-slate-600">{t.declinedStep.body}</p>
       </div>
@@ -691,7 +692,7 @@ export function SortBoard({
 
   if (step === "demographics") {
     return (
-      <div className="max-w-xl mx-auto py-16 space-y-6">
+      <div lang={locale} className="max-w-xl mx-auto py-16 space-y-6">
         <h1 className="text-xl font-bold">{t.demographics.heading}</h1>
 
         <div>
@@ -792,7 +793,7 @@ export function SortBoard({
   const active = activeId ? statementById.get(activeId) : undefined;
 
   return (
-    <div className="mx-auto flex w-full max-w-none flex-col px-3 py-3 md:h-dvh md:overflow-hidden">
+    <div lang={locale} className="mx-auto flex w-full max-w-none flex-col px-3 py-3 md:h-dvh md:overflow-hidden">
       <div className="shrink-0">
         <h1 className="text-xl font-bold">{displayTitle}</h1>
       </div>

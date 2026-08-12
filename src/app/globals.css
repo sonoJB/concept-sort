@@ -24,3 +24,21 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/*
+ * Locale-scoped CJK font stacks. Self-hosted Noto Sans KR/JP (via
+ * next/font/google in layout.tsx) come first so Hangul/kana/kanji never
+ * depend on the participant's OS having a suitable fallback font installed;
+ * OS-native CJK fonts are kept as a fast-render fallback before Noto loads,
+ * and generic sans-serif is the final safety net. Scoped by the `lang`
+ * attribute (set on participant/guide/admin CJK content) rather than a
+ * class, so correct font selection is inseparable from correct locale
+ * semantics — one cannot be set without the other.
+ */
+[lang="ko"] {
+  font-family: var(--font-noto-kr), "Malgun Gothic", "Apple SD Gothic Neo", Arial, Helvetica, sans-serif;
+}
+
+[lang="ja"] {
+  font-family: var(--font-noto-jp), "Yu Gothic", "Hiragino Kaku Gothic ProN", "Malgun Gothic", Arial, Helvetica, sans-serif;
+}
