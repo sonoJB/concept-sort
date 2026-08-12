@@ -19,23 +19,23 @@
   }
 }
 
+/*
+ * `body` carries the Korean stack directly (not just a `[lang="ko"]` rule)
+ * because HTML's `lang="ko"` on <html> is inherited only semantically —
+ * CSS attribute selectors like `[lang="ko"]` do NOT match descendants that
+ * merely inherit the value, only elements literally carrying that
+ * attribute. Korean is this app's base/default locale (matches <html
+ * lang="ko">), so it belongs on body itself; `[lang="ja"]` below overrides
+ * it by ordinary CSS inheritance for any explicitly-tagged Japanese
+ * subtree. Self-hosted Noto Sans KR/JP (via next/font/google in
+ * layout.tsx) come first so Hangul/kana/kanji never depend on the
+ * participant's OS having a suitable fallback font installed; OS-native
+ * CJK fonts are a fast-render fallback before Noto loads, generic
+ * sans-serif is the final safety net.
+ */
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
-}
-
-/*
- * Locale-scoped CJK font stacks. Self-hosted Noto Sans KR/JP (via
- * next/font/google in layout.tsx) come first so Hangul/kana/kanji never
- * depend on the participant's OS having a suitable fallback font installed;
- * OS-native CJK fonts are kept as a fast-render fallback before Noto loads,
- * and generic sans-serif is the final safety net. Scoped by the `lang`
- * attribute (set on participant/guide/admin CJK content) rather than a
- * class, so correct font selection is inseparable from correct locale
- * semantics — one cannot be set without the other.
- */
-[lang="ko"] {
   font-family: var(--font-noto-kr), "Malgun Gothic", "Apple SD Gothic Neo", Arial, Helvetica, sans-serif;
 }
 
