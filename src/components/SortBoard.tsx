@@ -18,6 +18,15 @@ import { GENDER_OPTIONS, SCHOOL_LEVEL_OPTIONS, GRADE_OPTIONS } from "@/lib/parti
 import { getParticipantMessages, type MessageShape, type ParticipantLocale } from "@/messages/participant";
 import { applyStudyWebAppTextOverride } from "@/lib/studyWebAppText";
 import type { ErrorCode } from "@/lib/errorCodes";
+import {
+  COUNTRY_OPTIONS,
+  countryToLocale,
+  initialCountry,
+  initialParticipantStep,
+  isCountryAvailable,
+  restoredCountryFromStorage,
+  type CountryCode,
+} from "@/lib/participantCountryFlow";
 
 type StatementInput = {
   id: string;
@@ -28,7 +37,6 @@ type StatementInput = {
 };
 type Group = { id: string; label: string };
 type Step = "country" | "name" | "consent" | "declined" | "demographics" | "sorting" | "submitted";
-type CountryCode = "KR" | "JP";
 
 const POOL_ID = "pool";
 
@@ -38,13 +46,6 @@ const POOL_ID = "pool";
 // widening for groups).
 const FIXED_PANEL_WIDTH =
   "md:w-[280px] md:min-w-[280px] md:max-w-[280px] md:shrink-0";
-
-function localeToCountry(locale: ParticipantLocale): CountryCode {
-  return locale === "ja" ? "JP" : "KR";
-}
-function countryToLocale(country: CountryCode): ParticipantLocale {
-  return country === "JP" ? "ja" : "ko";
-}
 
 /** Resolves a submit-API errorCode to localized text; never falls back to the server's Korean string when locale is ja. */
 function localizedError(
@@ -109,13 +110,19 @@ function DropZone({
   );
 }
 
-function CountryStep({ onSelect }: { onSelect: (country: CountryCode) => void }) {
-  const [selected, setSelected] = useState<CountryCode | null>(null);
-
-  const options: { code: CountryCode; label: string }[] = [
-    { code: "KR", label: "Korea (한국)" },
-    { code: "JP", label: "Japan (日本)" },
-  ];
+function CountryStep({
+  initialSelected,
+  error,
+  onSelect,
+}: {
+  initialSelected: CountryCode | null;
+  error: string | null;
+  onSelect: (country: CountryCode) => void;
+}) {
+  // `initialSelected` (from a prior visit's sessionStorage) only highlights a
+  // default choice — it never auto-advances past this screen. The
+  // participant must still explicitly press the confirm button below.
+  const [selected, setSelected] = useState<CountryCode | null>(initialSelected);
 
   return (
     <div className="max-w-xl mx-auto py-16 px-1 space-y-6">
@@ -130,7 +137,7 @@ function CountryStep({ onSelect }: { onSelect: (country: CountryCode) => void })
         aria-label="참여 국가 선택 / 参加する国の選択"
         className="grid grid-cols-1 gap-3 sm:grid-cols-2"
       >
-        {options.map((opt) => {
+        {COUNTRY_OPTIONS.map((opt) => {
           const isSelected = selected === opt.code;
           return (
             <button
@@ -150,6 +157,8 @@ function CountryStep({ onSelect }: { onSelect: (country: CountryCode) => void })
           );
         })}
       </div>
+
+      {error && <p className="text-sm text-red-600 whitespace-pre-line text-center">{error}</p>}
 
       <button
         onClick={() => selected && onSelect(selected)}
@@ -194,41 +203,31 @@ export function SortBoard({
   const { maxCardsPerGroup, minGroups, maxGroups } = computeGroupBounds(statements.length);
   const storageKey = `concept-sort:${slug}:country`;
 
-  // Whichever language is the *only* one available skips the country step
-  // entirely and uses that language's server-assigned country code — never
-  // trusting sessionStorage in that case, per the finalized single-language
-  // participation rule.
-  const singleLocale: ParticipantLocale | null =
-    koreanAvailable && !japaneseAvailable ? "ko" : japaneseAvailable && !koreanAvailable ? "ja" : null;
-  const bothAvailable = koreanAvailable && japaneseAvailable;
-
-  const [country, setCountryState] = useState<CountryCode | null>(() => {
-    if (previewMode) return localeToCountry(previewLocale ?? "ko");
-    if (singleLocale) return localeToCountry(singleLocale);
-    return null; // deterministic for SSR — real sessionStorage restore happens post-mount below
-  });
-  const [step, setStep] = useState<Step>(() => {
-    if (previewMode || singleLocale) return "name";
-    return "country";
-  });
+  // Country selection is always the first screen of the live participant
+  // flow, regardless of how many languages are currently available — a
+  // participant must explicitly see and confirm their country every visit.
+  // Only the authenticated researcher preview (previewMode + previewLocale)
+  // is allowed to bypass this screen and jump straight into a specific
+  // locale.
+  const [country, setCountryState] = useState<CountryCode | null>(() =>
+    initialCountry(previewMode, previewLocale)
+  );
+  const [step, setStep] = useState<Step>(() => initialParticipantStep(previewMode));
+  const [countryError, setCountryError] = useState<string | null>(null);
 
   // Restore a previously chosen country from sessionStorage after mount
-  // (client-only, so it can never cause an SSR/hydration mismatch). Ignored
-  // entirely in preview mode and for single-language projects.
+  // (client-only, so it can never cause an SSR/hydration mismatch) — this
+  // only preselects the highlighted button on the country screen; it must
+  // never skip or auto-advance past the country screen itself.
   useEffect(() => {
-    if (previewMode || singleLocale) return;
+    if (previewMode) return;
     const timer = setTimeout(() => {
       try {
         const stored = sessionStorage.getItem(storageKey);
-        if (
-          (stored === "KR" && koreanAvailable) ||
-          (stored === "JP" && japaneseAvailable)
-        ) {
-          setCountryState(stored);
-          setStep((s) => (s === "country" ? "name" : s));
-        }
+        const restored = restoredCountryFromStorage(stored, koreanAvailable, japaneseAvailable);
+        if (restored) setCountryState(restored);
       } catch {
-        // sessionStorage unavailable (privacy mode etc.) — just start at country step.
+        // sessionStorage unavailable (privacy mode etc.) — just start unselected.
       }
     }, 0);
     return () => clearTimeout(timer);
@@ -250,6 +249,16 @@ export function SortBoard({
   }, [country, locale]);
 
   function chooseCountry(next: CountryCode) {
+    if (!isCountryAvailable(next, koreanAvailable, japaneseAvailable)) {
+      // Bilingual, since the locale isn't established yet at this step.
+      setCountryError(
+        `${getParticipantMessages("ko").errors.COUNTRY_NOT_AVAILABLE}\n${
+          getParticipantMessages("ja").errors.COUNTRY_NOT_AVAILABLE
+        }`
+      );
+      return;
+    }
+    setCountryError(null);
     setCountryState(next);
     if (!previewMode) {
       try {
@@ -552,7 +561,7 @@ export function SortBoard({
   }
 
   if (step === "country") {
-    return <CountryStep onSelect={chooseCountry} />;
+    return <CountryStep initialSelected={country} error={countryError} onSelect={chooseCountry} />;
   }
 
   if (step === "name") {
@@ -578,7 +587,7 @@ export function SortBoard({
           />
         </div>
         <div className="flex gap-3">
-          {bothAvailable && !previewMode && (
+          {!previewMode && (
             <button
               onClick={() => setStep("country")}
               className="rounded-lg border border-slate-300 px-6 py-3 font-medium hover:bg-slate-100 transition-colors"
