@@ -122,7 +122,24 @@ function CountryStep({
   // `initialSelected` (from a prior visit's sessionStorage) only highlights a
   // default choice — it never auto-advances past this screen. The
   // participant must still explicitly press the confirm button below.
+  //
+  // `initialSelected` arrives asynchronously (the parent restores it from
+  // sessionStorage inside a post-mount effect), so this can't just be a
+  // useState initializer — that only reads the prop on the very first
+  // render and would silently miss the later update. Sync on every change,
+  // but stop once the participant has clicked a button themselves so a
+  // slow-arriving restore can never clobber their explicit choice.
   const [selected, setSelected] = useState<CountryCode | null>(initialSelected);
+  const userPickedRef = useRef(false);
+
+  useEffect(() => {
+    if (!userPickedRef.current) setSelected(initialSelected);
+  }, [initialSelected]);
+
+  function pick(code: CountryCode) {
+    userPickedRef.current = true;
+    setSelected(code);
+  }
 
   return (
     <div className="max-w-xl mx-auto py-16 px-1 space-y-6">
@@ -145,7 +162,7 @@ function CountryStep({
               type="button"
               role="radio"
               aria-checked={isSelected}
-              onClick={() => setSelected(opt.code)}
+              onClick={() => pick(opt.code)}
               className={`rounded-xl border-2 px-5 py-8 text-center text-lg font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 ${
                 isSelected
                   ? "border-slate-900 bg-slate-900 text-white"
