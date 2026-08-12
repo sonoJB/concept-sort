@@ -7,6 +7,7 @@ import {
   describeMinGroupBreakdown,
   describeMinGroupBreakdownJa,
 } from "@/lib/groupBounds";
+import { getStudyGuidePageOverride } from "@/lib/studyWebAppText";
 
 export default async function GuidePage({
   params,
@@ -28,6 +29,29 @@ export default async function GuidePage({
 
   const n = project._count.statements;
   const { maxCardsPerGroup, minGroups, maxGroups } = computeGroupBounds(n);
+
+  const override = getStudyGuidePageOverride(slug, locale);
+  if (override) {
+    return (
+      <main className="flex-1 px-6 py-12">
+        <div className="max-w-2xl mx-auto space-y-4">
+          <h1 className="text-xl font-bold">{override.title}</h1>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-700 leading-relaxed space-y-2">
+            <p className="font-medium">{override.intro}</p>
+            <p>{override.rule1}</p>
+            <p>{override.rule2}</p>
+            <p>{override.rule3}</p>
+            <p>{override.rule4}</p>
+            <p>{override.rule5}</p>
+            <p>
+              - {override.minBundleLine}
+              <br />- {override.maxBundleLine}
+            </p>
+          </div>
+        </div>
+      </main>
+    );
+  }
 
   if (locale === "ja") {
     const minBreakdown = describeMinGroupBreakdownJa(n, maxCardsPerGroup, minGroups);
