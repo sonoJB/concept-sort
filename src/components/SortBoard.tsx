@@ -16,6 +16,7 @@ import { computeGroupBounds } from "@/lib/groupBounds";
 import { resolveEffectiveConsentKo } from "@/lib/consent";
 import { GENDER_OPTIONS, SCHOOL_LEVEL_OPTIONS, GRADE_OPTIONS } from "@/lib/participantOptions";
 import { getParticipantMessages, type MessageShape, type ParticipantLocale } from "@/messages/participant";
+import { applyStudyWebAppTextOverride } from "@/lib/studyWebAppText";
 import type { ErrorCode } from "@/lib/errorCodes";
 
 type StatementInput = {
@@ -235,7 +236,7 @@ export function SortBoard({
   }, []);
 
   const locale: ParticipantLocale = country ? countryToLocale(country) : "ko";
-  const t = getParticipantMessages(locale);
+  const t = applyStudyWebAppTextOverride(getParticipantMessages(locale), slug, locale);
 
   // Reflects the active locale on <html lang> while this board is mounted,
   // restoring whatever it was before on unmount so other pages aren't affected.
