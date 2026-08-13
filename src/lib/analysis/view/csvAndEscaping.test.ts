@@ -52,7 +52,7 @@ function makePayload(overrides: Partial<ExportPayload["meta"]> = {}): ExportPayl
     ],
     numeric: { similarityCountMatrix: [[0, 1], [1, 0]], similarityProportionMatrix: [[0, 1], [1, 0]], dissimilarityMatrix: [[0, 0], [0, 0]] },
     dimensions: [
-      { dimension: 2, dimensionStatus: "COMPLETED", coordinates: [[0, 0], [1, 1]], rawStress: 0.01, commonStressDistance: 0.01, commonStressQ: 0.02, converged: true, iterations: 5, bestInitIndex: 0, bestSeed: 4294967295, errorCode: null, errorMessageSafe: null },
+      { dimension: 2, dimensionStatus: "COMPLETED", coordinates: [[0, 0], [1, 1]], rawStress: 0.01, commonStressDistance: 0.01, commonStressQ: 0.02, converged: true, iterations: 5, bestInitIndex: 0, bestSeed: 4294967295, errorCode: null, errorMessageSafe: null, rSquared: 0.99, rsq: 0.99, convergenceReason: "CONVERGED" },
     ],
     ward: null,
     clusters: null,

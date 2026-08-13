@@ -1,5 +1,10 @@
 import { toCsvWithBom } from "@/lib/csv";
 import type { ExportPayload } from "./exportPayload";
+import { buildDimensionDiagnosticsView } from "./dimensionDiagnosticsView";
+import { cutClusters } from "./clusterCut";
+
+/** Practical illustrative candidate range for the cluster-candidates exports — mirrors the AnalysisPanel UI's comparison table. Never claims this is the app's full supported range (2..N). */
+const CSV_CANDIDATE_K_RANGE = [2, 3, 4, 5, 6, 7, 8, 9, 10];
 
 export type CsvFile = { filename: string; content: string };
 
@@ -69,22 +74,46 @@ export function buildCsvFiles(payload: ExportPayload): CsvFile[] {
   files.push({ filename: "04_similarity_proportion.csv", content: toCsvWithBom(matrixRows(payload.numeric.similarityProportionMatrix, "no.")) });
   files.push({ filename: "05_dissimilarity.csv", content: toCsvWithBom(matrixRows(payload.numeric.dissimilarityMatrix, "no.")) });
 
+  const diagnosticsView = buildDimensionDiagnosticsView(payload.dimensions);
+  const diagnosticsByDim = new Map(diagnosticsView.map((d) => [d.dimension, d]));
   files.push({
     filename: "06_mds_diagnostics.csv",
     content: toCsvWithBom([
-      ["dimension", "dimension_status", "raw_stress", "common_stress_distance", "common_stress_q", "converged", "iterations", "best_init_index", "best_seed", "error_code"],
-      ...payload.dimensions.map((d) => [
-        String(d.dimension),
-        d.dimensionStatus,
-        d.rawStress !== null ? String(d.rawStress) : "",
-        d.commonStressDistance !== null ? String(d.commonStressDistance) : "",
-        d.commonStressQ !== null ? String(d.commonStressQ) : "",
-        d.converged !== null ? String(d.converged) : "",
-        d.iterations !== null ? String(d.iterations) : "",
-        d.bestInitIndex !== null ? String(d.bestInitIndex) : "",
-        d.bestSeed !== null ? String(d.bestSeed) : "",
-        d.errorCode ?? "",
-      ]),
+      [
+        "dimension",
+        "dimension_status",
+        "raw_stress",
+        "common_stress_distance",
+        "common_stress_q",
+        "r_squared",
+        "delta_r_squared",
+        "rsq",
+        "converged",
+        "convergence_reason",
+        "iterations",
+        "best_init_index",
+        "best_seed",
+        "error_code",
+      ],
+      ...payload.dimensions.map((d) => {
+        const diag = diagnosticsByDim.get(d.dimension);
+        return [
+          String(d.dimension),
+          d.dimensionStatus,
+          d.rawStress !== null ? String(d.rawStress) : "",
+          d.commonStressDistance !== null ? String(d.commonStressDistance) : "",
+          d.commonStressQ !== null ? String(d.commonStressQ) : "",
+          d.rSquared !== null ? String(d.rSquared) : "",
+          diag?.deltaRSquared !== null && diag?.deltaRSquared !== undefined ? String(diag.deltaRSquared) : "",
+          d.rsq !== null ? String(d.rsq) : "",
+          d.converged !== null ? String(d.converged) : "",
+          d.convergenceReason ?? "",
+          d.iterations !== null ? String(d.iterations) : "",
+          d.bestInitIndex !== null ? String(d.bestInitIndex) : "",
+          d.bestSeed !== null ? String(d.bestSeed) : "",
+          d.errorCode ?? "",
+        ];
+      }),
     ]),
   });
 
@@ -156,6 +185,70 @@ export function buildCsvFiles(payload: ExportPayload): CsvFile[] {
         ]),
       ]),
     });
+  }
+
+  // Ward candidate exports: computed directly from payload.ward.linkage
+  // (cutClusters, unmodified) for a practical illustrative k range — never
+  // require an AnalysisInterpretation to exist. Distinct from
+  // 09_cluster_assignments_k{k}.csv, which is the officially SELECTED
+  // interpretation's single k (only present once one exists).
+  if (payload.ward) {
+    const orderedIds = payload.statements.map((s) => s.id);
+    const candidateRows: {
+      k: number;
+      clusterCount: number;
+      minClusterSize: number;
+      maxClusterSize: number;
+      sizeDistribution: number[];
+      assignments: { statementId: string; order: number; clusterIndex: number }[];
+    }[] = [];
+
+    for (const k of CSV_CANDIDATE_K_RANGE) {
+      if (k > payload.statements.length) continue;
+      const assignments = cutClusters(payload.ward, orderedIds, k);
+      const sizes = new Map<number, number>();
+      assignments.forEach((a) => sizes.set(a.clusterIndex, (sizes.get(a.clusterIndex) ?? 0) + 1));
+      const sizeDistribution = [...sizes.values()].sort((a, b) => a - b);
+      candidateRows.push({
+        k,
+        clusterCount: sizes.size,
+        minClusterSize: Math.min(...sizeDistribution),
+        maxClusterSize: Math.max(...sizeDistribution),
+        sizeDistribution,
+        assignments: assignments.map((a) => {
+          const s = payload.statements.find((st) => st.id === a.statementId)!;
+          return { statementId: a.statementId, order: s.order, clusterIndex: a.clusterIndex };
+        }),
+      });
+    }
+
+    if (candidateRows.length > 0) {
+      files.push({
+        filename: "13_cluster_candidates_summary.csv",
+        content: toCsvWithBom([
+          ["k", "cluster_count", "min_cluster_size", "max_cluster_size", "size_distribution"],
+          ...candidateRows.map((r) => [
+            String(r.k),
+            String(r.clusterCount),
+            String(r.minClusterSize),
+            String(r.maxClusterSize),
+            r.sizeDistribution.join(";"),
+          ]),
+        ]),
+      });
+
+      files.push({
+        filename: "14_cluster_candidates_membership.csv",
+        content: toCsvWithBom([
+          ["k", "cluster_index", "statement_number", "statement_id"],
+          ...candidateRows.flatMap((r) =>
+            [...r.assignments]
+              .sort((a, b) => a.clusterIndex - b.clusterIndex || a.order - b.order)
+              .map((a) => [String(r.k), String(a.clusterIndex), String(a.order + 1), a.statementId])
+          ),
+        ]),
+      });
+    }
   }
 
   return files;

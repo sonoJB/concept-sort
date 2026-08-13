@@ -2,6 +2,7 @@ import { fromStoredSeed } from "@/lib/analysis/executionService";
 import type { ParametersSnapshot } from "@/lib/analysis/hashes";
 import type { InputSnapshot } from "@/lib/analysis/snapshot";
 import { cutClusters, computeCentroids, type ClusterAssignment, type ClusterCentroid } from "./clusterCut";
+import { computeRSQForDimension, deriveConvergenceReason } from "@/lib/analysis/rsq";
 import type { WardResult } from "@/lib/conceptAnalysis";
 
 export type ExportDimensionPayload = {
@@ -18,6 +19,17 @@ export type ExportDimensionPayload = {
   bestSeed: number | null;
   errorCode: string | null;
   errorMessageSafe: string | null;
+  /**
+   * R² is DEFINED as RSQ (squared correlation between fitted disparities and
+   * configuration distances) — `rSquared` and `rsq` are always the same
+   * number, computed once by rsq.ts, never two independently-derived
+   * values. null when coordinates are unavailable (dimensionStatus=FAILED)
+   * or the underlying normalization degenerates (see rsq.ts errorCode).
+   */
+  rSquared: number | null;
+  rsq: number | null;
+  /** Never hidden: CONVERGED | STRESS_INCREASED | MAX_ITER_REACHED | NOT_APPLICABLE (FAILED dimension) — see rsq.ts deriveConvergenceReason. */
+  convergenceReason: string;
 };
 
 export type ExportPayload = {
@@ -133,20 +145,31 @@ export function buildExportPayload(inputs: ExportPayloadInputs): ExportPayload {
     jaStatus: inputs.exportLanguage === "ja" ? s.jaStatus : null,
   }));
 
-  const dimensions: ExportDimensionPayload[] = inputs.dimensions.map((d) => ({
-    dimension: d.dimension,
-    dimensionStatus: d.dimensionStatus,
-    coordinates: d.coordinates ? (JSON.parse(d.coordinates) as number[][]) : null,
-    rawStress: d.rawStress,
-    commonStressDistance: d.commonStressDistance,
-    commonStressQ: d.commonStressQ,
-    converged: d.converged,
-    iterations: d.iterations,
-    bestInitIndex: d.bestInitIndex,
-    bestSeed: fromStoredSeed(d.bestSeed),
-    errorCode: d.errorCode,
-    errorMessageSafe: d.errorMessageSafe,
-  }));
+  const maxIter = parametersSnapshot.analysisParameters.maxIter;
+  const dimensions: ExportDimensionPayload[] = inputs.dimensions.map((d) => {
+    const coordinates = d.coordinates ? (JSON.parse(d.coordinates) as number[][]) : null;
+    const rsqResult =
+      coordinates && d.dimensionStatus === "COMPLETED"
+        ? computeRSQForDimension(inputSnapshot.numeric.dissimilarityMatrix, inputSnapshot.numeric.weightMatrix, coordinates)
+        : null;
+    return {
+      dimension: d.dimension,
+      dimensionStatus: d.dimensionStatus,
+      coordinates,
+      rawStress: d.rawStress,
+      commonStressDistance: d.commonStressDistance,
+      commonStressQ: d.commonStressQ,
+      converged: d.converged,
+      iterations: d.iterations,
+      bestInitIndex: d.bestInitIndex,
+      bestSeed: fromStoredSeed(d.bestSeed),
+      errorCode: d.errorCode,
+      errorMessageSafe: d.errorMessageSafe,
+      rSquared: rsqResult?.rsq ?? null,
+      rsq: rsqResult?.rsq ?? null,
+      convergenceReason: deriveConvergenceReason(d.dimensionStatus, d.converged, d.iterations, maxIter),
+    };
+  });
 
   const ward = run.wardLinkageSnapshot
     ? (JSON.parse(run.wardLinkageSnapshot) as { linkage: WardResult["linkage"]; originalCount: number })

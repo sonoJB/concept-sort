@@ -29,6 +29,23 @@ function buildStandaloneHtmlShell(
   const m = payload.meta;
   const title = `개념도 분석 결과 — ${escapeXml(m.projectSlug)} (${escapeXml(m.scope)})`;
 
+  const clusterMembershipHtml = (() => {
+    if (!payload.clusters) return "";
+    const orderById = new Map(payload.statements.map((s) => [s.id, s.order]));
+    const byCluster = new Map<number, number[]>();
+    for (const a of payload.clusters.assignments) {
+      const order = orderById.get(a.statementId);
+      if (order === undefined) continue;
+      if (!byCluster.has(a.clusterIndex)) byCluster.set(a.clusterIndex, []);
+      byCluster.get(a.clusterIndex)!.push(order + 1);
+    }
+    const lines = [...byCluster.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([clusterIndex, numbers]) => `군집 ${clusterIndex}: ${[...numbers].sort((x, y) => x - y).join(", ")}`);
+    if (lines.length === 0) return "";
+    return `<h2>군집별 포함 문항 (k=${m.selectedClusterCount ?? "-"})</h2><pre class="cluster-membership">${lines.map((l) => escapeXml(l)).join("\n")}</pre>`;
+  })();
+
   const clusterLabelsHtml =
     payload.interpretationLabels.length > 0
       ? `<h2>군집 라벨</h2><table><thead><tr><th>군집</th><th>언어</th><th>라벨</th><th>메모</th></tr></thead><tbody>${payload.interpretationLabels
@@ -67,6 +84,7 @@ th, td { border: 1px solid #cbd5e1; padding: 4px 8px; text-align: left; }
 .notice { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px 16px; font-size: 12px; color: #475569; }
 .draft { color: #b45309; font-weight: bold; }
 .meta { font-size: 12px; color: #64748b; }
+.cluster-membership { font-family: inherit; font-size: 13px; white-space: pre-wrap; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px 16px; }
 </style>
 </head>
 <body>
@@ -84,6 +102,8 @@ ${figuresHtml}
 ${dendrogramSvg ? `<h2>Ward 군집 dendrogram (2차원 MDS 좌표 기반)</h2>${dendrogramSvg}` : ""}
 
 ${interpretationMetaHtml}
+
+${clusterMembershipHtml}
 
 ${clusterLabelsHtml}
 
