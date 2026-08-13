@@ -34,6 +34,8 @@ export default async function AdminPage({
         promptJa={project.promptJa}
         consentKo={project.consentKo}
         consentJa={project.consentJa}
+        guideTemplateKo={project.guideTemplateKo}
+        guideTemplateJa={project.guideTemplateJa}
         koreanEnabled={project.koreanEnabled}
         japaneseEnabled={project.japaneseEnabled}
         legacyConsentFallbackEnabled={project.legacyConsentFallbackEnabled}

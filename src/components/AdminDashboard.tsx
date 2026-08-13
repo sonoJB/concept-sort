@@ -6,7 +6,13 @@ import { AnalysisPanel } from "@/components/analysis/AnalysisPanel";
 import { toCsv, downloadCsv } from "@/lib/csv";
 import { JA_RESPONSIBLE_PARTY_NOTICE } from "@/lib/consent";
 import type { LocaleContentStatus, OperatingState } from "@/lib/localeContentStatus";
-import { validateNumberedLines, splitBulkLines } from "@/lib/statementNumbering";
+import { validateNonBlankLines, splitBulkLines } from "@/lib/statementLines";
+import {
+  computeGuideTemplateVariables,
+  defaultGuideTemplateFor,
+  findUnknownTemplateVariables,
+  renderGuideTemplate,
+} from "@/lib/guideTemplate";
 
 type Statement = {
   id: string;
@@ -60,6 +66,8 @@ export function AdminDashboard({
   promptJa,
   consentKo,
   consentJa,
+  guideTemplateKo,
+  guideTemplateJa,
   koreanEnabled,
   japaneseEnabled,
   legacyConsentFallbackEnabled,
@@ -77,6 +85,8 @@ export function AdminDashboard({
   promptJa: string | null;
   consentKo: string | null;
   consentJa: string | null;
+  guideTemplateKo: string | null;
+  guideTemplateJa: string | null;
   koreanEnabled: boolean;
   japaneseEnabled: boolean;
   legacyConsentFallbackEnabled: boolean;
@@ -123,6 +133,22 @@ export function AdminDashboard({
   const [jaSaving, setJaSaving] = useState(false);
   const [jaSaveError, setJaSaveError] = useState<string | null>(null);
   const [jaSavedAt, setJaSavedAt] = useState<number | null>(null);
+
+  // Editable similarity-sorting guide template (stores {{VARIABLE}} template,
+  // never the rendered numeric text). cardCountPreview is shared authoring
+  // state only — it never changes the actual Statement rows; it just lets
+  // the researcher preview the guide wording for a hypothetical card count.
+  const [cardCountPreview, setCardCountPreview] = useState(() => String(initialStatements.length));
+  const [koGuideTemplate, setKoGuideTemplate] = useState(guideTemplateKo ?? "");
+  const [koGuideSaving, setKoGuideSaving] = useState(false);
+  const [koGuideSaveError, setKoGuideSaveError] = useState<string | null>(null);
+  const [koGuideSavedAt, setKoGuideSavedAt] = useState<number | null>(null);
+  const [koGuideRegenConfirm, setKoGuideRegenConfirm] = useState(false);
+  const [jaGuideTemplate, setJaGuideTemplate] = useState(guideTemplateJa ?? "");
+  const [jaGuideSaving, setJaGuideSaving] = useState(false);
+  const [jaGuideSaveError, setJaGuideSaveError] = useState<string | null>(null);
+  const [jaGuideSavedAt, setJaGuideSavedAt] = useState<number | null>(null);
+  const [jaGuideRegenConfirm, setJaGuideRegenConfirm] = useState(false);
   const [jaRowSaving, setJaRowSaving] = useState<string | null>(null);
   const [jaCsvText, setJaCsvText] = useState("");
   const [jaImportPlan, setJaImportPlan] = useState<{
@@ -194,6 +220,31 @@ export function AdminDashboard({
 
   const locked = submissionCount > 0;
   const usesLegacyFallback = legacyConsentFallbackEnabled && !koConsent.trim();
+
+  // Guide-template live preview. The actual production source of truth for
+  // card count is always COUNT(Statement) — this preview input never writes
+  // to Statement rows; it only lets the researcher see what the guide
+  // wording would look like for a hypothetical count before/without
+  // changing the real statement set.
+  const actualCardCount = statements.length;
+  const parsedCardCountPreview = Number(cardCountPreview);
+  const cardCountPreviewValid =
+    Number.isInteger(parsedCardCountPreview) && parsedCardCountPreview > 0;
+  const cardCountMismatch = cardCountPreviewValid && parsedCardCountPreview !== actualCardCount;
+  const previewCardCount = cardCountPreviewValid ? parsedCardCountPreview : actualCardCount;
+
+  const koGuideVars = computeGuideTemplateVariables(previewCardCount, "ko");
+  const jaGuideVars = computeGuideTemplateVariables(previewCardCount, "ja");
+  const koGuideEffectiveTemplate = koGuideTemplate.trim()
+    ? koGuideTemplate
+    : defaultGuideTemplateFor("ko");
+  const jaGuideEffectiveTemplate = jaGuideTemplate.trim()
+    ? jaGuideTemplate
+    : defaultGuideTemplateFor("ja");
+  const koGuideRender = renderGuideTemplate(koGuideEffectiveTemplate, koGuideVars);
+  const jaGuideRender = renderGuideTemplate(jaGuideEffectiveTemplate, jaGuideVars);
+  const koGuideUnknownVars = findUnknownTemplateVariables(koGuideTemplate);
+  const jaGuideUnknownVars = findUnknownTemplateVariables(jaGuideTemplate);
 
   async function refreshSubmissionCount() {
     const res = await fetch(`/api/projects/${slug}/sorts`);
@@ -440,6 +491,70 @@ export function AdminDashboard({
     }
   }
 
+  async function saveKoGuideTemplate() {
+    setKoGuideSaving(true);
+    setKoGuideSaveError(null);
+    try {
+      const res = await fetch(`/api/projects/${slug}/content`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ adminToken, locale: "ko", guideTemplate: koGuideTemplate }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setKoGuideSaveError(data.error ?? "저장에 실패했습니다.");
+        return;
+      }
+      setKoPreview(null);
+      setKoEnabled(false);
+      setKoGuideSavedAt(Date.now());
+    } catch {
+      setKoGuideSaveError("네트워크 오류가 발생했습니다.");
+    } finally {
+      setKoGuideSaving(false);
+    }
+  }
+
+  async function saveJaGuideTemplate() {
+    setJaGuideSaving(true);
+    setJaGuideSaveError(null);
+    try {
+      const res = await fetch(`/api/projects/${slug}/content`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ adminToken, locale: "ja", guideTemplate: jaGuideTemplate }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setJaGuideSaveError(data.error ?? "저장에 실패했습니다.");
+        return;
+      }
+      setJaPreview(null);
+      setJaEnabled(false);
+      setJaGuideSavedAt(Date.now());
+    } catch {
+      setJaGuideSaveError("네트워크 오류가 발생했습니다.");
+    } finally {
+      setJaGuideSaving(false);
+    }
+  }
+
+  function generateDefaultKoGuideTemplate() {
+    if (koGuideTemplate.trim() && koGuideTemplate !== defaultGuideTemplateFor("ko")) {
+      setKoGuideRegenConfirm(true);
+      return;
+    }
+    setKoGuideTemplate(defaultGuideTemplateFor("ko"));
+  }
+
+  function generateDefaultJaGuideTemplate() {
+    if (jaGuideTemplate.trim() && jaGuideTemplate !== defaultGuideTemplateFor("ja")) {
+      setJaGuideRegenConfirm(true);
+      return;
+    }
+    setJaGuideTemplate(defaultGuideTemplateFor("ja"));
+  }
+
   async function saveJaStatement(id: string, textJa: string, jaStatus: string) {
     setJaRowSaving(id);
     try {
@@ -523,10 +638,10 @@ export function AdminDashboard({
       return;
     }
 
-    const numberingCheck = validateNumberedLines(lines);
-    if (!numberingCheck.ok) {
+    const lineCheck = validateNonBlankLines(lines);
+    if (!lineCheck.ok) {
       setJaBulkPreview(null);
-      setJaBulkPreviewError(numberingCheck.error);
+      setJaBulkPreviewError(lineCheck.error);
       return;
     }
 
@@ -554,10 +669,10 @@ export function AdminDashboard({
       return;
     }
 
-    const numberingCheck = validateNumberedLines(lines);
-    if (!numberingCheck.ok) {
+    const lineCheck = validateNonBlankLines(lines);
+    if (!lineCheck.ok) {
       setKoBulkPreview(null);
-      setKoBulkPreviewError(numberingCheck.error);
+      setKoBulkPreviewError(lineCheck.error);
       return;
     }
 
@@ -880,10 +995,132 @@ export function AdminDashboard({
           </section>
 
           <section className="space-y-3">
+            <h2 className="text-lg font-semibold">진술문 카드 수</h2>
+            <div className="flex items-center gap-3">
+              <input
+                type="number"
+                min={1}
+                value={cardCountPreview}
+                onChange={(e) => setCardCountPreview(e.target.value)}
+                className="w-28 rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              />
+              <p className="text-xs text-slate-500">
+                현재 실제 저장된 진술문: <span className="font-medium text-slate-700">{actualCardCount}개</span>
+              </p>
+            </div>
+            {cardCountMismatch && (
+              <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                입력한 카드 수({parsedCardCountPreview}개)와 실제 저장된 진술문 수({actualCardCount}개)가
+                일치하지 않습니다. 아래 안내문 미리보기는 입력한 카드 수 기준으로 계산되며, 실제
+                진술문 개수는 변경되지 않습니다.
+              </p>
+            )}
+            <p className="text-xs text-slate-500">
+              이 입력값은 아래 안내문 미리보기 계산에만 사용되며, 실제 진술문 데이터를 변경하지
+              않습니다. 진술문 개수를 실제로 바꾸려면 아래 &ldquo;한국어 진술문 일괄
+              입력&rdquo;에서 별도로 진행해 주세요.
+            </p>
+          </section>
+
+          <section className="space-y-3">
+            <h2 className="text-lg font-semibold">한국어 유사성 분류 방법 안내문 본문</h2>
+            <p className="text-xs text-slate-500">
+              카드 수·묶음 규칙처럼 계산되는 값은 직접 숫자를 적지 말고{" "}
+              {"{{CARD_COUNT}}"}, {"{{MAX_CARDS_PER_GROUP}}"}, {"{{FIRST_FORBIDDEN_GROUP_SIZE}}"},{" "}
+              {"{{MIN_GROUPS}}"}, {"{{MAX_GROUPS}}"}, {"{{MIN_GROUP_BREAKDOWN}}"},{" "}
+              {"{{MAX_GROUP_BREAKDOWN}}"} 같은 변수로 입력해 주세요. 실제 진술문 수가 바뀌어도
+              코드 배포 없이 안내문이 자동으로 맞춰집니다.
+            </p>
+            <textarea
+              lang="ko"
+              rows={10}
+              value={koGuideTemplate}
+              onChange={(e) => setKoGuideTemplate(e.target.value)}
+              placeholder={defaultGuideTemplateFor("ko")}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono"
+            />
+            {koGuideUnknownVars.length > 0 && (
+              <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                알 수 없는 템플릿 변수입니다: {koGuideUnknownVars.map((v) => `{{${v}}}`).join(", ")}
+              </p>
+            )}
+            <div className="flex items-center gap-3 flex-wrap">
+              <button
+                onClick={generateDefaultKoGuideTemplate}
+                className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium hover:bg-slate-100"
+              >
+                현재 카드 수 기준 기본 안내문 생성
+              </button>
+              <button
+                onClick={saveKoGuideTemplate}
+                disabled={koGuideSaving || koGuideUnknownVars.length > 0}
+                className="rounded-lg bg-slate-900 px-4 py-2 text-white text-sm font-medium hover:bg-slate-700 disabled:opacity-50"
+              >
+                {koGuideSaving ? "저장 중..." : "한국어 안내문 저장"}
+              </button>
+              {koGuideSavedAt && <span className="text-xs text-green-700">저장됨</span>}
+            </div>
+            {koGuideRegenConfirm && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 space-y-2">
+                <p className="text-sm text-amber-800">
+                  현재 저장되지 않은 사용자 지정 안내문이 있습니다. 기본 안내문으로 덮어쓰시겠습니까?
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+                  <div>
+                    <p className="font-medium mb-1">현재 내용</p>
+                    <pre className="whitespace-pre-wrap rounded border border-slate-200 bg-white p-2">{koGuideTemplate}</pre>
+                  </div>
+                  <div>
+                    <p className="font-medium mb-1">기본 안내문</p>
+                    <pre className="whitespace-pre-wrap rounded border border-slate-200 bg-white p-2">{defaultGuideTemplateFor("ko")}</pre>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      setKoGuideTemplate(defaultGuideTemplateFor("ko"));
+                      setKoGuideRegenConfirm(false);
+                    }}
+                    className="rounded-lg bg-amber-700 px-3 py-1.5 text-white text-xs font-medium hover:bg-amber-800"
+                  >
+                    기본 안내문으로 덮어쓰기
+                  </button>
+                  <button
+                    onClick={() => setKoGuideRegenConfirm(false)}
+                    className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium hover:bg-slate-100"
+                  >
+                    취소
+                  </button>
+                </div>
+              </div>
+            )}
+            {koGuideSaveError && (
+              <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                {koGuideSaveError}
+              </p>
+            )}
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-2">
+              <p className="text-xs font-medium text-slate-500">
+                미리보기 (카드 수: {previewCardCount}장 · 최대 {koGuideVars.MAX_CARDS_PER_GROUP}장 ·
+                {" "}
+                {koGuideVars.FIRST_FORBIDDEN_GROUP_SIZE}장 이상 포함 불가 · 최소{" "}
+                {koGuideVars.MIN_GROUPS}개 묶음 · 최대 {koGuideVars.MAX_GROUPS}개 묶음)
+              </p>
+              {koGuideRender.unknownVariables.length > 0 && (
+                <p className="text-xs text-red-600">
+                  알 수 없는 변수: {koGuideRender.unknownVariables.map((v) => `{{${v}}}`).join(", ")}
+                </p>
+              )}
+              <div lang="ko" className="text-sm text-slate-700 leading-relaxed space-y-1.5 whitespace-pre-line">
+                {koGuideRender.rendered}
+              </div>
+            </div>
+          </section>
+
+          <section className="space-y-3">
             <h2 className="text-lg font-semibold">한국어 진술문 일괄 입력</h2>
             <p className="text-xs text-slate-500">
-              한국어 진술문을 순서대로 한 줄에 하나씩 입력해 주세요. 번호(1., 2., ...)도 진술문
-              본문에 직접 포함해 주세요.
+              한국어 진술문을 순서대로 한 줄에 하나씩 입력해 주세요.
             </p>
             <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
               현재 진술문: {statements.length}개 · 입력된 줄:{" "}
@@ -905,7 +1142,7 @@ export function AdminDashboard({
                 setKoBulkPreviewError(null);
                 setKoBulkShowConfirm(false);
               }}
-              placeholder={"1. 진술문\n2. 진술문\n3. 진술문\n..."}
+              placeholder={"진술문\n진술문\n진술문\n..."}
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono"
             />
 
@@ -1106,11 +1343,126 @@ export function AdminDashboard({
           </section>
 
           <section className="space-y-3">
+            <h2 className="text-lg font-semibold">진술문 카드 수</h2>
+            <div className="flex items-center gap-3">
+              <input
+                type="number"
+                min={1}
+                value={cardCountPreview}
+                onChange={(e) => setCardCountPreview(e.target.value)}
+                className="w-28 rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              />
+              <p className="text-xs text-slate-500">
+                現在保存されている記述文: <span className="font-medium text-slate-700">{actualCardCount}枚</span>
+              </p>
+            </div>
+            {cardCountMismatch && (
+              <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                입력한 카드 수({parsedCardCountPreview}개)와 실제 저장된 진술문 수({actualCardCount}개)가
+                일치하지 않습니다. 아래 안내문 미리보기는 입력한 카드 수 기준으로 계산되며, 실제
+                진술문 개수는 변경되지 않습니다.
+              </p>
+            )}
+          </section>
+
+          <section className="space-y-3">
+            <h2 className="text-lg font-semibold">日本語 類似性分類方法の案内本文</h2>
+            <p className="text-xs text-slate-500">
+              計算される値は数字を直接書かず {"{{CARD_COUNT}}"}, {"{{MAX_CARDS_PER_GROUP}}"},{" "}
+              {"{{FIRST_FORBIDDEN_GROUP_SIZE}}"}, {"{{MIN_GROUPS}}"}, {"{{MAX_GROUPS}}"},{" "}
+              {"{{MIN_GROUP_BREAKDOWN}}"}, {"{{MAX_GROUP_BREAKDOWN}}"} のような変数で入力してください。
+            </p>
+            <textarea
+              lang="ja"
+              rows={10}
+              value={jaGuideTemplate}
+              onChange={(e) => setJaGuideTemplate(e.target.value)}
+              placeholder={defaultGuideTemplateFor("ja")}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono"
+            />
+            {jaGuideUnknownVars.length > 0 && (
+              <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                알 수 없는 템플릿 변수입니다: {jaGuideUnknownVars.map((v) => `{{${v}}}`).join(", ")}
+              </p>
+            )}
+            <div className="flex items-center gap-3 flex-wrap">
+              <button
+                onClick={generateDefaultJaGuideTemplate}
+                className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium hover:bg-slate-100"
+              >
+                現在のカード数で基本案内文を生成
+              </button>
+              <button
+                onClick={saveJaGuideTemplate}
+                disabled={jaGuideSaving || jaGuideUnknownVars.length > 0}
+                className="rounded-lg bg-slate-900 px-4 py-2 text-white text-sm font-medium hover:bg-slate-700 disabled:opacity-50"
+              >
+                {jaGuideSaving ? "저장 중..." : "日本語 안내문 저장"}
+              </button>
+              {jaGuideSavedAt && <span className="text-xs text-green-700">저장됨</span>}
+            </div>
+            {jaGuideRegenConfirm && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 space-y-2">
+                <p className="text-sm text-amber-800">
+                  現在、保存されていないカスタム案内文があります。基本案内文で上書きしますか？
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+                  <div>
+                    <p className="font-medium mb-1">現在の内容</p>
+                    <pre className="whitespace-pre-wrap rounded border border-slate-200 bg-white p-2">{jaGuideTemplate}</pre>
+                  </div>
+                  <div>
+                    <p className="font-medium mb-1">基本案内文</p>
+                    <pre className="whitespace-pre-wrap rounded border border-slate-200 bg-white p-2">{defaultGuideTemplateFor("ja")}</pre>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      setJaGuideTemplate(defaultGuideTemplateFor("ja"));
+                      setJaGuideRegenConfirm(false);
+                    }}
+                    className="rounded-lg bg-amber-700 px-3 py-1.5 text-white text-xs font-medium hover:bg-amber-800"
+                  >
+                    基本案内文で上書き
+                  </button>
+                  <button
+                    onClick={() => setJaGuideRegenConfirm(false)}
+                    className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium hover:bg-slate-100"
+                  >
+                    キャンセル
+                  </button>
+                </div>
+              </div>
+            )}
+            {jaGuideSaveError && (
+              <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                {jaGuideSaveError}
+              </p>
+            )}
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-2">
+              <p className="text-xs font-medium text-slate-500">
+                プレビュー（カード数：{previewCardCount}枚・最大{jaGuideVars.MAX_CARDS_PER_GROUP}枚・
+                {jaGuideVars.FIRST_FORBIDDEN_GROUP_SIZE}枚以上不可・最少{jaGuideVars.MIN_GROUPS}グループ・
+                最多{jaGuideVars.MAX_GROUPS}グループ）
+              </p>
+              {jaGuideRender.unknownVariables.length > 0 && (
+                <p className="text-xs text-red-600">
+                  알 수 없는 변수: {jaGuideRender.unknownVariables.map((v) => `{{${v}}}`).join(", ")}
+                </p>
+              )}
+              <div lang="ja" className="text-sm text-slate-700 leading-relaxed space-y-1.5 whitespace-pre-line">
+                {jaGuideRender.rendered}
+              </div>
+            </div>
+          </section>
+
+          <section className="space-y-3">
             <h2 className="text-lg font-semibold">일본어 진술문 일괄 입력</h2>
             <p className="text-xs text-slate-500">
-              일본어 번역문을 진술문 순서대로 한 줄에 하나씩 입력해 주세요. 번호(1., 2., ...)도
-              본문에 직접 포함해 주세요. 이 기능은 번역을 생성하지 않습니다 — 이미 준비된 번역문을
-              한 번에 입력하기 위한 도구입니다.
+              일본어 진술문을 순서대로 한 줄에 하나씩 입력해 주세요. 번호는 본문에 입력하지
+              않아도 됩니다. 이 기능은 번역을 생성하지 않습니다 — 이미 준비된 번역문을 한 번에
+              입력하기 위한 도구입니다.
             </p>
             {(() => {
               const orderedStatements = [...statements].sort((a, b) => a.order - b.order);
@@ -1149,7 +1501,7 @@ export function AdminDashboard({
                 setJaBulkPreview(null);
                 setJaBulkPreviewError(null);
               }}
-              placeholder={`1. 진술문\n2. 진술문\n... (기대: ${statements.length}줄)`}
+              placeholder={`진술문\n진술문\n... (기대: ${statements.length}줄)`}
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono"
             />
 

@@ -3,7 +3,6 @@ import { NextRequest } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import crypto from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
 const dbFile = path.join(
@@ -17,6 +16,7 @@ const MIGRATION_ORDER = [
   "20260805233213_add_multilingual_project_support",
   "20260807144811_add_analysis_run_models",
   "20260807180000_scope_legacy_consent_fallback",
+  "20260813011500_add_guide_template_fields",
 ];
 {
   const db = new DatabaseSync(dbFile);
@@ -54,7 +54,7 @@ async function seedProject(
       await prisma.statement.create({
         data: {
           projectId: project.id,
-          text: `${i + 1}. korean-${i}`,
+          text: `korean-${i}`,
           order: i,
           textJa: opts?.textJaSeed ? opts.textJaSeed(i) : null,
           jaStatus: opts?.jaStatusSeed ? opts.jaStatusSeed(i) : "MISSING",
@@ -65,8 +65,8 @@ async function seedProject(
   return { project, statements };
 }
 
-function numberedKoLines(n: number, prefix = "korean-updated"): string[] {
-  return Array.from({ length: n }, (_, i) => `${i + 1}. ${prefix}-${i}`);
+function koLines(n: number, prefix = "korean-updated"): string[] {
+  return Array.from({ length: n }, (_, i) => `${prefix}-${i}`);
 }
 
 function bulkRequest(slug: string, body: unknown) {
@@ -84,10 +84,10 @@ async function callBulk(slug: string, body: unknown) {
 }
 
 describe("POST /api/projects/[slug]/statements/bulk-update-ko", () => {
-  it("saves exactly N valid numbered lines (case 1)", async () => {
+  it("accepts exactly N unnumbered lines (case 1)", async () => {
     const slug = "ko-exact-n";
     const { project } = await seedProject(slug, 5);
-    const lines = numberedKoLines(5);
+    const lines = koLines(5);
 
     const { status, data } = await callBulk(slug, { adminToken: `token-${slug}`, lines });
     expect(status).toBe(200);
@@ -98,13 +98,13 @@ describe("POST /api/projects/[slug]/statements/bulk-update-ko", () => {
       where: { projectId: project.id },
       orderBy: { order: "asc" },
     });
-    refreshed.forEach((s, i) => expect(s.text).toBe(`${i + 1}. korean-updated-${i}`));
+    refreshed.forEach((s, i) => expect(s.text).toBe(`korean-updated-${i}`));
   });
 
   it("rejects N-1 lines (case 2)", async () => {
     const slug = "ko-n-minus-1";
     await seedProject(slug, 5);
-    const { status, data } = await callBulk(slug, { adminToken: `token-${slug}`, lines: numberedKoLines(4) });
+    const { status, data } = await callBulk(slug, { adminToken: `token-${slug}`, lines: koLines(4) });
     expect(status).toBe(400);
     expect(data.error).toMatch(/일치하지 않습니다/);
   });
@@ -112,7 +112,7 @@ describe("POST /api/projects/[slug]/statements/bulk-update-ko", () => {
   it("rejects N+1 lines (case 3)", async () => {
     const slug = "ko-n-plus-1";
     await seedProject(slug, 5);
-    const { status, data } = await callBulk(slug, { adminToken: `token-${slug}`, lines: numberedKoLines(6) });
+    const { status, data } = await callBulk(slug, { adminToken: `token-${slug}`, lines: koLines(6) });
     expect(status).toBe(400);
     expect(data.error).toMatch(/일치하지 않습니다/);
   });
@@ -120,65 +120,53 @@ describe("POST /api/projects/[slug]/statements/bulk-update-ko", () => {
   it("rejects a blank line (case 4)", async () => {
     const slug = "ko-blank-line";
     await seedProject(slug, 3);
-    const lines = numberedKoLines(3);
+    const lines = koLines(3);
     lines[1] = "";
     const { status, data } = await callBulk(slug, { adminToken: `token-${slug}`, lines });
     expect(status).toBe(400);
     expect(data.error).toMatch(/비어 있습니다/);
   });
 
-  it("rejects a missing '1.' prefix (case 5)", async () => {
-    const slug = "ko-missing-one";
+  it("rejects a whitespace-only line", async () => {
+    const slug = "ko-whitespace-line";
     await seedProject(slug, 3);
-    const lines = numberedKoLines(3);
-    lines[0] = "no prefix";
+    const lines = koLines(3);
+    lines[2] = "   ";
     const { status, data } = await callBulk(slug, { adminToken: `token-${slug}`, lines });
     expect(status).toBe(400);
-    expect(data.error).toMatch(/1번째 줄은 '1\. '로 시작해야 합니다/);
+    expect(data.error).toMatch(/비어 있습니다/);
   });
 
-  it("rejects a wrong line number (case 6)", async () => {
-    const slug = "ko-wrong-number";
-    await seedProject(slug, 3);
-    const lines = numberedKoLines(3);
-    lines[1] = "5. wrong";
-    const { status, data } = await callBulk(slug, { adminToken: `token-${slug}`, lines });
-    expect(status).toBe(400);
-    expect(data.error).toMatch(/2번째 줄은 '2\. '로 시작해야 합니다/);
+  it("does not require, validate, or strip any numeric prefix", async () => {
+    const slug = "ko-no-numbering-required";
+    const { project } = await seedProject(slug, 3);
+    const lines = ["첫 번째 진술문", "두 번째 진술문", "세 번째 진술문"];
+    const { status } = await callBulk(slug, { adminToken: `token-${slug}`, lines });
+    expect(status).toBe(200);
+    const refreshed = await prisma.statement.findMany({
+      where: { projectId: project.id },
+      orderBy: { order: "asc" },
+    });
+    expect(refreshed.map((s) => s.text)).toEqual(lines);
   });
 
-  it("rejects duplicate numbering (case 7)", async () => {
-    const slug = "ko-dup-number";
-    await seedProject(slug, 3);
-    const lines = ["1. a", "1. b", "3. c"];
-    const { status, data } = await callBulk(slug, { adminToken: `token-${slug}`, lines });
-    expect(status).toBe(400);
-    expect(data.error).toMatch(/2번째 줄은 '2\. '로 시작해야 합니다/);
-  });
-
-  it("rejects skipped numbering (case 8)", async () => {
-    const slug = "ko-skip-number";
-    await seedProject(slug, 3);
-    const lines = ["1. a", "3. b", "4. c"];
-    const { status, data } = await callBulk(slug, { adminToken: `token-${slug}`, lines });
-    expect(status).toBe(400);
-    expect(data.error).toMatch(/2번째 줄은 '2\. '로 시작해야 합니다/);
-  });
-
-  it("rejects a number-only line with no content (case 9)", async () => {
-    const slug = "ko-number-only";
-    await seedProject(slug, 2);
-    const lines = numberedKoLines(2);
-    lines[1] = "2.";
-    const { status, data } = await callBulk(slug, { adminToken: `token-${slug}`, lines });
-    expect(status).toBe(400);
-    expect(data.error).toMatch(/번호만 있고 내용이 없습니다/);
+  it("does not strip or reject legitimate content that begins with a number", async () => {
+    const slug = "ko-content-starts-with-number";
+    const { project } = await seedProject(slug, 3);
+    const lines = ["3명이 모였다", "24시간 내내", "1인 가구 증가"];
+    const { status } = await callBulk(slug, { adminToken: `token-${slug}`, lines });
+    expect(status).toBe(200);
+    const refreshed = await prisma.statement.findMany({
+      where: { projectId: project.id },
+      orderBy: { order: "asc" },
+    });
+    expect(refreshed.map((s) => s.text)).toEqual(lines);
   });
 
   it("preserves Statement IDs after bulk edit (case 10)", async () => {
     const slug = "ko-ids-preserved";
     const { project, statements } = await seedProject(slug, 4);
-    await callBulk(slug, { adminToken: `token-${slug}`, lines: numberedKoLines(4) });
+    await callBulk(slug, { adminToken: `token-${slug}`, lines: koLines(4) });
     const refreshed = await prisma.statement.findMany({
       where: { projectId: project.id },
       orderBy: { order: "asc" },
@@ -189,7 +177,7 @@ describe("POST /api/projects/[slug]/statements/bulk-update-ko", () => {
   it("preserves Statement.order after bulk edit (case 11)", async () => {
     const slug = "ko-order-preserved";
     const { project, statements } = await seedProject(slug, 4);
-    await callBulk(slug, { adminToken: `token-${slug}`, lines: numberedKoLines(4) });
+    await callBulk(slug, { adminToken: `token-${slug}`, lines: koLines(4) });
     const refreshed = await prisma.statement.findMany({
       where: { projectId: project.id },
       orderBy: { order: "asc" },
@@ -200,16 +188,16 @@ describe("POST /api/projects/[slug]/statements/bulk-update-ko", () => {
   it("never touches textJa/jaStatus during Korean bulk save (case 12)", async () => {
     const slug = "ko-ja-untouched";
     const { project } = await seedProject(slug, 3, {
-      textJaSeed: (i) => `${i + 1}. existing-ja-${i}`,
+      textJaSeed: (i) => `existing-ja-${i}`,
       jaStatusSeed: () => "APPROVED",
     });
-    await callBulk(slug, { adminToken: `token-${slug}`, lines: numberedKoLines(3) });
+    await callBulk(slug, { adminToken: `token-${slug}`, lines: koLines(3) });
     const refreshed = await prisma.statement.findMany({
       where: { projectId: project.id },
       orderBy: { order: "asc" },
     });
     refreshed.forEach((s, i) => {
-      expect(s.textJa).toBe(`${i + 1}. existing-ja-${i}`);
+      expect(s.textJa).toBe(`existing-ja-${i}`);
       expect(s.jaStatus).toBe("APPROVED");
     });
   });
@@ -217,7 +205,7 @@ describe("POST /api/projects/[slug]/statements/bulk-update-ko", () => {
   it("rolls back entirely on validation failure — no partial writes (case 13)", async () => {
     const slug = "ko-atomic-fail";
     const { project, statements } = await seedProject(slug, 3);
-    const lines = [statements[0].text, "", "3. x"]; // blank -> reject
+    const lines = [statements[0].text, "", "x"]; // blank -> reject
     const { status } = await callBulk(slug, { adminToken: `token-${slug}`, lines });
     expect(status).toBe(400);
     const refreshed = await prisma.statement.findMany({
@@ -230,7 +218,7 @@ describe("POST /api/projects/[slug]/statements/bulk-update-ko", () => {
   it("creates N statements in sequence for a zero-statement project (case 14/15)", async () => {
     const slug = "ko-zero-create";
     const { project } = await seedProject(slug, 0);
-    const lines = numberedKoLines(3, "new");
+    const lines = koLines(3, "new");
     const { status, data } = await callBulk(slug, { adminToken: `token-${slug}`, lines });
     expect(status).toBe(200);
     expect(data.createdCount).toBe(3);
@@ -241,7 +229,7 @@ describe("POST /api/projects/[slug]/statements/bulk-update-ko", () => {
     });
     expect(refreshed.length).toBe(3);
     refreshed.forEach((s, i) => {
-      expect(s.text).toBe(`${i + 1}. new-${i}`);
+      expect(s.text).toBe(`new-${i}`);
       expect(s.order).toBe(i);
     });
   });
@@ -250,7 +238,7 @@ describe("POST /api/projects/[slug]/statements/bulk-update-ko", () => {
     const slug = "ko-existing-not-recreated";
     const { project, statements } = await seedProject(slug, 3);
     const idsBefore = statements.map((s) => s.id);
-    await callBulk(slug, { adminToken: `token-${slug}`, lines: numberedKoLines(3) });
+    await callBulk(slug, { adminToken: `token-${slug}`, lines: koLines(3) });
     const refreshed = await prisma.statement.findMany({
       where: { projectId: project.id },
       orderBy: { order: "asc" },
@@ -279,7 +267,7 @@ describe("POST /api/projects/[slug]/statements/bulk-update-ko", () => {
         japaneseEnabled: true,
       },
     });
-    await callBulk(slug, { adminToken: `token-${slug}`, lines: numberedKoLines(2) });
+    await callBulk(slug, { adminToken: `token-${slug}`, lines: koLines(2) });
     const refreshed = await prisma.project.findUnique({ where: { id: project.id } });
     expect(refreshed?.koPreviewConfirmedAt).toBeNull();
     expect(refreshed?.koreanEnabled).toBe(false);
@@ -290,7 +278,7 @@ describe("POST /api/projects/[slug]/statements/bulk-update-ko", () => {
   it("rejects without a valid adminToken", async () => {
     const slug = "ko-auth";
     await seedProject(slug, 2);
-    const { status } = await callBulk(slug, { adminToken: "wrong-token", lines: numberedKoLines(2) });
+    const { status } = await callBulk(slug, { adminToken: "wrong-token", lines: koLines(2) });
     expect(status).toBe(403);
   });
 
@@ -299,17 +287,5 @@ describe("POST /api/projects/[slug]/statements/bulk-update-ko", () => {
     await seedProject(slug, 2);
     const { status } = await callBulk(slug, { adminToken: `token-${slug}`, lines: "not-an-array" });
     expect(status).toBe(400);
-  });
-
-  it("stores the numbering prefix verbatim in Korean text", async () => {
-    const slug = "ko-numbering-retained";
-    const { project } = await seedProject(slug, 2);
-    const lines = ["1. 한글A", "2. 한글B"];
-    await callBulk(slug, { adminToken: `token-${slug}`, lines });
-    const refreshed = await prisma.statement.findMany({
-      where: { projectId: project.id },
-      orderBy: { order: "asc" },
-    });
-    expect(refreshed.map((s) => s.text)).toEqual(["1. 한글A", "2. 한글B"]);
   });
 });

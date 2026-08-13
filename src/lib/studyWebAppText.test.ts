@@ -67,7 +67,7 @@ describe("getStudyWebAppText — rrrvvnux workbook-exact strings", () => {
   });
 });
 
-describe("getStudyGuidePageOverride — 5 rules + min/max, exact", () => {
+describe("getStudyGuidePageOverride — title only (body now lives in Project.guideTemplateKo/Ja)", () => {
   it("KO guide title is exact", () => {
     expect(getStudyGuidePageOverride(SLUG, "ko")!.title).toBe("[유사성 분류 방법 안내문]");
   });
@@ -76,64 +76,6 @@ describe("getStudyGuidePageOverride — 5 rules + min/max, exact", () => {
     expect(getStudyGuidePageOverride(SLUG, "ja")!.title).toBe(
       "［類似性に基づくカード分類課題の実施方法］"
     );
-  });
-
-  it("KO guide intro (5-rules header) is exact", () => {
-    expect(getStudyGuidePageOverride(SLUG, "ko")!.intro).toBe(
-      "※ 유사성 분류 작업 시, 다음의 5가지 지침을 반드시 준수해 주십시오."
-    );
-  });
-
-  it("JA guide intro (5-rules header) is exact", () => {
-    expect(getStudyGuidePageOverride(SLUG, "ja")!.intro).toBe(
-      "※ 類似性に基づくカード分類課題を行う際には、以下の5つの手順を必ず守ってください。"
-    );
-  });
-
-  it("all 5 KO rules are exact", () => {
-    const o = getStudyGuidePageOverride(SLUG, "ko")!;
-    expect(o.rule1).toBe("① 하나의 묶음은 반드시 2장 이상의 카드로 구성되어야 합니다.");
-    expect(o.rule2).toBe(
-      "② 모든 카드를 하나의 묶음으로 만들 수는 없습니다. (전체 카드 47장을 하나의 묶음으로 분류할 수 없습니다.)"
-    );
-    expect(o.rule3).toBe(
-      "③ 하나의 묶음에는 16장 이상의 카드가 포함될 수 없습니다. 이는 전체 47장 카드의 1/3 이상이 하나의 묶음에 포함되는 것을 방지하기 위함입니다."
-    );
-    expect(o.rule4).toBe(
-      "④ 남는 카드 간에 의미적 유사성(공통점)이 없다면, 이를 모두 <기타>라는 하나의 묶음으로 분류할 수 없습니다. 번거로우시더라도 다른 의미 있는 주제(묶음 제목)를 생각해 주세요. 서로 의미가 비슷하다고 판단되는 카드끼리만 같은 묶음으로 분류해 주세요."
-    );
-    expect(o.rule5).toBe(
-      "⑤ 누락되거나 둘 이상의 묶음에 중복 배치되는 카드(진술문)가 없도록 유의해 주세요. 47장의 모든 카드는 각각 정확히 하나의 묶음에 반드시 포함되어야 합니다."
-    );
-  });
-
-  it("all 5 JA rules are exact", () => {
-    const o = getStudyGuidePageOverride(SLUG, "ja")!;
-    expect(o.rule1).toBe("① 各グループには、少なくとも2枚のステートメントカードを入れてください。");
-    expect(o.rule2).toBe(
-      "② すべてのステートメントカードを1つのグループにまとめることはできません。つまり、47枚すべてのカードを1つのグループに分類することはできません。"
-    );
-    expect(o.rule3).toBe(
-      "③ 1つのグループに16枚以上のステートメントカードを入れることはできません。これは、全47枚のカードの3分の1以上が1つのグループに集中することを避けるためです。"
-    );
-    expect(o.rule4).toBe(
-      "④ 残ったカードの間に意味上の十分な類似性や共通点がない場合、それらをまとめて「その他」という1つのグループに分類しないでください。別の意味のあるテーマやグループ名を考えてください。意味が類似していると判断したステートメントのみを同じグループに分類してください。"
-    );
-    expect(o.rule5).toBe(
-      "⑤ ステートメントカードの分類漏れや、複数のグループへの重複分類がないようにしてください。47枚すべてのカードを、それぞれ必ず1つのグループにのみ分類してください。"
-    );
-  });
-
-  it("KO min/max bundle lines are exact", () => {
-    const o = getStudyGuidePageOverride(SLUG, "ko")!;
-    expect(o.minBundleLine).toBe("최소: 4개 묶음(카드 2장으로 구성된 1개 묶음, 카드 15장으로 구성된 3개 묶음)");
-    expect(o.maxBundleLine).toBe("최대: 23개 묶음(카드 2장으로 구성된 22개 묶음, 카드 3장으로 구성된 1개 묶음)");
-  });
-
-  it("JA min/max bundle lines are exact", () => {
-    const o = getStudyGuidePageOverride(SLUG, "ja")!;
-    expect(o.minBundleLine).toBe("最少：4グループ（2枚のカードからなる1グループと、15枚のカードからなる3グループ）");
-    expect(o.maxBundleLine).toBe("最多：23グループ（2枚のカードからなる22グループと、3枚のカードからなる1グループ）");
   });
 
   it("returns null for a project slug with no override", () => {

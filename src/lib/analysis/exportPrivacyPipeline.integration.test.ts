@@ -25,6 +25,7 @@ const MIGRATION_ORDER = [
   "20260805233213_add_multilingual_project_support",
   "20260807144811_add_analysis_run_models",
   "20260807180000_scope_legacy_consent_fallback",
+  "20260813011500_add_guide_template_fields",
 ];
 {
   const db = new DatabaseSync(dbFile);

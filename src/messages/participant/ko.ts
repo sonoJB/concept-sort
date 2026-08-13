@@ -16,7 +16,7 @@ export const ko = {
     ariaGroupLabel: "참여 국가 선택",
   },
   nameStep: {
-    label: "이름 또는 닉네임",
+    label: "이름",
     placeholder: "예: 참가자1",
   },
   consentStep: {
@@ -43,7 +43,7 @@ export const ko = {
     grade1: "1학년",
     grade2: "2학년",
     grade3: "3학년",
-    phoneLabel: "답례품(기프티콘) 발송을 위한 스마트폰 번호",
+    phoneLabel: "스마트폰 번호",
     phonePlaceholder: "예: 010-1234-5678",
     submitLabel: "제출하기",
   },
@@ -76,13 +76,13 @@ export const ko = {
   errors: {
     COUNTRY_REQUIRED: "참여 국가를 선택해 주세요.",
     COUNTRY_NOT_AVAILABLE: "선택하신 국가는 현재 참여를 받고 있지 않습니다.",
-    PARTICIPANT_NAME_REQUIRED: "이름 또는 닉네임을 입력해 주세요.",
+    PARTICIPANT_NAME_REQUIRED: "이름을 입력해 주세요.",
     CONSENT_REQUIRED: "연구 참여 동의가 필요합니다.",
     GENDER_REQUIRED: "성별을 선택해 주세요.",
     AGE_INVALID: "연령을 숫자로 올바르게 입력해 주세요.",
     SCHOOL_LEVEL_REQUIRED: "학교급을 선택해 주세요.",
     GRADE_REQUIRED: "학년을 선택해 주세요.",
-    PHONE_REQUIRED: "답례품 발송을 위한 스마트폰 번호를 입력해 주세요.",
+    PHONE_REQUIRED: "스마트폰 번호를 입력해 주세요.",
     UNASSIGNED_STATEMENTS: (count) =>
       `아직 분류되지 않은 진술문이 ${count}개 있습니다. 모든 진술문을 하나 이상의 묶음에 배치해 주세요.`,
     ONE_GROUP_ONLY: "모든 카드를 하나의 묶음으로 만들 수 없습니다.",

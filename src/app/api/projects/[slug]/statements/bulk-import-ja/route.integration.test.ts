@@ -21,6 +21,7 @@ const MIGRATION_ORDER = [
   "20260805233213_add_multilingual_project_support",
   "20260807144811_add_analysis_run_models",
   "20260807180000_scope_legacy_consent_fallback",
+  "20260813011500_add_guide_template_fields",
 ];
 {
   const db = new DatabaseSync(dbFile);
@@ -55,7 +56,7 @@ async function seedProject(slug: string, statementCount: number, textJaSeed?: (i
       await prisma.statement.create({
         data: {
           projectId: project.id,
-          text: `${i + 1}. korean-${i}`,
+          text: `korean-${i}`,
           order: i,
           textJa: textJaSeed ? textJaSeed(i) : null,
         },
@@ -65,9 +66,9 @@ async function seedProject(slug: string, statementCount: number, textJaSeed?: (i
   return { project, statements };
 }
 
-/** Builds N properly-numbered Japanese lines: "1. ja-0", "2. ja-1", ... */
-function numberedJaLines(n: number): string[] {
-  return Array.from({ length: n }, (_, i) => `${i + 1}. ja-${i}`);
+/** Builds N unnumbered Japanese lines: "ja-0", "ja-1", ... */
+function jaLines(n: number): string[] {
+  return Array.from({ length: n }, (_, i) => `ja-${i}`);
 }
 
 function bulkRequest(slug: string, body: unknown) {
@@ -93,10 +94,10 @@ function koreanCanonicalHash(statements: { order: number; text: string }[]) {
 }
 
 describe("POST /api/projects/[slug]/statements/bulk-import-ja", () => {
-  it("saves exactly N numbered lines with DRAFT status by default (case 1, 10)", async () => {
+  it("saves exactly N unnumbered lines with DRAFT status by default (case 1, 10)", async () => {
     const slug = "bulk-exact-n";
     const { project } = await seedProject(slug, 5);
-    const lines = numberedJaLines(5);
+    const lines = jaLines(5);
 
     const { status, data } = await callBulk(slug, {
       adminToken: `token-${slug}`,
@@ -113,7 +114,7 @@ describe("POST /api/projects/[slug]/statements/bulk-import-ja", () => {
       orderBy: { order: "asc" },
     });
     refreshed.forEach((s, i) => {
-      expect(s.textJa).toBe(`${i + 1}. ja-${i}`);
+      expect(s.textJa).toBe(`ja-${i}`);
       expect(s.jaStatus).toBe("DRAFT");
     });
   });
@@ -121,7 +122,7 @@ describe("POST /api/projects/[slug]/statements/bulk-import-ja", () => {
   it("rejects N-1 lines (case 2)", async () => {
     const slug = "bulk-n-minus-1";
     await seedProject(slug, 5);
-    const lines = numberedJaLines(4);
+    const lines = jaLines(4);
 
     const { status, data } = await callBulk(slug, { adminToken: `token-${slug}`, lines, jaStatus: "DRAFT" });
     expect(status).toBe(400);
@@ -131,7 +132,7 @@ describe("POST /api/projects/[slug]/statements/bulk-import-ja", () => {
   it("rejects N+1 lines (case 3)", async () => {
     const slug = "bulk-n-plus-1";
     await seedProject(slug, 5);
-    const lines = numberedJaLines(6);
+    const lines = jaLines(6);
 
     const { status, data } = await callBulk(slug, { adminToken: `token-${slug}`, lines, jaStatus: "DRAFT" });
     expect(status).toBe(400);
@@ -141,7 +142,7 @@ describe("POST /api/projects/[slug]/statements/bulk-import-ja", () => {
   it("rejects a blank line (case 4)", async () => {
     const slug = "bulk-blank-line";
     await seedProject(slug, 3);
-    const lines = numberedJaLines(3);
+    const lines = jaLines(3);
     lines[1] = "";
 
     const { status, data } = await callBulk(slug, { adminToken: `token-${slug}`, lines, jaStatus: "DRAFT" });
@@ -152,7 +153,7 @@ describe("POST /api/projects/[slug]/statements/bulk-import-ja", () => {
   it("rejects a whitespace-only line (case 5)", async () => {
     const slug = "bulk-whitespace-line";
     await seedProject(slug, 3);
-    const lines = numberedJaLines(3);
+    const lines = jaLines(3);
     lines[2] = "   ";
 
     const { status, data } = await callBulk(slug, { adminToken: `token-${slug}`, lines, jaStatus: "DRAFT" });
@@ -166,12 +167,12 @@ describe("POST /api/projects/[slug]/statements/bulk-import-ja", () => {
     // Deliberately create two statements sharing the same order value —
     // something the normal app flow never does, but the route must still
     // refuse to silently pick a mapping rather than guess.
-    await prisma.statement.create({ data: { projectId: project.id, text: "1. a", order: 0 } });
-    await prisma.statement.create({ data: { projectId: project.id, text: "2. b", order: 0 } });
+    await prisma.statement.create({ data: { projectId: project.id, text: "a", order: 0 } });
+    await prisma.statement.create({ data: { projectId: project.id, text: "b", order: 0 } });
 
     const { status, data } = await callBulk(slug, {
       adminToken: `token-${slug}`,
-      lines: numberedJaLines(2),
+      lines: jaLines(2),
       jaStatus: "DRAFT",
     });
     expect(status).toBe(409);
@@ -185,21 +186,21 @@ describe("POST /api/projects/[slug]/statements/bulk-import-ja", () => {
     // correctly by position.
     const slug = "bulk-no-client-ids";
     const { project, statements } = await seedProject(slug, 3);
-    const lines = ["1. first", "2. second", "3. third"];
+    const lines = ["first", "second", "third"];
     const { status } = await callBulk(slug, { adminToken: `token-${slug}`, lines, jaStatus: "DRAFT" });
     expect(status).toBe(200);
     const refreshed = await prisma.statement.findMany({
       where: { projectId: project.id },
       orderBy: { order: "asc" },
     });
-    expect(refreshed.map((s) => s.textJa)).toEqual(["1. first", "2. second", "3. third"]);
+    expect(refreshed.map((s) => s.textJa)).toEqual(["first", "second", "third"]);
     expect(refreshed.map((s) => s.id)).toEqual(statements.map((s) => s.id));
   });
 
   it("rejects an invalid jaStatus (case 8)", async () => {
     const slug = "bulk-invalid-status";
     await seedProject(slug, 2);
-    const lines = numberedJaLines(2);
+    const lines = jaLines(2);
 
     const { status, data } = await callBulk(slug, { adminToken: `token-${slug}`, lines, jaStatus: "BOGUS" });
     expect(status).toBe(400);
@@ -209,7 +210,7 @@ describe("POST /api/projects/[slug]/statements/bulk-import-ja", () => {
   it("rejects MISSING as an explicit bulk status", async () => {
     const slug = "bulk-missing-status";
     await seedProject(slug, 2);
-    const lines = numberedJaLines(2);
+    const lines = jaLines(2);
 
     const { status } = await callBulk(slug, { adminToken: `token-${slug}`, lines, jaStatus: "MISSING" });
     expect(status).toBe(400);
@@ -218,7 +219,7 @@ describe("POST /api/projects/[slug]/statements/bulk-import-ja", () => {
   it("makes no DB changes when validation fails (atomicity, case 9)", async () => {
     const slug = "bulk-atomic-fail";
     const { project, statements } = await seedProject(slug, 3, (i) => (i === 0 ? "existing-ja" : null));
-    const lines = [statements[0].text, "", "3. ja-2"]; // blank line -> reject
+    const lines = [statements[0].text, "", "ja-2"]; // blank line -> reject
 
     const { status } = await callBulk(slug, { adminToken: `token-${slug}`, lines, jaStatus: "DRAFT" });
     expect(status).toBe(400);
@@ -235,7 +236,7 @@ describe("POST /api/projects/[slug]/statements/bulk-import-ja", () => {
   it("saves REVIEWING status (case 11)", async () => {
     const slug = "bulk-reviewing";
     const { project } = await seedProject(slug, 2);
-    const lines = numberedJaLines(2);
+    const lines = jaLines(2);
 
     const { status } = await callBulk(slug, { adminToken: `token-${slug}`, lines, jaStatus: "REVIEWING" });
     expect(status).toBe(200);
@@ -247,7 +248,7 @@ describe("POST /api/projects/[slug]/statements/bulk-import-ja", () => {
   it("rejects APPROVED without confirmApproved (case 12, part 1)", async () => {
     const slug = "bulk-approved-no-confirm";
     await seedProject(slug, 2);
-    const lines = numberedJaLines(2);
+    const lines = jaLines(2);
 
     const { status, data } = await callBulk(slug, { adminToken: `token-${slug}`, lines, jaStatus: "APPROVED" });
     expect(status).toBe(400);
@@ -257,7 +258,7 @@ describe("POST /api/projects/[slug]/statements/bulk-import-ja", () => {
   it("saves APPROVED when confirmApproved=true is explicitly sent (case 12, part 2)", async () => {
     const slug = "bulk-approved-confirmed";
     const { project } = await seedProject(slug, 2);
-    const lines = numberedJaLines(2);
+    const lines = jaLines(2);
 
     const { status } = await callBulk(slug, {
       adminToken: `token-${slug}`,
@@ -276,7 +277,7 @@ describe("POST /api/projects/[slug]/statements/bulk-import-ja", () => {
     const { project, statements } = await seedProject(slug, 4);
     const hashBefore = koreanCanonicalHash(statements);
 
-    const lines = numberedJaLines(4);
+    const lines = jaLines(4);
     await callBulk(slug, { adminToken: `token-${slug}`, lines, jaStatus: "DRAFT" });
 
     const refreshed = await prisma.statement.findMany({
@@ -297,7 +298,7 @@ describe("POST /api/projects/[slug]/statements/bulk-import-ja", () => {
     const { project, statements } = await seedProject(slug, 2);
     await callBulk(slug, {
       adminToken: `token-${slug}`,
-      lines: numberedJaLines(2),
+      lines: jaLines(2),
       jaStatus: "DRAFT",
     });
 
@@ -329,7 +330,7 @@ describe("POST /api/projects/[slug]/statements/bulk-import-ja", () => {
 
     const { status } = await callBulk(slug, {
       adminToken: `token-${slug}`,
-      lines: numberedJaLines(2),
+      lines: jaLines(2),
       jaStatus: "APPROVED",
       confirmApproved: true,
     });
@@ -345,7 +346,7 @@ describe("POST /api/projects/[slug]/statements/bulk-import-ja", () => {
     await seedProject(slug, 2);
     const { status } = await callBulk(slug, {
       adminToken: "wrong-token",
-      lines: numberedJaLines(2),
+      lines: jaLines(2),
       jaStatus: "DRAFT",
     });
     expect(status).toBe(403);
@@ -358,12 +359,13 @@ describe("POST /api/projects/[slug]/statements/bulk-import-ja", () => {
     expect(status).toBe(400);
   });
 
-  // --- Numbering-is-content contract (new) ---
+  // --- Numbering is NOT required or validated (statement number lives in
+  // Statement.order, never in text/textJa) ---
 
-  it("stores the numbering prefix verbatim — never strips it (case 17)", async () => {
-    const slug = "bulk-numbering-retained";
+  it("does not require, validate, or strip any numeric prefix", async () => {
+    const slug = "bulk-no-numbering-required";
     const { project } = await seedProject(slug, 2);
-    const lines = ["1. 文A", "2. 文B"];
+    const lines = ["最初の記述文", "二番目の記述文"];
 
     const { status } = await callBulk(slug, { adminToken: `token-${slug}`, lines, jaStatus: "DRAFT" });
     expect(status).toBe(200);
@@ -372,48 +374,28 @@ describe("POST /api/projects/[slug]/statements/bulk-import-ja", () => {
       where: { projectId: project.id },
       orderBy: { order: "asc" },
     });
-    expect(refreshed.map((s) => s.textJa)).toEqual(["1. 文A", "2. 文B"]);
+    expect(refreshed.map((s) => s.textJa)).toEqual(lines);
   });
 
-  it("rejects a line missing its number prefix (case 5 numbering)", async () => {
-    const slug = "bulk-missing-number";
-    await seedProject(slug, 3);
-    const lines = numberedJaLines(3);
-    lines[1] = "no number here";
+  it("does not strip or reject legitimate content that begins with a number", async () => {
+    const slug = "bulk-content-starts-with-number";
+    const { project } = await seedProject(slug, 2);
+    const lines = ["3人が集まった", "24時間ずっと"];
 
-    const { status, data } = await callBulk(slug, { adminToken: `token-${slug}`, lines, jaStatus: "DRAFT" });
-    expect(status).toBe(400);
-    expect(data.error).toMatch(/2번째 줄은 '2\. '로 시작해야 합니다/);
+    const { status } = await callBulk(slug, { adminToken: `token-${slug}`, lines, jaStatus: "DRAFT" });
+    expect(status).toBe(200);
+
+    const refreshed = await prisma.statement.findMany({
+      where: { projectId: project.id },
+      orderBy: { order: "asc" },
+    });
+    expect(refreshed.map((s) => s.textJa)).toEqual(lines);
   });
 
-  it("rejects mismatched numbering (case 19)", async () => {
-    const slug = "bulk-wrong-number";
-    await seedProject(slug, 3);
-    const lines = numberedJaLines(3);
-    lines[2] = "5. ja-2"; // should be "3. "
-
-    const { status, data } = await callBulk(slug, { adminToken: `token-${slug}`, lines, jaStatus: "DRAFT" });
-    expect(status).toBe(400);
-    expect(data.error).toMatch(/3번째 줄은 '3\. '로 시작해야 합니다/);
-  });
-
-  it("rejects a number-only line with no content", async () => {
-    const slug = "bulk-number-only";
-    await seedProject(slug, 2);
-    const lines = numberedJaLines(2);
-    lines[0] = "1.";
-
-    const { status, data } = await callBulk(slug, { adminToken: `token-${slug}`, lines, jaStatus: "DRAFT" });
-    expect(status).toBe(400);
-    expect(data.error).toMatch(/번호만 있고 내용이 없습니다/);
-  });
-
-  it("no longer supports automatic number stripping — the API has no such option (case 18)", async () => {
-    // The route accepts only `lines`/`jaStatus`/`confirmApproved`/`adminToken`;
-    // an extra client flag has no effect and numbering is always required.
+  it("the API has no numbering-strip option — an extra client flag has no effect", async () => {
     const slug = "bulk-no-strip-option";
     const { project } = await seedProject(slug, 2);
-    const lines = numberedJaLines(2);
+    const lines = jaLines(2);
 
     const { status } = await callBulk(slug, {
       adminToken: `token-${slug}`,
@@ -424,6 +406,6 @@ describe("POST /api/projects/[slug]/statements/bulk-import-ja", () => {
     expect(status).toBe(200);
 
     const refreshed = await prisma.statement.findMany({ where: { projectId: project.id }, orderBy: { order: "asc" } });
-    expect(refreshed.map((s) => s.textJa)).toEqual(["1. ja-0", "2. ja-1"]);
+    expect(refreshed.map((s) => s.textJa)).toEqual(["ja-0", "ja-1"]);
   });
 });
