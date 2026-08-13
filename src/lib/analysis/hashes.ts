@@ -2,18 +2,24 @@ import type { AnalysisScope } from "@/lib/conceptAnalysis";
 import { canonicalHash } from "./canonicalJson";
 import type { NumericAggregate } from "./aggregates";
 import type { RawStatementRow } from "./dbAdapter";
+import type { DatasetMode } from "./dataset";
 
 /**
- * numericDataHash depends ONLY on scope, statement order/identity, N, and
- * the similarity COUNT matrix — never on session IDs, group-membership
- * detail beyond what's folded into the count matrix, or participant data.
- * Two different sets of participants that happen to produce the same count
- * matrix and the same N necessarily get the same hash — that's intended,
- * not a collision to guard against (see Gate 3 spec §8).
+ * numericDataHash depends ONLY on scope, dataset mode, statement
+ * order/identity, N, and the similarity COUNT matrix — never on session
+ * IDs, group-membership detail beyond what's folded into the count matrix,
+ * or participant data. Two different sets of participants that happen to
+ * produce the same count matrix, same N, and same dataset mode necessarily
+ * get the same hash — that's intended, not a collision to guard against
+ * (see Gate 3 spec §8). `dataset` is included explicitly (not left to be
+ * implicitly distinguished only via a differing matrix) so a MAIN-only and
+ * a PILOT-only run over what happens to be numerically identical data are
+ * still never conflated.
  */
-export function computeNumericDataHash(scope: AnalysisScope, aggregate: NumericAggregate): string {
+export function computeNumericDataHash(scope: AnalysisScope, dataset: DatasetMode, aggregate: NumericAggregate): string {
   return canonicalHash({
     scope,
+    dataset,
     orderedStatementIds: aggregate.statementIds,
     includedParticipantCount: aggregate.includedParticipantCount,
     similarityCountMatrix: aggregate.similarityCountMatrix,

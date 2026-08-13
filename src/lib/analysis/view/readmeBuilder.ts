@@ -20,6 +20,7 @@ export function buildReadmeText(payload: ExportPayload): string {
 - Ward 군집분석(ward_linkage.csv, dendrogram)은 2차원 MDS 좌표(dimension=${m.wardSourceDimension})의 Euclidean geometry를 입력으로 사용합니다. 계층적 군집분석 자체가 좌표를 생성하지는 않습니다.
 - scope=ALL은 한국·일본 참여자를 participant-level로 통합한 분석이며, 국가별 동일 가중치 비교나 한일 차이 검증이 아닙니다.
 - 최종 군집 수(k)는 연구자가 직접 선택했습니다(자동 추천 아님).
+- dataset=${m.dataset}${m.dataset === "MAIN" ? " (본조사 공식 데이터만 포함, 파일럿 제외)" : m.dataset === "PILOT" ? " (파일럿 QA 데이터 — 본조사 공식 결과 아님)" : m.dataset === "ALL_WITH_PILOT" ? ` (점검용 — 파일럿 ${m.pilotCount}건 포함, 본조사 ${m.mainCount}건 — 본조사 공식 결과 아님)` : " (dataRole 구분 도입 이전의 기존 실행 — 실행 당시 참여자 전원이 현재 파일럿으로 분류됨, 본조사 공식 결과 아님)"}
 
 Software provenance
 --------------------
@@ -33,6 +34,7 @@ Run
 ---
 run_id: ${m.runId}
 scope: ${m.scope}
+dataset: ${m.dataset} (pilotCount=${m.pilotCount}, mainCount=${m.mainCount})
 started_at: ${m.startedAt}
 finished_at: ${m.finishedAt ?? ""}
 included_n: ${m.includedParticipantCount} (KR ${m.nKr} / JP ${m.nJp})

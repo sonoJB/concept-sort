@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { DeleteConfirmModal } from "@/components/DeleteConfirmModal";
 import { AnalysisPanel } from "@/components/analysis/AnalysisPanel";
 import { toCsv, downloadCsv } from "@/lib/csv";
+import { filterByDataRole, type DataRoleFilter } from "@/lib/participantFilter";
 import { JA_RESPONSIBLE_PARTY_NOTICE } from "@/lib/consent";
 import type { LocaleContentStatus, OperatingState } from "@/lib/localeContentStatus";
 import { validateNonBlankLines, splitBulkLines } from "@/lib/statementLines";
@@ -25,6 +26,7 @@ type Statement = {
 type Participant = {
   id: string;
   countryCode: string | null;
+  dataRole: string;
   participantName: string;
   consentAgreed: boolean;
   gender: string;
@@ -35,6 +37,9 @@ type Participant = {
   submittedAt: string;
   groups: { label: string; statementNumbers: number[] }[];
 };
+
+const DATA_ROLE_LABELS: Record<string, string> = { MAIN: "본조사", PILOT: "파일럿" };
+type ParticipantFilter = DataRoleFilter;
 
 const JA_STATUS_LABELS: Record<string, string> = {
   MISSING: "미작성",
@@ -108,13 +113,14 @@ export function AdminDashboard({
   const [matrixError, setMatrixError] = useState<string | null>(null);
   const [selectedParticipantIds, setSelectedParticipantIds] = useState<Set<string>>(new Set());
   const [deleteModal, setDeleteModal] = useState<
-    | { kind: "single" | "selected"; sessionIds: string[] }
+    | { kind: "single" | "selected"; sessionIds: string[]; groupCount: number; itemCount: number }
     | { kind: "all" }
     | null
   >(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleteSuccessMessage, setDeleteSuccessMessage] = useState<string | null>(null);
+  const [participantFilter, setParticipantFilter] = useState<ParticipantFilter>("ALL");
 
   // Korean content editing
   const [koTitle, setKoTitle] = useState(title);
@@ -326,13 +332,15 @@ export function AdminDashboard({
     }
   }
 
-  async function handleDownloadCsv() {
-    const rows = participants ?? (await loadParticipants());
-    if (!rows) return;
+  async function handleDownloadCsv(roleFilter: ParticipantFilter) {
+    const all = participants ?? (await loadParticipants());
+    if (!all) return;
+    const rows = filterByDataRole(all, roleFilter);
 
     const header = [
       "번호",
       "국가",
+      "데이터구분",
       "이름",
       "동의여부",
       "성별",
@@ -347,6 +355,7 @@ export function AdminDashboard({
     const body = rows.map((p, i) => [
       String(i + 1),
       countryLabel(p.countryCode),
+      DATA_ROLE_LABELS[p.dataRole] ?? p.dataRole,
       p.participantName,
       p.consentAgreed ? "동의" : "미동의",
       p.gender,
@@ -359,15 +368,17 @@ export function AdminDashboard({
       formatGroups(p.groups),
     ]);
 
-    downloadCsv(`${slug}_participants.csv`, toCsv([header, ...body]));
+    const suffix = roleFilter === "MAIN" ? "main" : roleFilter === "PILOT" ? "pilot" : "all";
+    downloadCsv(`${slug}_participants_${suffix}.csv`, toCsv([header, ...body]));
   }
 
-  async function handleDownloadMatrixCsv() {
+  async function handleDownloadMatrixCsv(dataset: "MAIN" | "PILOT" | "ALL_WITH_PILOT") {
     setMatrixError(null);
     setLoadingMatrix(true);
     try {
       const url = new URL(`/api/projects/${slug}/matrix`, window.location.origin);
       url.searchParams.set("token", adminToken);
+      url.searchParams.set("dataset", dataset);
       const res = await fetch(url.toString());
       const data = await res.json();
       if (!res.ok) {
@@ -389,7 +400,8 @@ export function AdminDashboard({
 
       const csv = [toCsv([header, ...body]), "", toCsv([legendHeader, ...legendBody])].join("\r\n");
 
-      downloadCsv(`${slug}_group_matrix.csv`, csv);
+      const suffix = dataset === "MAIN" ? "main" : dataset === "PILOT" ? "pilot" : "all_with_pilot";
+      downloadCsv(`${slug}_group_matrix_${suffix}.csv`, csv);
     } catch {
       setMatrixError("네트워크 오류가 발생했습니다.");
     } finally {
@@ -1746,13 +1758,29 @@ export function AdminDashboard({
         <section className="space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-semibold">개념도 분석</h2>
-            <button
-              onClick={handleDownloadMatrixCsv}
-              disabled={loadingMatrix || submissionCount === 0}
-              className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium hover:bg-slate-100 disabled:opacity-50"
-            >
-              {loadingMatrix ? "생성 중..." : "집단행렬 CSV 다운로드"}
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={() => handleDownloadMatrixCsv("MAIN")}
+                disabled={loadingMatrix || submissionCount === 0}
+                className="rounded-lg bg-slate-900 px-4 py-2 text-white text-sm font-medium hover:bg-slate-700 disabled:opacity-50"
+              >
+                {loadingMatrix ? "생성 중..." : "본조사 유사성 행렬"}
+              </button>
+              <button
+                onClick={() => handleDownloadMatrixCsv("PILOT")}
+                disabled={loadingMatrix || submissionCount === 0}
+                className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium hover:bg-slate-100 disabled:opacity-50"
+              >
+                파일럿 유사성 행렬
+              </button>
+              <button
+                onClick={() => handleDownloadMatrixCsv("ALL_WITH_PILOT")}
+                disabled={loadingMatrix || submissionCount === 0}
+                className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium hover:bg-slate-100 disabled:opacity-50"
+              >
+                전체 점검용 행렬
+              </button>
+            </div>
           </div>
 
           {matrixError && (
@@ -1778,11 +1806,25 @@ export function AdminDashboard({
                 {loadingParticipants ? "불러오는 중..." : "참가자 목록 보기"}
               </button>
               <button
-                onClick={handleDownloadCsv}
+                onClick={() => handleDownloadCsv("MAIN")}
                 disabled={loadingParticipants || submissionCount === 0}
                 className="rounded-lg bg-slate-900 px-4 py-2 text-white text-sm font-medium hover:bg-slate-700 disabled:opacity-50"
               >
-                CSV 다운로드
+                본조사 참가자 CSV
+              </button>
+              <button
+                onClick={() => handleDownloadCsv("PILOT")}
+                disabled={loadingParticipants || submissionCount === 0}
+                className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium hover:bg-slate-100 disabled:opacity-50"
+              >
+                파일럿 참가자 CSV
+              </button>
+              <button
+                onClick={() => handleDownloadCsv("ALL")}
+                disabled={loadingParticipants || submissionCount === 0}
+                className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium hover:bg-slate-100 disabled:opacity-50"
+              >
+                전체 참가자 CSV
               </button>
             </div>
           </div>
@@ -1803,16 +1845,61 @@ export function AdminDashboard({
             </p>
           )}
 
+          {participants && (() => {
+            const mainCount = participants.filter((p) => p.dataRole === "MAIN").length;
+            const pilotCount = participants.filter((p) => p.dataRole === "PILOT").length;
+            const pilotKr = participants.filter((p) => p.dataRole === "PILOT" && p.countryCode === "KR").length;
+            const pilotJp = participants.filter((p) => p.dataRole === "PILOT" && p.countryCode === "JP").length;
+            return (
+              <div className="rounded-lg bg-slate-50 border border-slate-200 px-4 py-3 text-sm space-y-1">
+                <p>
+                  전체 제출: <span className="font-semibold">{participants.length}</span> · 본조사:{" "}
+                  <span className="font-semibold">{mainCount}</span> · 파일럿:{" "}
+                  <span className="font-semibold">{pilotCount}</span>
+                </p>
+                {pilotCount > 0 && (
+                  <p className="text-xs text-slate-500">
+                    파일럿: Korea {pilotKr} · Japan {pilotJp}
+                  </p>
+                )}
+              </div>
+            );
+          })()}
+
           {participants && participants.length > 0 && (
             <>
+              <div className="flex gap-2 text-xs">
+                {(["ALL", "MAIN", "PILOT"] as ParticipantFilter[]).map((f) => (
+                  <button
+                    key={f}
+                    onClick={() => setParticipantFilter(f)}
+                    className={`rounded-full px-3 py-1 font-medium ${
+                      participantFilter === f ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600"
+                    }`}
+                  >
+                    {f === "ALL" ? "전체" : DATA_ROLE_LABELS[f]}
+                  </button>
+                ))}
+              </div>
+
+              {(() => {
+                const visibleParticipants = filterByDataRole(participants, participantFilter);
+                const selectedVisible = visibleParticipants.filter((p) => selectedParticipantIds.has(p.id));
+                const selectedGroupCount = selectedVisible.reduce((sum, p) => sum + p.groups.length, 0);
+                const selectedItemCount = selectedVisible.reduce(
+                  (sum, p) => sum + p.groups.reduce((s, g) => s + g.statementNumbers.length, 0),
+                  0
+                );
+                return (
+                  <>
               <div className="flex items-center justify-between rounded-lg bg-slate-50 border border-slate-200 px-3 py-2">
                 <label className="flex items-center gap-2 text-sm">
                   <input
                     type="checkbox"
-                    checked={selectedParticipantIds.size === participants.length}
-                    onChange={() => toggleSelectAllParticipants(participants)}
+                    checked={selectedParticipantIds.size > 0 && selectedVisible.length === visibleParticipants.length}
+                    onChange={() => toggleSelectAllParticipants(visibleParticipants)}
                   />
-                  전체 선택 ({selectedParticipantIds.size}/{participants.length}명 선택됨)
+                  전체 선택 ({selectedVisible.length}/{visibleParticipants.length}명 선택됨)
                 </label>
                 {selectedParticipantIds.size > 0 && (
                   <div className="flex items-center gap-2">
@@ -1824,7 +1911,12 @@ export function AdminDashboard({
                     </button>
                     <button
                       onClick={() =>
-                        setDeleteModal({ kind: "selected", sessionIds: [...selectedParticipantIds] })
+                        setDeleteModal({
+                          kind: "selected",
+                          sessionIds: [...selectedParticipantIds],
+                          groupCount: selectedGroupCount,
+                          itemCount: selectedItemCount,
+                        })
                       }
                       className="rounded-lg bg-red-600 px-3 py-1.5 text-white text-xs font-medium hover:bg-red-700"
                     >
@@ -1839,6 +1931,7 @@ export function AdminDashboard({
                   <thead className="bg-slate-50 text-slate-500">
                     <tr>
                       <th className="px-3 py-2 font-medium w-8"></th>
+                      <th className="text-left px-3 py-2 font-medium">데이터 구분</th>
                       <th className="text-left px-3 py-2 font-medium">국가</th>
                       <th className="text-left px-3 py-2 font-medium">이름</th>
                       <th className="text-left px-3 py-2 font-medium">성별</th>
@@ -1852,7 +1945,7 @@ export function AdminDashboard({
                     </tr>
                   </thead>
                   <tbody>
-                    {participants.map((p) => (
+                    {visibleParticipants.map((p) => (
                       <tr key={p.id} className="border-t border-slate-100">
                         <td className="px-3 py-2">
                           <input
@@ -1860,6 +1953,15 @@ export function AdminDashboard({
                             checked={selectedParticipantIds.has(p.id)}
                             onChange={() => toggleParticipantSelected(p.id)}
                           />
+                        </td>
+                        <td className="px-3 py-2">
+                          <span
+                            className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                              p.dataRole === "PILOT" ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"
+                            }`}
+                          >
+                            {DATA_ROLE_LABELS[p.dataRole] ?? p.dataRole}
+                          </span>
                         </td>
                         <td className="px-3 py-2">{countryLabel(p.countryCode)}</td>
                         <td className="px-3 py-2">{p.participantName}</td>
@@ -1872,7 +1974,14 @@ export function AdminDashboard({
                         <td className="px-3 py-2 whitespace-normal">{formatGroups(p.groups)}</td>
                         <td className="px-3 py-2">
                           <button
-                            onClick={() => setDeleteModal({ kind: "single", sessionIds: [p.id] })}
+                            onClick={() =>
+                              setDeleteModal({
+                                kind: "single",
+                                sessionIds: [p.id],
+                                groupCount: p.groups.length,
+                                itemCount: p.groups.reduce((s, g) => s + g.statementNumbers.length, 0),
+                              })
+                            }
                             className="text-xs text-red-500 hover:text-red-700 hover:underline"
                           >
                             삭제
@@ -1883,6 +1992,9 @@ export function AdminDashboard({
                   </tbody>
                 </table>
               </div>
+                  </>
+                );
+              })()}
             </>
           )}
 
@@ -1928,8 +2040,12 @@ export function AdminDashboard({
                 deleteModal.kind === "all"
                   ? "이 프로젝트의 모든 참여 기록을 삭제합니다.\n프로젝트와 진술문은 유지되지만,\n모든 참여자 정보와 분류 결과가 삭제됩니다."
                   : deleteModal.kind === "selected"
-                    ? `선택한 참여 기록 ${deleteModal.sessionIds.length}건을 삭제하시겠습니까?\n연결된 묶음과 분류 결과도 함께 삭제되며,\n이 작업은 되돌릴 수 없습니다.`
-                    : "선택한 참여 기록을 삭제하시겠습니까?\n연결된 묶음과 분류 결과도 함께 삭제되며,\n이 작업은 되돌릴 수 없습니다."
+                    ? `선택한 참여 기록 ${deleteModal.sessionIds.length}건을 삭제하시겠습니까?\n` +
+                      `연결된 묶음(SortGroup) ${deleteModal.groupCount}개, 분류 항목(SortGroupItem) ${deleteModal.itemCount}개도 함께 삭제됩니다.\n` +
+                      `이 작업은 되돌릴 수 없습니다.`
+                    : `선택한 참여 기록 1건을 삭제하시겠습니까?\n` +
+                      `연결된 묶음(SortGroup) ${deleteModal.groupCount}개, 분류 항목(SortGroupItem) ${deleteModal.itemCount}개도 함께 삭제됩니다.\n` +
+                      `이 작업은 되돌릴 수 없습니다.`
               }
               confirmLabel="삭제"
               requireTypedConfirmation={

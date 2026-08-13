@@ -2,6 +2,7 @@ import type { PrismaClient } from "@/generated/prisma/client";
 import type { AnalysisScope } from "@/lib/conceptAnalysis";
 import { filterSessionsForScope } from "@/lib/conceptAnalysis";
 import { toFixtureProject, toFixtureSessions, type RawSessionRow, type RawStatementRow } from "./dbAdapter";
+import { dataRolesForDataset, type DataRole, type DatasetMode } from "./dataset";
 import { buildNumericAggregate } from "./aggregates";
 import {
   computeNumericDataHash,
@@ -62,6 +63,7 @@ export type CreateAnalysisRunDeps = {
   prisma: PrismaClient;
   projectId: string;
   scope: AnalysisScope;
+  dataset: DatasetMode;
   analysisParameters: AnalysisParameters;
   validationBaselineSha: string;
   /**
@@ -96,8 +98,9 @@ export async function createAnalysisRun(deps: CreateAnalysisRunDeps): Promise<Cr
   try {
     const runId = await deps.prisma.$transaction(async (tx) => {
       const statements = await tx.statement.findMany({ where: { projectId: deps.projectId } });
+      const allowedRoles = dataRolesForDataset(deps.dataset);
       const sessions = await tx.sortSession.findMany({
-        where: { projectId: deps.projectId },
+        where: { projectId: deps.projectId, ...(allowedRoles ? { dataRole: { in: allowedRoles } } : {}) },
         include: { groups: { include: { items: true } } },
       });
 
@@ -111,8 +114,10 @@ export async function createAnalysisRun(deps: CreateAnalysisRunDeps): Promise<Cr
       const rawSessions: RawSessionRow[] = sessions.map((s) => ({
         id: s.id,
         countryCode: s.countryCode,
+        dataRole: s.dataRole as DataRole,
         groups: s.groups.map((g) => ({ items: g.items.map((i) => ({ statementId: i.statementId })) })),
       }));
+      const dataRoleBySessionId = new Map(rawSessions.map((s) => [s.id, s.dataRole]));
 
       const fixtureProject = toFixtureProject(deps.projectId, rawStatements);
       const fixtureSessions = toFixtureSessions(rawSessions);
@@ -123,9 +128,12 @@ export async function createAnalysisRun(deps: CreateAnalysisRunDeps): Promise<Cr
         throw new ParticipantCountZeroError();
       }
 
+      const pilotCount = scopeResult.validSessions.filter((s) => dataRoleBySessionId.get(s.sessionId) === "PILOT").length;
+      const mainCount = scopeResult.validSessions.filter((s) => dataRoleBySessionId.get(s.sessionId) === "MAIN").length;
+
       const aggregate = buildNumericAggregate(fixtureProject, scopeResult.validSessions);
 
-      const numericDataHash = computeNumericDataHash(deps.scope, aggregate);
+      const numericDataHash = computeNumericDataHash(deps.scope, deps.dataset, aggregate);
       const statementStructureHash = computeStatementStructureHash(rawStatements);
       const statementContentHashKo = computeStatementContentHashKo(rawStatements);
       const statementContentHashJa = computeStatementContentHashJa(rawStatements);
@@ -137,11 +145,14 @@ export async function createAnalysisRun(deps: CreateAnalysisRunDeps): Promise<Cr
 
       const inputSnapshot = buildInputSnapshot(
         deps.scope,
+        deps.dataset,
         rawStatements,
         aggregate,
         scopeResult.exclusions,
         scopeResult.nKr,
-        scopeResult.nJp
+        scopeResult.nJp,
+        pilotCount,
+        mainCount
       );
 
       const dimensionsEvaluated = deps.analysisParameters.dimensionsEvaluated;
@@ -150,6 +161,9 @@ export async function createAnalysisRun(deps: CreateAnalysisRunDeps): Promise<Cr
         data: {
           projectId: deps.projectId,
           scope: deps.scope,
+          dataset: deps.dataset,
+          pilotCount,
+          mainCount,
           executionStatus: "RUNNING",
           startedAt: now,
           numericDataHash,

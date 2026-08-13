@@ -23,6 +23,7 @@ const deps = (projectId: string, scope: "KR" | "JP" | "ALL" = "KR") => ({
   prisma,
   projectId,
   scope,
+  dataset: "MAIN" as const,
   analysisParameters: { ...DEFAULT_ANALYSIS_PARAMETERS, dimensionsEvaluated: [2] },
   validationBaselineSha: VALIDATION_BASELINE_SHA,
   engineSourceCommitSha: "a".repeat(40),

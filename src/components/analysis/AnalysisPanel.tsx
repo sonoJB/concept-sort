@@ -27,6 +27,17 @@ type Scope = "KR" | "JP" | "ALL";
 
 const SCOPE_LABELS: Record<Scope, string> = { KR: "한국", JP: "일본", ALL: "전체(KR+JP 통합)" };
 
+/**
+ * Orthogonal to Scope: scope picks country pooling (KR/JP/ALL), dataset
+ * picks which SortSession.dataRole subset is eligible input at all. The two
+ * combine freely — e.g. scope=ALL + dataset=MAIN means every-country
+ * official participants with zero pilots, never to be confused with
+ * dataset=ALL_WITH_PILOT (which folds pilots back in explicitly).
+ */
+type DatasetMode = "MAIN" | "PILOT" | "ALL_WITH_PILOT";
+const DATASET_LABELS: Record<DatasetMode, string> = { MAIN: "본조사", PILOT: "파일럿", ALL_WITH_PILOT: "전체(점검용)" };
+const DATASET_MODES: DatasetMode[] = ["MAIN", "PILOT", "ALL_WITH_PILOT"];
+
 type Eligibility = {
   eligible: boolean;
   errorCode: string | null;
@@ -38,6 +49,10 @@ type Eligibility = {
 type RunMetadata = {
   id: string;
   scope: string;
+  /** "MAIN" | "PILOT" | "ALL_WITH_PILOT" | "LEGACY_PRE_SEGREGATION" (created before this feature existed). */
+  dataset: string;
+  pilotCount: number;
+  mainCount: number;
   executionStatus: string;
   errorCode: string | null;
   errorMessageSafe: string | null;
@@ -64,6 +79,9 @@ function safeSlugFor(slug: string) {
 export function AnalysisPanel({ slug, adminToken }: { slug: string; adminToken: string }) {
   const api = analysisApi(slug, adminToken);
   const [scope, setScope] = useState<Scope>("KR");
+  // Defaults to MAIN — official analysis must never open on a dataset that
+  // silently includes pilots.
+  const [dataset, setDataset] = useState<DatasetMode>("MAIN");
   const [eligibility, setEligibility] = useState<Eligibility | null>(null);
   const [runs, setRuns] = useState<RunMetadata[] | null>(null);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
@@ -80,13 +98,13 @@ export function AnalysisPanel({ slug, adminToken }: { slug: string; adminToken: 
   const [showQuadrant, setShowQuadrant] = useState(false);
 
   const loadEligibility = useCallback(async () => {
-    const res = await api.eligibility(scope);
+    const res = await api.eligibility(scope, dataset);
     if (res.ok) setEligibility(res.body);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scope, slug, adminToken]);
+  }, [scope, dataset, slug, adminToken]);
 
   const loadRuns = useCallback(async () => {
-    const res = await api.listRuns(scope);
+    const res = await api.listRuns(scope, dataset);
     if (res.ok) {
       const list: RunMetadata[] = res.body.runs;
       setRuns(list);
@@ -99,7 +117,7 @@ export function AnalysisPanel({ slug, adminToken }: { slug: string; adminToken: 
       setSelectedRunId((prev) => prev ?? officialCandidate?.id ?? list[0]?.id ?? null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scope, slug, adminToken]);
+  }, [scope, dataset, slug, adminToken]);
 
   const loadExportPayload = useCallback(
     async (runId: string) => {
@@ -140,7 +158,7 @@ export function AnalysisPanel({ slug, adminToken }: { slug: string; adminToken: 
     }, 0);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scope]);
+  }, [scope, dataset]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -156,7 +174,7 @@ export function AnalysisPanel({ slug, adminToken }: { slug: string; adminToken: 
   async function handleRunAnalysis() {
     setCreatingRun(true);
     setCreateError(null);
-    const res = await api.createRun(scope);
+    const res = await api.createRun(scope, dataset);
     setCreatingRun(false);
     if (!res.ok) {
       if (res.status === 409 && res.body?.errorCode === "RUN_ALREADY_RUNNING") {
@@ -314,6 +332,29 @@ export function AnalysisPanel({ slug, adminToken }: { slug: string; adminToken: 
         )}
       </section>
 
+      {/* A2. Dataset mode — orthogonal to scope. Country scope=ALL and dataset=ALL_WITH_PILOT are different concepts: scope pools countries, dataset decides whether pilot rows are eligible input at all. */}
+      <section className="space-y-2">
+        <p className="text-xs font-medium text-slate-500">데이터</p>
+        <div className="flex gap-2">
+          {DATASET_MODES.map((d) => (
+            <button
+              key={d}
+              onClick={() => setDataset(d)}
+              className={`rounded-lg px-3 py-1.5 text-sm font-medium ${
+                dataset === d ? "bg-slate-900 text-white" : "border border-slate-300 hover:bg-slate-100"
+              }`}
+            >
+              {DATASET_LABELS[d]}
+            </button>
+          ))}
+        </div>
+        {dataset === "ALL_WITH_PILOT" && (
+          <p className="text-xs text-amber-700">
+            전체(점검용)는 파일럿 데이터를 포함합니다. 공식 본조사 결과로 사용하지 마세요 — QA/점검 전용입니다.
+          </p>
+        )}
+      </section>
+
       {/* B. Eligibility + run execution */}
       <section className="rounded-xl border border-slate-200 p-4 space-y-3 text-sm">
         <h3 className="font-semibold">분석 준비 상태 · 새 분석 실행</h3>
@@ -325,6 +366,11 @@ export function AnalysisPanel({ slug, adminToken }: { slug: string; adminToken: 
               <li className="text-amber-700">참여자 1명의 탐색적 결과이므로 해석에 각별한 주의가 필요합니다.</li>
             )}
           </ul>
+        )}
+        {dataset === "MAIN" && eligibility && eligibility.participantCount === 0 && (
+          <p className="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5">
+            아직 본조사 제출 데이터가 없습니다.
+          </p>
         )}
         {createError && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-2 py-1.5">{createError}</p>}
         <button
@@ -339,6 +385,23 @@ export function AnalysisPanel({ slug, adminToken }: { slug: string; adminToken: 
       {/* C. Current official result */}
       <section className="rounded-xl border border-slate-200 p-4 space-y-3 text-sm">
         <h3 className="font-semibold">현재 공식 결과</h3>
+        {payload && payload.meta.dataset === "LEGACY_PRE_SEGREGATION" && (
+          <p className="text-xs text-amber-800 bg-amber-50 border border-amber-300 rounded-lg px-2 py-1.5">
+            파일럿 데이터 기반 기존 실행 — dataRole 구분 도입 이전에 생성되어, 실행 당시 참여자 전원(N=
+            {payload.meta.includedParticipantCount})이 현재 파일럿으로 분류되어 있습니다. 본조사 공식 결과가 아닙니다.
+          </p>
+        )}
+        {payload && payload.meta.dataset === "PILOT" && (
+          <p className="text-xs text-amber-800 bg-amber-50 border border-amber-300 rounded-lg px-2 py-1.5">
+            파일럿 분석 — QA 검증용이며 본조사 공식 결과가 아닙니다.
+          </p>
+        )}
+        {payload && payload.meta.dataset === "ALL_WITH_PILOT" && (
+          <p className="text-xs text-amber-800 bg-amber-50 border border-amber-300 rounded-lg px-2 py-1.5">
+            전체(점검용) 분석 — 파일럿 {payload.meta.pilotCount}건 포함, 본조사 {payload.meta.mainCount}건. 점검 전용이며 본조사 공식
+            결과가 아닙니다.
+          </p>
+        )}
         {!selectedRunId && <p className="text-slate-500 text-xs">아직 실행된 분석이 없습니다.</p>}
         {selectedRunId && blockReason && (
           <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5">
@@ -621,6 +684,7 @@ export function AnalysisPanel({ slug, adminToken }: { slug: string; adminToken: 
               <tr className="text-left text-slate-500">
                 <th className="pr-2">실행 시각</th>
                 <th className="pr-2">scope</th>
+                <th className="pr-2">데이터</th>
                 <th className="pr-2">N</th>
                 <th className="pr-2">상태</th>
                 <th className="pr-2">신선도</th>
@@ -639,6 +703,19 @@ export function AnalysisPanel({ slug, adminToken }: { slug: string; adminToken: 
                 >
                   <td className="pr-2 py-1">{new Date(r.startedAt).toLocaleString("ko-KR")}</td>
                   <td className="pr-2">{r.scope}</td>
+                  <td className="pr-2">
+                    {r.dataset === "LEGACY_PRE_SEGREGATION" ? (
+                      <span className="text-amber-700">파일럿 데이터 기반 기존 실행</span>
+                    ) : r.dataset === "PILOT" ? (
+                      <span className="text-amber-700">파일럿</span>
+                    ) : r.dataset === "ALL_WITH_PILOT" ? (
+                      <span className="text-amber-700">
+                        전체(점검용, 파일럿 {r.pilotCount})
+                      </span>
+                    ) : (
+                      "본조사"
+                    )}
+                  </td>
                   <td className="pr-2">{r.includedParticipantCount}</td>
                   <td className="pr-2">
                     {r.executionStatus === "FAILED" ? `실패 (${r.errorCode ?? "-"})` : r.executionStatus}

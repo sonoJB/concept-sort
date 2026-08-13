@@ -6,6 +6,7 @@ import { DEFAULT_ANALYSIS_PARAMETERS, VALIDATION_BASELINE_SHA, getEngineSourceCo
 import { createAnalysisRun, executeAnalysisRun, ParticipantCountZeroError } from "@/lib/analysis/executionService";
 import { RunAlreadyRunningError } from "@/lib/analysis/lock";
 import { serializeRunMetadata } from "@/lib/analysis/runSerializer";
+import { isValidDatasetMode } from "@/lib/analysis/dataset";
 
 function isValidScope(value: unknown): value is AnalysisScope {
   return value === "KR" || value === "JP" || value === "ALL";
@@ -24,6 +25,13 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     return NextResponse.json({ errorCode: "SCOPE_INVALID" }, { status: 422 });
   }
 
+  // Defaults to MAIN — official analysis input must never silently include
+  // pilot rows just because a caller omitted the dataset field.
+  const dataset = body?.dataset ?? "MAIN";
+  if (!isValidDatasetMode(dataset)) {
+    return NextResponse.json({ errorCode: "DATASET_INVALID" }, { status: 422 });
+  }
+
   const engineSourceCommitSha = getEngineSourceCommitSha();
   if (!engineSourceCommitSha) {
     return NextResponse.json({ errorCode: "ENGINE_SOURCE_SHA_UNAVAILABLE" }, { status: 500 });
@@ -34,6 +42,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       prisma,
       projectId: check.project.id,
       scope,
+      dataset,
       analysisParameters: DEFAULT_ANALYSIS_PARAMETERS,
       validationBaselineSha: VALIDATION_BASELINE_SHA,
       engineSourceCommitSha,
@@ -65,8 +74,13 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   }
 
   const scopeParam = request.nextUrl.searchParams.get("scope");
+  const datasetParam = request.nextUrl.searchParams.get("dataset");
   const runs = await prisma.analysisRun.findMany({
-    where: { projectId: check.project.id, ...(scopeParam ? { scope: scopeParam } : {}) },
+    where: {
+      projectId: check.project.id,
+      ...(scopeParam ? { scope: scopeParam } : {}),
+      ...(datasetParam ? { dataset: datasetParam } : {}),
+    },
     orderBy: { startedAt: "desc" },
   });
 

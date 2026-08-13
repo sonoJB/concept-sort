@@ -6,6 +6,9 @@ import type { FreshnessResult } from "./freshness";
 type RunRow = {
   id: string;
   scope: string;
+  dataset: string;
+  pilotCount: number;
+  mainCount: number;
   executionStatus: string;
   errorCode: string | null;
   errorMessageSafe: string | null;
@@ -46,6 +49,9 @@ export async function serializeRunMetadata(prisma: PrismaClient, run: RunRow) {
   return {
     id: run.id,
     scope: run.scope,
+    dataset: run.dataset,
+    pilotCount: run.pilotCount,
+    mainCount: run.mainCount,
     executionStatus: run.executionStatus,
     errorCode: run.errorCode,
     errorMessageSafe: run.errorMessageSafe,

@@ -17,6 +17,7 @@ const MIGRATION_ORDER = [
   "20260807144811_add_analysis_run_models",
   "20260807180000_scope_legacy_consent_fallback",
   "20260813011500_add_guide_template_fields",
+  "20260813062600_add_data_role_and_analysis_dataset",
 ];
 {
   const db = new DatabaseSync(dbFile);
@@ -189,5 +190,31 @@ describe("POST /api/projects/[slug]/sorts — countryCode validation", () => {
     await callSorts(slug, baseBody(statements.map((s) => s.id), "INVALID"));
     const count = await prisma.sortSession.count({ where: { projectId: project.id } });
     expect(count).toBe(0);
+  });
+});
+
+describe("POST /api/projects/[slug]/sorts — pilot/main data segregation", () => {
+  it("(1) a new real submission is stored with dataRole=MAIN by default", async () => {
+    const slug = "sorts-dataRole-default-main";
+    const { project, statements } = await seedReadyProject(slug);
+    const { status } = await callSorts(slug, baseBody(statements.map((s) => s.id), "KR"));
+    expect(status).toBe(200);
+
+    const session = await prisma.sortSession.findFirstOrThrow({ where: { projectId: project.id } });
+    expect(session.dataRole).toBe("MAIN");
+  });
+
+  it("(2) a client cannot self-declare PILOT — dataRole is never read from the request body", async () => {
+    const slug = "sorts-dataRole-client-cannot-spoof";
+    const { project, statements } = await seedReadyProject(slug);
+    const body = { ...baseBody(statements.map((s) => s.id), "KR"), dataRole: "PILOT", isPilot: true };
+    const { status } = await callSorts(slug, body);
+    expect(status).toBe(200);
+
+    const session = await prisma.sortSession.findFirstOrThrow({ where: { projectId: project.id } });
+    // The route never parses body.dataRole/body.isPilot at all — this proves
+    // an attempted override has zero effect, not merely that MAIN happens
+    // to be the outcome.
+    expect(session.dataRole).toBe("MAIN");
   });
 });
