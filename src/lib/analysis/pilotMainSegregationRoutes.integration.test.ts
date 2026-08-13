@@ -35,6 +35,8 @@ const { prisma } = await import("@/lib/db");
 const matrixRoute = await import("@/app/api/projects/[slug]/matrix/route");
 const eligibilityRoute = await import("@/app/api/projects/[slug]/analysis/eligibility/route");
 const participantsRoute = await import("@/app/api/projects/[slug]/participants/route");
+const runsRoute = await import("@/app/api/projects/[slug]/analysis/runs/route");
+const { DEFAULT_ANALYSIS_PARAMETERS } = await import("@/lib/analysis/config");
 
 afterAll(async () => {
   await prisma.$disconnect();
@@ -159,5 +161,82 @@ describe("(18) participants API exposes dataRole", () => {
     expect(data.participants).toHaveLength(2);
     const roles = data.participants.map((p: { dataRole: string }) => p.dataRole).sort();
     expect(roles).toEqual(["MAIN", "PILOT"]);
+  });
+});
+
+async function seedRun(projectId: string, scope: string, dataset: string, includedParticipantCount: number) {
+  return prisma.analysisRun.create({
+    data: {
+      projectId,
+      scope,
+      dataset,
+      pilotCount: dataset === "MAIN" ? 0 : includedParticipantCount,
+      mainCount: dataset === "MAIN" ? includedParticipantCount : 0,
+      executionStatus: "COMPLETED",
+      numericDataHash: "x",
+      statementStructureHash: "x",
+      statementContentHashKo: "x",
+      statementContentHashJa: "x",
+      parameterHash: "x",
+      sourceSnapshotAt: new Date(0),
+      inputSnapshot: "{}",
+      parametersSnapshot: JSON.stringify({
+        analysisParameters: DEFAULT_ANALYSIS_PARAMETERS,
+        provenance: { validationBaselineSha: "x".repeat(40) },
+      }),
+      algorithmVersion: "1.0.0",
+      engineSourceCommitSha: "a".repeat(40),
+      primaryMapDimension: 2,
+      wardSourceDimension: 2,
+      linkageMethod: "ward",
+      dimensionsEvaluated: "[2]",
+      include3dSupplement: false,
+      statementCount: 4,
+      nKr: includedParticipantCount,
+      nJp: 0,
+      nTotal: includedParticipantCount,
+      includedParticipantCount,
+      excludedNullCountry: 0,
+      excludedIncomplete: 0,
+      excludedInvalid: 0,
+      wardStatus: "COMPLETED",
+    },
+  });
+}
+
+describe("(13) legacy pre-segregation AnalysisRun visibility in the run-history listing", () => {
+  it("a LEGACY_PRE_SEGREGATION run is surfaced under a PILOT dataset query, never a MAIN query", async () => {
+    const project = await seedProjectWithSessions([{ countryCode: "KR", dataRole: "PILOT" }]);
+    const legacyRun = await seedRun(project.id, "KR", "LEGACY_PRE_SEGREGATION", 3);
+
+    async function listRuns(dataset: string) {
+      const req = new NextRequest(
+        `http://localhost/api/projects/${project.slug}/analysis/runs?scope=KR&dataset=${dataset}`,
+        { headers: { authorization: `Bearer ${project.adminToken}` } }
+      );
+      const res = await runsRoute.GET(req, { params: Promise.resolve({ slug: project.slug }) });
+      const data = await res.json();
+      return data.runs.map((r: { id: string }) => r.id);
+    }
+
+    expect(await listRuns("PILOT")).toContain(legacyRun.id);
+    expect(await listRuns("ALL_WITH_PILOT")).toContain(legacyRun.id);
+    expect(await listRuns("MAIN")).not.toContain(legacyRun.id);
+  });
+
+  it("a fresh PILOT run and a legacy run both appear together under a PILOT dataset query, still distinguishable by their own dataset field", async () => {
+    const project = await seedProjectWithSessions([{ countryCode: "JP", dataRole: "PILOT" }]);
+    const legacyRun = await seedRun(project.id, "JP", "LEGACY_PRE_SEGREGATION", 5);
+    const freshRun = await seedRun(project.id, "JP", "PILOT", 1);
+
+    const req = new NextRequest(`http://localhost/api/projects/${project.slug}/analysis/runs?scope=JP&dataset=PILOT`, {
+      headers: { authorization: `Bearer ${project.adminToken}` },
+    });
+    const res = await runsRoute.GET(req, { params: Promise.resolve({ slug: project.slug }) });
+    const data = await res.json();
+    const byId = new Map(data.runs.map((r: { id: string; dataset: string }) => [r.id, r.dataset]));
+
+    expect(byId.get(legacyRun.id)).toBe("LEGACY_PRE_SEGREGATION");
+    expect(byId.get(freshRun.id)).toBe("PILOT");
   });
 });
