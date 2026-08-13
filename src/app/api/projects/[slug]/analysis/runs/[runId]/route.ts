@@ -3,6 +3,9 @@ import { prisma } from "@/lib/db";
 import { requireAdminProjectFromRequest } from "@/lib/analysis/auth";
 import { serializeRunMetadata, isResultBodyExposable } from "@/lib/analysis/runSerializer";
 import { fromStoredSeed } from "@/lib/analysis/executionService";
+import { computeRSQForDimension, deriveConvergenceReason } from "@/lib/analysis/rsq";
+import type { InputSnapshot } from "@/lib/analysis/snapshot";
+import type { ParametersSnapshot } from "@/lib/analysis/hashes";
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ slug: string; runId: string }> }) {
   const { slug, runId } = await params;
@@ -25,23 +28,38 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     return NextResponse.json({ ...metadata, resultBodyBlocked: true });
   }
 
-  const dimensions = run.dimensions.map((d) => ({
-    dimension: d.dimension,
-    dimensionStatus: d.dimensionStatus,
-    coordinates: d.coordinates ? JSON.parse(d.coordinates) : null,
-    rawStress: d.rawStress,
-    commonStressDistance: d.commonStressDistance,
-    commonStressQ: d.commonStressQ,
-    converged: d.converged,
-    iterations: d.iterations,
-    bestInitIndex: d.bestInitIndex,
-    // bestSeed is stored as a signed-Int32 reinterpretation of the engine's
-    // unsigned 32-bit PRNG seed (see executionService.ts) — always decoded
-    // back to the original unsigned value before leaving this API.
-    bestSeed: fromStoredSeed(d.bestSeed),
-    errorCode: d.errorCode,
-    errorMessageSafe: d.errorMessageSafe,
-  }));
+  const inputSnapshot = JSON.parse(run.inputSnapshot) as InputSnapshot;
+  const parametersSnapshot = JSON.parse(run.parametersSnapshot) as ParametersSnapshot;
+  const maxIter = parametersSnapshot.analysisParameters.maxIter;
+
+  const dimensions = run.dimensions.map((d) => {
+    const coordinates = d.coordinates ? (JSON.parse(d.coordinates) as number[][]) : null;
+    const rsqResult =
+      coordinates && d.dimensionStatus === "COMPLETED"
+        ? computeRSQForDimension(inputSnapshot.numeric.dissimilarityMatrix, inputSnapshot.numeric.weightMatrix, coordinates)
+        : null;
+    return {
+      dimension: d.dimension,
+      dimensionStatus: d.dimensionStatus,
+      coordinates,
+      rawStress: d.rawStress,
+      commonStressDistance: d.commonStressDistance,
+      commonStressQ: d.commonStressQ,
+      converged: d.converged,
+      iterations: d.iterations,
+      bestInitIndex: d.bestInitIndex,
+      // bestSeed is stored as a signed-Int32 reinterpretation of the engine's
+      // unsigned 32-bit PRNG seed (see executionService.ts) — always decoded
+      // back to the original unsigned value before leaving this API.
+      bestSeed: fromStoredSeed(d.bestSeed),
+      errorCode: d.errorCode,
+      errorMessageSafe: d.errorMessageSafe,
+      // R² is DEFINED as RSQ — same value in both fields, never two independently-derived numbers.
+      rSquared: rsqResult?.rsq ?? null,
+      rsq: rsqResult?.rsq ?? null,
+      convergenceReason: deriveConvergenceReason(d.dimensionStatus, d.converged, d.iterations, maxIter),
+    };
+  });
 
   return NextResponse.json({
     ...metadata,

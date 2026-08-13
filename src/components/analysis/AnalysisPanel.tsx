@@ -9,7 +9,19 @@ import { InterpretationEditor } from "./InterpretationEditor";
 import { ExportPanel } from "./ExportPanel";
 import { buildStressChartSvg, buildDendrogramSvg, type StressPoint } from "@/lib/analysis/view/svgFigures";
 import { isRunButtonDisabled, isShepardUnavailable, SHEPARD_UNAVAILABLE_MESSAGE } from "@/lib/analysis/view/uiState";
+import { buildDimensionDiagnosticsView } from "@/lib/analysis/view/dimensionDiagnosticsView";
+import { cutClusters } from "@/lib/analysis/view/clusterCut";
 import type { ExportPayload } from "@/lib/analysis/view/exportPayload";
+
+const CONVERGENCE_REASON_LABELS: Record<string, string> = {
+  CONVERGED: "예",
+  STRESS_INCREASED: "아니오 (STRESS_INCREASED)",
+  MAX_ITER_REACHED: "아니오 (MAX_ITER_REACHED)",
+  NOT_APPLICABLE: "-",
+};
+
+/** Practical illustrative candidate range shown in the k-preview table — not a claim about the app's full supported range (which is 2..N, see the k input's min/max). */
+const CANDIDATE_K_RANGE = [2, 3, 4, 5, 6, 7, 8, 9, 10];
 
 type Scope = "KR" | "JP" | "ALL";
 
@@ -204,6 +216,78 @@ export function AnalysisPanel({ slug, adminToken }: { slug: string; adminToken: 
     ? payload.dimensions.map((d) => ({ dimension: d.dimension, normalizedStress1: d.commonStressDistance, failed: d.dimensionStatus === "FAILED" }))
     : [];
 
+  const dimensionDiagnosticsRows = payload ? buildDimensionDiagnosticsView(payload.dimensions) : [];
+  const primaryDimensionRow = dimensionDiagnosticsRows.find((r) => r.dimension === payload?.meta.primaryMapDimension) ?? null;
+  const primaryDimensionNotConverged =
+    primaryDimensionRow !== null && primaryDimensionRow.dimensionStatus === "COMPLETED" && primaryDimensionRow.converged === false;
+
+  // Live, read-only preview of the currently-entered k's full cluster
+  // membership — computed client-side from the same cutClusters() the
+  // official "새 해석본 생성" flow uses, so both paths always agree. No
+  // AnalysisInterpretation row is created just by typing a k value here.
+  // Compact comparison across a practical candidate range — cluster count,
+  // min/max size only (full per-k membership is available via the live
+  // single-k preview above and the cluster-candidates CSV export). Never
+  // labels any row as "optimal" — purely descriptive.
+  const kComparisonRows = (() => {
+    if (!payload?.ward) return [];
+    const orderedIds = payload.statements.map((s) => s.id);
+    const rows: { k: number; clusterCount: number; minSize: number; maxSize: number; sizeDistribution: number[] }[] = [];
+    for (const k of CANDIDATE_K_RANGE) {
+      if (k > payload.statements.length) continue;
+      try {
+        const assignments = cutClusters(payload.ward, orderedIds, k);
+        const sizes = new Map<number, number>();
+        assignments.forEach((a) => sizes.set(a.clusterIndex, (sizes.get(a.clusterIndex) ?? 0) + 1));
+        const sizeDistribution = [...sizes.values()].sort((a, b) => a - b);
+        rows.push({
+          k,
+          clusterCount: sizes.size,
+          minSize: Math.min(...sizeDistribution),
+          maxSize: Math.max(...sizeDistribution),
+          sizeDistribution,
+        });
+      } catch {
+        // k out of range for this statement count — skip.
+      }
+    }
+    return rows;
+  })();
+
+  const kPreview = (() => {
+    if (!payload?.ward) return null;
+    if (!Number.isInteger(newK) || newK < 2 || newK > payload.statements.length) return null;
+    try {
+      const orderedIds = payload.statements.map((s) => s.id);
+      const assignments = cutClusters(payload.ward, orderedIds, newK);
+      const byCluster = new Map<number, number[]>();
+      assignments.forEach((a) => {
+        const cardNumber = payload.statements.find((s) => s.id === a.statementId)!.order + 1;
+        if (!byCluster.has(a.clusterIndex)) byCluster.set(a.clusterIndex, []);
+        byCluster.get(a.clusterIndex)!.push(cardNumber);
+      });
+      const clusters = [...byCluster.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .map(([clusterIndex, numbers]) => ({ clusterIndex, statementNumbers: [...numbers].sort((x, y) => x - y) }));
+      const allNumbers = clusters.flatMap((c) => c.statementNumbers);
+      const uniqueNumbers = new Set(allNumbers);
+      const n = payload.statements.length;
+      const missing = Array.from({ length: n }, (_, i) => i + 1).filter((num) => !uniqueNumbers.has(num));
+      return {
+        clusters,
+        validation: {
+          assigned: allNumbers.length,
+          missing: missing.length,
+          duplicate: allNumbers.length - uniqueNumbers.size,
+          overlap: allNumbers.length - uniqueNumbers.size,
+          ok: allNumbers.length === n && missing.length === 0 && allNumbers.length === uniqueNumbers.size,
+        },
+      };
+    } catch {
+      return null;
+    }
+  })();
+
   return (
     <div className="space-y-6">
       <MethodologyNotice />
@@ -301,31 +385,80 @@ export function AnalysisPanel({ slug, adminToken }: { slug: string; adminToken: 
       {/* E. MDS diagnostics */}
       {payload && (
         <section className="rounded-xl border border-slate-200 p-4 space-y-3 text-sm">
-          <h3 className="font-semibold">MDS 진단</h3>
+          <h3 className="font-semibold">MDS 진단 (1D–5D)</h3>
+          {primaryDimensionNotConverged && (
+            <p className="text-xs text-red-800 bg-red-50 border border-red-300 rounded-lg px-2 py-1.5 font-medium">
+              ⚠ 2차원 MDS가 수렴하지 않았습니다. 현재 좌표 및 Ward 군집 결과의 해석에 주의하십시오.
+            </p>
+          )}
           <table className="w-full text-xs">
             <thead>
               <tr className="text-left text-slate-500">
                 <th className="pr-2">차원</th>
                 <th className="pr-2">상태</th>
                 <th className="pr-2">Stress-1</th>
-                <th className="pr-2">수렴</th>
-                <th className="pr-2">반복</th>
+                <th className="pr-2">설명량 R²</th>
+                <th className="pr-2">ΔR²</th>
+                <th className="pr-2">RSQ</th>
+                <th className="pr-2">수렴 여부</th>
+                <th className="pr-2">반복 횟수</th>
               </tr>
             </thead>
             <tbody>
-              {payload.dimensions.map((d) => (
+              {dimensionDiagnosticsRows.map((d) => (
                 <tr key={d.dimension}>
                   <td className="pr-2">{d.dimension}D</td>
                   <td className="pr-2">{d.dimensionStatus === "FAILED" ? "계산 실패" : "완료"}</td>
-                  <td className="pr-2">{d.commonStressDistance !== null ? d.commonStressDistance.toFixed(4) : "-"}</td>
+                  <td className="pr-2">{d.stress1 !== null ? d.stress1.toFixed(4) : "-"}</td>
+                  <td className="pr-2">{d.rSquared !== null ? d.rSquared.toFixed(4) : "-"}</td>
                   <td className="pr-2">
-                    {d.dimensionStatus === "FAILED" ? "-" : d.converged ? "예" : <span className="text-amber-700">아니오</span>}
+                    {d.deltaRSquared === null
+                      ? "—"
+                      : `${d.deltaRSquared >= 0 ? "+" : ""}${d.deltaRSquared.toFixed(4)}`}
+                  </td>
+                  <td className="pr-2">{d.rsq !== null ? d.rsq.toFixed(4) : "-"}</td>
+                  <td className="pr-2">
+                    {d.dimensionStatus === "FAILED" ? (
+                      "-"
+                    ) : d.converged ? (
+                      CONVERGENCE_REASON_LABELS.CONVERGED
+                    ) : (
+                      <span className="text-amber-700">{CONVERGENCE_REASON_LABELS[d.convergenceReason] ?? "아니오"}</span>
+                    )}
                   </td>
                   <td className="pr-2">{d.iterations ?? "-"}</td>
                 </tr>
               ))}
             </tbody>
           </table>
+
+          <h4 className="font-semibold text-xs pt-1">차원 증가에 따른 변화</h4>
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-left text-slate-500">
+                <th className="pr-2">구간</th>
+                <th className="pr-2">ΔStress (감소량)</th>
+                <th className="pr-2">ΔR² (증가량)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {dimensionDiagnosticsRows.slice(1).map((d, i) => {
+                const prevDim = dimensionDiagnosticsRows[i].dimension;
+                return (
+                  <tr key={d.dimension}>
+                    <td className="pr-2">
+                      {prevDim}D→{d.dimension}D
+                    </td>
+                    <td className="pr-2">{d.deltaStress !== null ? d.deltaStress.toFixed(4) : "-"}</td>
+                    <td className="pr-2">
+                      {d.deltaRSquared === null ? "-" : `${d.deltaRSquared >= 0 ? "+" : ""}${d.deltaRSquared.toFixed(4)}`}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+
           <InlineSvg svg={buildStressChartSvg(stressPoints)} ariaLabel="차원별 Stress 진단 그래프" />
           {isShepardUnavailable() && (
             <p className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5">
@@ -371,6 +504,80 @@ export function AnalysisPanel({ slug, adminToken }: { slug: string; adminToken: 
             </button>
             <span className="text-xs text-slate-400">최종 k는 연구자가 직접 선택합니다(자동 추천 없음).</span>
           </div>
+
+          {kPreview && (
+            <div className="border-t border-slate-100 pt-3 space-y-2">
+              <h4 className="font-semibold text-xs">
+                k={newK} 후보안 미리보기 (candidate — 아직 해석본으로 저장되지 않음)
+              </h4>
+              <p className="text-xs text-slate-500">
+                군집 크기: {kPreview.clusters.map((c) => c.statementNumbers.length).join(", ")}
+              </p>
+              <div className="space-y-1 text-xs">
+                {kPreview.clusters.map((c) => (
+                  <p key={c.clusterIndex}>
+                    <span className="font-medium">군집 {c.clusterIndex}:</span> {c.statementNumbers.join(", ")}
+                  </p>
+                ))}
+              </div>
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-left text-slate-500">
+                    <th className="pr-2">군집</th>
+                    <th className="pr-2">포함 문항 수</th>
+                    <th className="pr-2">포함 문항 번호</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {kPreview.clusters.map((c) => (
+                    <tr key={c.clusterIndex}>
+                      <td className="pr-2">군집 {c.clusterIndex}</td>
+                      <td className="pr-2">{c.statementNumbers.length}</td>
+                      <td className="pr-2">{c.statementNumbers.join(", ")}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <p className={`text-xs ${kPreview.validation.ok ? "text-slate-500" : "text-red-700 font-medium"}`}>
+                검증: assigned={kPreview.validation.assigned} · missing={kPreview.validation.missing} · duplicate=
+                {kPreview.validation.duplicate} · overlap={kPreview.validation.overlap} ·{" "}
+                {kPreview.validation.ok ? "정상" : "FAIL"}
+              </p>
+            </div>
+          )}
+
+          {kComparisonRows.length > 0 && (
+            <div className="border-t border-slate-100 pt-3 space-y-2">
+              <h4 className="font-semibold text-xs">후보 군집안 비교 (k={CANDIDATE_K_RANGE[0]}..{CANDIDATE_K_RANGE[CANDIDATE_K_RANGE.length - 1]})</h4>
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-left text-slate-500">
+                    <th className="pr-2">k</th>
+                    <th className="pr-2">군집 수</th>
+                    <th className="pr-2">최소 군집 크기</th>
+                    <th className="pr-2">최대 군집 크기</th>
+                    <th className="pr-2">군집 크기 분포</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {kComparisonRows.map((r) => (
+                    <tr key={r.k}>
+                      <td className="pr-2">{r.k}</td>
+                      <td className="pr-2">{r.clusterCount}</td>
+                      <td className="pr-2">{r.minSize}</td>
+                      <td className="pr-2">{r.maxSize}</td>
+                      <td className="pr-2">{r.sizeDistribution.join(", ")}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <p className="text-xs text-slate-400">어떤 k도 &ldquo;최적&rdquo;으로 자동 선정하지 않습니다 — 최종 군집 수는 연구자가 직접 결정합니다.</p>
+            </div>
+          )}
+
+          <p className="text-xs text-slate-400 border-t border-slate-100 pt-2">
+            {interpretations.length === 0 ? "최종 군집 수 미선택" : `저장된 해석본 ${interpretations.length}개 (최종 k는 연구자가 확정)`}
+          </p>
         </section>
       )}
 

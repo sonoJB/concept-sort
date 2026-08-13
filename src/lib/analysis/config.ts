@@ -6,10 +6,20 @@ import type { AnalysisParameters } from "./hashes";
  * (analysis-prototype/scripts/runTsReference.ts: nInit=8, maxIter=300,
  * eps=1e-9, base seed=42) — not invented for this layer. Injectable, not
  * hardcoded into the execution service, so tests can override.
+ *
+ * dimensionsEvaluated covers the full admin-exposed 1D-5D diagnostic range
+ * (was [2, 3]). This is not a new analysis method — runDimension()/
+ * runSmacof() already supported dimensions 1-6 unmodified; this only
+ * requests more of that same already-verified computation so the admin UI
+ * can show the complete Stress/R²/RSQ trend the researcher can already see
+ * computed locally. Existing runs created under the old [2, 3] default keep
+ * their own stored parametersSnapshot (never rewritten) and simply read as
+ * SUPERSEDED against the new parameterHash — the existing stale-detection
+ * behavior, not a special case.
  */
 export const DEFAULT_ANALYSIS_PARAMETERS: AnalysisParameters = {
   algorithmVersion: "1.0.0",
-  dimensionsEvaluated: [2, 3],
+  dimensionsEvaluated: [1, 2, 3, 4, 5],
   primaryMapDimension: 2,
   nInit: 8,
   maxIter: 300,
