@@ -92,6 +92,16 @@ model SortSession {
   // ("KR" | "JP"). Existing rows stay null — never backfilled.
   countryCode String?
 
+  // "PILOT" | "MAIN" — explicit, server-controlled classification, never
+  // inferred from name/phone/timestamp/country/group-count. Default MAIN so
+  // every future participant submission (which never sets this field
+  // itself) is safely classified without relying on application code alone.
+  // Existing pre-migration rows also receive MAIN as the column default;
+  // a separate one-time backfill transaction re-classifies the exact known
+  // pilot session IDs to PILOT — this column is never set from a
+  // participant-facing request body.
+  dataRole String @default("MAIN")
+
   groups SortGroup[]
 }
 
@@ -175,6 +185,20 @@ model AnalysisRun {
   excludedNullCountry      Int
   excludedIncomplete       Int
   excludedInvalid          Int
+
+  // Which SortSession.dataRole subset fed this run — "MAIN" | "PILOT" |
+  // "ALL_WITH_PILOT". Rows created before this field existed carry
+  // "LEGACY_PRE_SEGREGATION": an honest historical marker, never rewritten
+  // to claim a modern dataset value. pilotCount/mainCount are provable
+  // (not guessed) for those legacy rows too — dataRole didn't exist yet
+  // when they ran, so every one of their includedParticipantCount was, at
+  // the time, part of what this same migration classifies entirely as
+  // PILOT; see the migration SQL for the one-time backfill of these two
+  // columns on pre-existing rows. Immutable once written, exactly like
+  // every other column on this model.
+  dataset    String @default("LEGACY_PRE_SEGREGATION")
+  pilotCount Int    @default(0)
+  mainCount  Int    @default(0)
 
   // Official Ward result (single result per run, computed from
   // wardSourceDimension's MDS coordinates — Ward itself has no coordinates).

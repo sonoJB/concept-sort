@@ -13,10 +13,17 @@ async function analysisFetch(adminToken: string, path: string, init?: RequestIni
 export function analysisApi(slug: string, adminToken: string) {
   const base = `/api/projects/${slug}/analysis`;
   return {
-    eligibility: (scope: string) => analysisFetch(adminToken, `${base}/eligibility?scope=${scope}`),
-    inputSummary: (scope: string) => analysisFetch(adminToken, `${base}/input-summary?scope=${scope}`),
-    listRuns: (scope?: string) => analysisFetch(adminToken, `${base}/runs${scope ? `?scope=${scope}` : ""}`),
-    createRun: (scope: string) => analysisFetch(adminToken, `${base}/runs`, { method: "POST", body: JSON.stringify({ scope }) }),
+    eligibility: (scope: string, dataset: string) => analysisFetch(adminToken, `${base}/eligibility?scope=${scope}&dataset=${dataset}`),
+    inputSummary: (scope: string, dataset: string) => analysisFetch(adminToken, `${base}/input-summary?scope=${scope}&dataset=${dataset}`),
+    listRuns: (scope?: string, dataset?: string) => {
+      const q = new URLSearchParams();
+      if (scope) q.set("scope", scope);
+      if (dataset) q.set("dataset", dataset);
+      const qs = q.toString();
+      return analysisFetch(adminToken, `${base}/runs${qs ? `?${qs}` : ""}`);
+    },
+    createRun: (scope: string, dataset: string) =>
+      analysisFetch(adminToken, `${base}/runs`, { method: "POST", body: JSON.stringify({ scope, dataset }) }),
     getRun: (runId: string) => analysisFetch(adminToken, `${base}/runs/${runId}`),
     exportData: (runId: string, lang: "ko" | "ja", interpretationId?: string | null) =>
       analysisFetch(

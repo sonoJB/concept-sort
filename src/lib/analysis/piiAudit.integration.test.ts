@@ -38,6 +38,7 @@ describe("PII audit — inputSnapshot / parametersSnapshot never contain partici
       prisma,
       projectId,
       scope: "KR",
+      dataset: "MAIN",
       analysisParameters: DEFAULT_ANALYSIS_PARAMETERS,
       validationBaselineSha: VALIDATION_BASELINE_SHA,
       engineSourceCommitSha: "c".repeat(40),

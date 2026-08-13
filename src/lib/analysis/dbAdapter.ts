@@ -1,10 +1,13 @@
 import type { FixtureProject, FixtureSession } from "@/lib/conceptAnalysis";
+import type { DataRole } from "./dataset";
 
 /** Minimal shape read from the DB inside the snapshot transaction — no PII fields included. */
 export type RawStatementRow = { id: string; order: number; text: string; textJa: string | null; jaStatus: string };
 export type RawSessionRow = {
   id: string;
   countryCode: string | null;
+  /** Present for pilotCount/mainCount bookkeeping in the caller — never forwarded into FixtureSession (the conceptAnalysis engine has no concept of dataRole; filtering by it already happened in the caller's own Prisma query). */
+  dataRole: DataRole;
   groups: { items: { statementId: string }[] }[];
 };
 

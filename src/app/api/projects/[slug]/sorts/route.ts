@@ -169,6 +169,11 @@ export async function POST(
       grade,
       phoneNumber,
       countryCode,
+      // Every real participant submission through this public route is
+      // MAIN by trusted server logic, unconditionally — this field is never
+      // read from `body`, so a client request has no way to set or override
+      // it (there is no pilot/main selector exposed to participants).
+      dataRole: "MAIN",
       groups: {
         create: nonEmptyGroups.map((g) => ({
           label: g.label?.trim() ?? "",

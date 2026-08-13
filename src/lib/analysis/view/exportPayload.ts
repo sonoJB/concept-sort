@@ -36,6 +36,10 @@ export type ExportPayload = {
   meta: {
     projectSlug: string;
     scope: string;
+    /** "MAIN" | "PILOT" | "ALL_WITH_PILOT" | "LEGACY_PRE_SEGREGATION" (runs created before this feature existed). */
+    dataset: string;
+    pilotCount: number;
+    mainCount: number;
     runId: string;
     startedAt: string;
     finishedAt: string | null;
@@ -84,6 +88,9 @@ export type ExportPayloadInputs = {
   run: {
     id: string;
     scope: string;
+    dataset: string;
+    pilotCount: number;
+    mainCount: number;
     startedAt: Date;
     finishedAt: Date | null;
     includedParticipantCount: number;
@@ -193,6 +200,9 @@ export function buildExportPayload(inputs: ExportPayloadInputs): ExportPayload {
     meta: {
       projectSlug: inputs.projectSlug,
       scope: run.scope,
+      dataset: run.dataset,
+      pilotCount: run.pilotCount,
+      mainCount: run.mainCount,
       runId: run.id,
       startedAt: run.startedAt.toISOString(),
       finishedAt: run.finishedAt?.toISOString() ?? null,

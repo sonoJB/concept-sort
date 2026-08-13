@@ -15,6 +15,9 @@ function makePayload(overrides: Partial<ExportPayload["meta"]> = {}): ExportPayl
     meta: {
       projectSlug: "test-slug",
       scope: "KR",
+      dataset: "MAIN",
+      pilotCount: 0,
+      mainCount: 3,
       runId: "run123456789",
       startedAt: "2026-01-01T00:00:00.000Z",
       finishedAt: "2026-01-01T00:00:10.000Z",
@@ -220,7 +223,8 @@ describe("interpretation export completeness — axis/quadrant labels and notes 
     const inputSnapshot = {
       snapshotVersion: 1,
       scope: "KR",
-      summary: { statementCount: 1, nKr: 1, nJp: 0, nTotal: 1, includedParticipantCount: 1, excludedNullCountry: 0, excludedInvalid: 0, excludedIncomplete: 0 },
+      dataset: "MAIN",
+      summary: { statementCount: 1, nKr: 1, nJp: 0, nTotal: 1, includedParticipantCount: 1, excludedNullCountry: 0, excludedInvalid: 0, excludedIncomplete: 0, pilotCount: 0, mainCount: 1 },
       statements: [{ id: "s1", order: 0, textKo: "stmt", textJa: null, jaStatus: "UNWRITTEN" }],
       numeric: { similarityCountMatrix: [[0]], similarityProportionMatrix: [[0]], dissimilarityMatrix: [[0]], weightMatrix: [[1]] },
     };
@@ -230,6 +234,9 @@ describe("interpretation export completeness — axis/quadrant labels and notes 
       run: {
         id: "run1",
         scope: "KR",
+        dataset: "MAIN",
+        pilotCount: 0,
+        mainCount: 1,
         startedAt: new Date("2026-01-01T00:00:00.000Z"),
         finishedAt: new Date("2026-01-01T00:00:10.000Z"),
         includedParticipantCount: 1,

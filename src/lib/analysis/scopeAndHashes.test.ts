@@ -58,7 +58,7 @@ describe("numericDataHash", () => {
     const aggA = buildNumericAggregate(project, sessionsA);
     const aggB = buildNumericAggregate(project, sessionsB);
 
-    expect(computeNumericDataHash("KR", aggA)).toBe(computeNumericDataHash("KR", aggB));
+    expect(computeNumericDataHash("KR", "MAIN", aggA)).toBe(computeNumericDataHash("KR", "MAIN", aggB));
   });
 
   it("two different participant sets that coincidentally produce the same count matrix and N hash identically", () => {
@@ -76,7 +76,7 @@ describe("numericDataHash", () => {
     ];
     const aggA = buildNumericAggregate(project, sessionsA);
     const aggB = buildNumericAggregate(project, sessionsB);
-    expect(computeNumericDataHash("KR", aggA)).toBe(computeNumericDataHash("KR", aggB));
+    expect(computeNumericDataHash("KR", "MAIN", aggA)).toBe(computeNumericDataHash("KR", "MAIN", aggB));
   });
 
   it("changes when the count matrix differs", () => {
@@ -84,13 +84,24 @@ describe("numericDataHash", () => {
     const sessionsB: FixtureSession[] = [session("a", "KR", [["s1"], ["s2"], ["s3"]])];
     const aggA = buildNumericAggregate(project, sessionsA);
     const aggB = buildNumericAggregate(project, sessionsB);
-    expect(computeNumericDataHash("KR", aggA)).not.toBe(computeNumericDataHash("KR", aggB));
+    expect(computeNumericDataHash("KR", "MAIN", aggA)).not.toBe(computeNumericDataHash("KR", "MAIN", aggB));
   });
 
   it("changes when scope differs, even with identical aggregate", () => {
     const sessions: FixtureSession[] = [session("a", "KR", [["s1", "s2"], ["s3"]])];
     const agg = buildNumericAggregate(project, sessions);
-    expect(computeNumericDataHash("KR", agg)).not.toBe(computeNumericDataHash("JP", agg));
+    expect(computeNumericDataHash("KR", "MAIN", agg)).not.toBe(computeNumericDataHash("JP", "MAIN", agg));
+  });
+
+  it("changes when dataset mode differs, even with identical scope and aggregate", () => {
+    const sessions: FixtureSession[] = [session("a", "KR", [["s1", "s2"], ["s3"]])];
+    const agg = buildNumericAggregate(project, sessions);
+    const main = computeNumericDataHash("KR", "MAIN", agg);
+    const pilot = computeNumericDataHash("KR", "PILOT", agg);
+    const allWithPilot = computeNumericDataHash("KR", "ALL_WITH_PILOT", agg);
+    expect(main).not.toBe(pilot);
+    expect(main).not.toBe(allWithPilot);
+    expect(pilot).not.toBe(allWithPilot);
   });
 });
 

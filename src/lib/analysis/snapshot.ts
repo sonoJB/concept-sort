@@ -2,6 +2,7 @@ import type { AnalysisScope, ExclusionSummary } from "@/lib/conceptAnalysis";
 import type { NumericAggregate } from "./aggregates";
 import type { RawStatementRow } from "./dbAdapter";
 import type { AnalysisParameters, Provenance } from "./hashes";
+import type { DatasetMode } from "./dataset";
 import { canonicalize } from "./canonicalJson";
 
 export const INPUT_SNAPSHOT_VERSION = 1;
@@ -16,11 +17,16 @@ export type InputSnapshotSummary = {
   /** engine's excludedDuplicate + excludedInvalidStatement combined (see Gate 3 audit note in dbAdapter usage). */
   excludedInvalid: number;
   excludedIncomplete: number;
+  /** Split of includedParticipantCount by SortSession.dataRole — provable from the same query that produced includedParticipantCount, never inferred. */
+  pilotCount: number;
+  mainCount: number;
 };
 
 export type InputSnapshot = {
   snapshotVersion: number;
   scope: AnalysisScope;
+  /** Which SortSession.dataRole subset this run drew from — orthogonal to scope; see dataset.ts. */
+  dataset: DatasetMode;
   summary: InputSnapshotSummary;
   statements: { id: string; order: number; textKo: string; textJa: string | null; jaStatus: string }[];
   numeric: {
@@ -39,16 +45,20 @@ export type InputSnapshot = {
  */
 export function buildInputSnapshot(
   scope: AnalysisScope,
+  dataset: DatasetMode,
   statements: RawStatementRow[],
   aggregate: NumericAggregate,
   exclusions: ExclusionSummary,
   nKr: number,
-  nJp: number
+  nJp: number,
+  pilotCount: number,
+  mainCount: number
 ): InputSnapshot {
   const ordered = [...statements].sort((a, b) => a.order - b.order);
   return {
     snapshotVersion: INPUT_SNAPSHOT_VERSION,
     scope,
+    dataset,
     summary: {
       statementCount: statements.length,
       nKr,
@@ -58,6 +68,8 @@ export function buildInputSnapshot(
       excludedNullCountry: exclusions.excludedNullCountry,
       excludedInvalid: exclusions.excludedDuplicate + exclusions.excludedInvalidStatement,
       excludedIncomplete: exclusions.excludedIncomplete,
+      pilotCount,
+      mainCount,
     },
     statements: ordered.map((s) => ({ id: s.id, order: s.order, textKo: s.text, textJa: s.textJa, jaStatus: s.jaStatus })),
     numeric: {
