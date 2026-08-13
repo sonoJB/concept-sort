@@ -36,6 +36,8 @@ export default async function JaPreviewPage({
         titleJa: project.titleJa,
         promptJa: project.promptJa,
         consentJa: project.consentJa,
+        guideVideoUrlKo: project.guideVideoUrlKo,
+        guideVideoUrlJa: project.guideVideoUrlJa,
         statements: project.statements.map((s) => ({
           id: s.id,
           order: s.order,

@@ -48,10 +48,13 @@ export const ja = {
     submitLabel: "次へ",
   },
   guide: {
-    linkText: "［類似性分類の方法］",
+    linkText: "［類似性分類の方法－詳細ガイドライン］",
     linkDescription: "クリックすると、類似性分類の詳しい方法を確認できます。",
     instructions: (minGroups, maxGroups) =>
       `左側の記述文を右側のグループへドラッグし、意味が似ていると思う記述文を同じグループに入れてください。グループは最少${minGroups}個から最多${maxGroups}個まで作成できます。すべての記述文をいずれかのグループに配置した後、提出してください。`,
+  },
+  videoGuide: {
+    linkText: "［類似性分類ウェブアプリの使い方－ガイドライン動画］",
   },
   sorting: {
     unassignedLabel: (count) => `未分類の記述文（残り${count}件）`,

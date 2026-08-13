@@ -7,7 +7,7 @@ import {
 } from "@/lib/guideTemplate";
 import { getStudyGuidePageOverride } from "@/lib/studyWebAppText";
 
-const DEFAULT_TITLE = { ko: "[유사성 분류 방법 안내문]", ja: "［類似性分類の方法］" };
+const DEFAULT_TITLE = { ko: "[유사성 분류 방법 - 세부 지침]", ja: "［類似性分類の方法－詳細ガイドライン］" };
 
 export default async function GuidePage({
   params,

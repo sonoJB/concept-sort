@@ -1,4 +1,4 @@
-import { describe, it, expect, afterAll } from "vitest";
+import { describe, it, expect, afterAll, beforeEach, afterEach, vi } from "vitest";
 import { NextRequest } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
@@ -18,6 +18,7 @@ const MIGRATION_ORDER = [
   "20260807180000_scope_legacy_consent_fallback",
   "20260813011500_add_guide_template_fields",
   "20260813062600_add_data_role_and_analysis_dataset",
+  "20260813082418_add_main_study_schedule_and_guide_video",
 ];
 {
   const db = new DatabaseSync(dbFile);
@@ -41,7 +42,10 @@ afterAll(async () => {
   }
 });
 
-async function seedReadyProject(slug: string, opts?: { japaneseApproved?: boolean }) {
+async function seedReadyProject(
+  slug: string,
+  opts?: { japaneseApproved?: boolean; mainStudyStartsAt?: Date | null }
+) {
   const japaneseApproved = opts?.japaneseApproved ?? true;
   const project = await prisma.project.create({
     data: {
@@ -57,6 +61,7 @@ async function seedReadyProject(slug: string, opts?: { japaneseApproved?: boolea
       japaneseEnabled: true,
       koPreviewConfirmedAt: new Date(),
       jaPreviewConfirmedAt: new Date(),
+      mainStudyStartsAt: opts?.mainStudyStartsAt ?? null,
     },
   });
   const statements = [];
@@ -215,6 +220,67 @@ describe("POST /api/projects/[slug]/sorts — pilot/main data segregation", () =
     // The route never parses body.dataRole/body.isPilot at all — this proves
     // an attempted override has zero effect, not merely that MAIN happens
     // to be the outcome.
+    expect(session.dataRole).toBe("MAIN");
+  });
+});
+
+describe("POST /api/projects/[slug]/sorts — main-study auto cutover (server clock only)", () => {
+  const CUTOVER = new Date("2026-08-16T15:00:00.000Z"); // 2026-08-17T00:00:00+09:00
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("(5) a submission 1ms before the cutover instant is classified PILOT, even though the client also sends dataRole=MAIN", async () => {
+    const slug = "sorts-cutover-before-spoof-main";
+    const { project, statements } = await seedReadyProject(slug, { mainStudyStartsAt: CUTOVER });
+    vi.setSystemTime(new Date(CUTOVER.getTime() - 1));
+
+    const body = { ...baseBody(statements.map((s) => s.id), "KR"), dataRole: "MAIN" };
+    const { status } = await callSorts(slug, body);
+    expect(status).toBe(200);
+
+    const session = await prisma.sortSession.findFirstOrThrow({ where: { projectId: project.id } });
+    expect(session.dataRole).toBe("PILOT");
+  });
+
+  it("(6) a submission at/after the cutover instant is classified MAIN, even though the client also sends dataRole=PILOT", async () => {
+    const slug = "sorts-cutover-after-spoof-pilot";
+    const { project, statements } = await seedReadyProject(slug, { mainStudyStartsAt: CUTOVER });
+    vi.setSystemTime(CUTOVER);
+
+    const body = { ...baseBody(statements.map((s) => s.id), "KR"), dataRole: "PILOT" };
+    const { status } = await callSorts(slug, body);
+    expect(status).toBe(200);
+
+    const session = await prisma.sortSession.findFirstOrThrow({ where: { projectId: project.id } });
+    expect(session.dataRole).toBe("MAIN");
+  });
+
+  it("(7)-(9) createdAt and dataRole are captured from the same single server timestamp, exactly at the boundary", async () => {
+    const slug = "sorts-cutover-single-timestamp";
+    const { project, statements } = await seedReadyProject(slug, { mainStudyStartsAt: CUTOVER });
+    vi.setSystemTime(CUTOVER);
+
+    await callSorts(slug, baseBody(statements.map((s) => s.id), "KR"));
+
+    const session = await prisma.sortSession.findFirstOrThrow({ where: { projectId: project.id } });
+    expect(session.dataRole).toBe("MAIN");
+    expect(session.createdAt.getTime()).toBe(CUTOVER.getTime());
+  });
+
+  it("with no cutover configured (mainStudyStartsAt=null), every submission is MAIN regardless of server clock", async () => {
+    const slug = "sorts-no-cutover-configured";
+    const { project, statements } = await seedReadyProject(slug, { mainStudyStartsAt: null });
+    vi.setSystemTime(new Date("2020-01-01T00:00:00.000Z"));
+
+    await callSorts(slug, baseBody(statements.map((s) => s.id), "KR"));
+
+    const session = await prisma.sortSession.findFirstOrThrow({ where: { projectId: project.id } });
     expect(session.dataRole).toBe("MAIN");
   });
 });

@@ -110,13 +110,56 @@ function DropZone({
   );
 }
 
+function BookIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" className="h-4 w-4 shrink-0" aria-hidden="true">
+      <path d="M3.5 4.5c1.5-1 3.5-1 5 0v11c-1.5-1-3.5-1-5 0v-11ZM16.5 4.5c-1.5-1-3.5-1-5 0v11c1.5-1 3.5-1 5 0v-11Z" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function PlayIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4 shrink-0" aria-hidden="true">
+      <path d="M6.5 4.5a1 1 0 0 1 1.53-.848l7 4.5a1 1 0 0 1 0 1.696l-7 4.5A1 1 0 0 1 6.5 13.5v-9Z" />
+    </svg>
+  );
+}
+
+function VideoGuideLink({
+  href,
+  label,
+  lang,
+}: {
+  href: string;
+  label: string;
+  lang?: string;
+}) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      lang={lang}
+      className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-900 underline decoration-2 underline-offset-2 hover:bg-blue-100"
+    >
+      <PlayIcon />
+      {label}
+    </a>
+  );
+}
+
 function CountryStep({
   initialSelected,
   error,
+  videoUrlKo,
+  videoUrlJa,
   onSelect,
 }: {
   initialSelected: CountryCode | null;
   error: string | null;
+  videoUrlKo: string | null;
+  videoUrlJa: string | null;
   onSelect: (country: CountryCode) => void;
 }) {
   // `initialSelected` (from a prior visit's sessionStorage) only highlights a
@@ -148,6 +191,21 @@ function CountryStep({
         <h1 lang="ja" className="text-xl font-bold">参加する国を選択してください</h1>
         <p className="text-sm text-slate-500">Please select your country.</p>
       </div>
+
+      {(videoUrlKo || videoUrlJa) && (
+        <div className="flex flex-col items-center gap-2">
+          {videoUrlKo && (
+            <VideoGuideLink href={videoUrlKo} label="[유사성 분류 웹앱 사용 방법 - 가이드라인 동영상]" />
+          )}
+          {videoUrlJa && (
+            <VideoGuideLink
+              href={videoUrlJa}
+              label="［類似性分類ウェブアプリの使い方－ガイドライン動画］"
+              lang="ja"
+            />
+          )}
+        </div>
+      )}
 
       <div
         role="radiogroup"
@@ -200,6 +258,8 @@ export function SortBoard({
   consentJa,
   koreanAvailable,
   japaneseAvailable,
+  guideVideoUrlKo,
+  guideVideoUrlJa,
   statements,
   previewMode = false,
   previewLocale,
@@ -214,6 +274,8 @@ export function SortBoard({
   consentJa: string | null;
   koreanAvailable: boolean;
   japaneseAvailable: boolean;
+  guideVideoUrlKo: string | null;
+  guideVideoUrlJa: string | null;
   statements: StatementInput[];
   previewMode?: boolean;
   previewLocale?: ParticipantLocale;
@@ -254,6 +316,7 @@ export function SortBoard({
 
   const locale: ParticipantLocale = country ? countryToLocale(country) : "ko";
   const t = applyStudyWebAppTextOverride(getParticipantMessages(locale), slug, locale);
+  const localeVideoUrl = locale === "ja" ? guideVideoUrlJa : guideVideoUrlKo;
 
   // Reflects the active locale on <html lang> while this board is mounted,
   // restoring whatever it was before on unmount so other pages aren't affected.
@@ -579,7 +642,15 @@ export function SortBoard({
   }
 
   if (step === "country") {
-    return <CountryStep initialSelected={country} error={countryError} onSelect={chooseCountry} />;
+    return (
+      <CountryStep
+        initialSelected={country}
+        error={countryError}
+        videoUrlKo={guideVideoUrlKo}
+        videoUrlJa={guideVideoUrlJa}
+        onSelect={chooseCountry}
+      />
+    );
   }
 
   if (step === "name") {
@@ -798,18 +869,20 @@ export function SortBoard({
         <h1 className="text-xl font-bold">{displayTitle}</h1>
       </div>
 
-      <div className="mt-3 shrink-0 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900 space-y-1">
-        <p>
+      <div className="mt-3 shrink-0 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900 space-y-2">
+        <div className="flex flex-wrap items-center gap-2">
           <a
             href={`/p/${slug}/guide?lang=${locale}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="font-semibold underline decoration-2 underline-offset-2 hover:text-blue-700"
+            className="inline-flex items-center gap-1.5 font-semibold underline decoration-2 underline-offset-2 hover:text-blue-700"
           >
+            <BookIcon />
             {t.guide.linkText}
-          </a>{" "}
-          <span className="text-xs text-blue-700">{t.guide.linkDescription}</span>
-        </p>
+          </a>
+          {localeVideoUrl && <VideoGuideLink href={localeVideoUrl} label={t.videoGuide.linkText} />}
+        </div>
+        <p className="text-xs text-blue-700">{t.guide.linkDescription}</p>
         <p>{t.guide.instructions(minGroups, maxGroups)}</p>
       </div>
 

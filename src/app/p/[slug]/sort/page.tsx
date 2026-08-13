@@ -50,6 +50,8 @@ export default async function SortPage({
         consentJa={project.consentJa}
         koreanAvailable={koreanAvailable}
         japaneseAvailable={japaneseAvailable}
+        guideVideoUrlKo={project.guideVideoUrlKo}
+        guideVideoUrlJa={project.guideVideoUrlJa}
         statements={project.statements.map((s) => ({
           id: s.id,
           order: s.order,

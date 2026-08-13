@@ -58,6 +58,9 @@ export type MessageShape = {
     linkDescription: string;
     instructions: (minGroups: number, maxGroups: number) => string;
   };
+  videoGuide: {
+    linkText: string;
+  };
   sorting: {
     unassignedLabel: (count: number) => string;
     groupsLabel: (current: number, min: number, max: number) => string;

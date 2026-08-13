@@ -23,6 +23,10 @@ export default async function AdminPage({
 
   if (!project || project.adminToken !== adminToken) notFound();
 
+  const mainCount = await prisma.sortSession.count({
+    where: { projectId: project.id, dataRole: "MAIN" },
+  });
+
   return (
     <main className="flex-1">
       <AdminDashboard
@@ -41,6 +45,10 @@ export default async function AdminPage({
         legacyConsentFallbackEnabled={project.legacyConsentFallbackEnabled}
         koPreviewConfirmedAt={project.koPreviewConfirmedAt?.toISOString() ?? null}
         jaPreviewConfirmedAt={project.jaPreviewConfirmedAt?.toISOString() ?? null}
+        mainStudyStartsAt={project.mainStudyStartsAt?.toISOString() ?? null}
+        guideVideoUrlKo={project.guideVideoUrlKo}
+        guideVideoUrlJa={project.guideVideoUrlJa}
+        initialMainCount={mainCount}
         initialStatements={project.statements.map((s) => ({
           id: s.id,
           text: s.text,
