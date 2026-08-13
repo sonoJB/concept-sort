@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireAdminProject } from "@/lib/auth";
+import { findUnknownTemplateVariables } from "@/lib/guideTemplate";
 
 /** Trims a possibly-absent string field; returns undefined when the key was not sent at all. */
 function trimIfString(value: unknown): string | undefined {
@@ -31,6 +32,17 @@ export async function PATCH(
   const title = trimIfString(body?.title);
   const prompt = trimIfString(body?.prompt);
   const consent = trimIfString(body?.consent);
+  const guideTemplate = trimIfString(body?.guideTemplate);
+
+  if (guideTemplate !== undefined && guideTemplate.length > 0) {
+    const unknownVariables = findUnknownTemplateVariables(guideTemplate);
+    if (unknownVariables.length > 0) {
+      return NextResponse.json(
+        { error: `알 수 없는 템플릿 변수입니다: ${unknownVariables.map((v) => `{{${v}}}`).join(", ")}` },
+        { status: 400 }
+      );
+    }
+  }
 
   if (locale === "ko") {
     if (title !== undefined && title.length === 0) {
@@ -46,6 +58,9 @@ export async function PATCH(
         ...(title !== undefined ? { title } : {}),
         ...(prompt !== undefined ? { prompt } : {}),
         ...(consent !== undefined ? { consentKo: consent.length > 0 ? consent : null } : {}),
+        ...(guideTemplate !== undefined
+          ? { guideTemplateKo: guideTemplate.length > 0 ? guideTemplate : null }
+          : {}),
         koPreviewConfirmedAt: null,
         // Editing content the moment it's live is exactly the case that must
         // pull participation back offline until the admin re-confirms it.
@@ -57,6 +72,7 @@ export async function PATCH(
       title: project.title,
       prompt: project.prompt,
       consentKo: project.consentKo,
+      guideTemplateKo: project.guideTemplateKo,
       koPreviewConfirmedAt: project.koPreviewConfirmedAt,
       koreanEnabled: project.koreanEnabled,
     });
@@ -69,6 +85,9 @@ export async function PATCH(
       ...(title !== undefined ? { titleJa: title.length > 0 ? title : null } : {}),
       ...(prompt !== undefined ? { promptJa: prompt.length > 0 ? prompt : null } : {}),
       ...(consent !== undefined ? { consentJa: consent.length > 0 ? consent : null } : {}),
+      ...(guideTemplate !== undefined
+        ? { guideTemplateJa: guideTemplate.length > 0 ? guideTemplate : null }
+        : {}),
       jaPreviewConfirmedAt: null,
       japaneseEnabled: false,
     },
@@ -78,6 +97,7 @@ export async function PATCH(
     titleJa: project.titleJa,
     promptJa: project.promptJa,
     consentJa: project.consentJa,
+    guideTemplateJa: project.guideTemplateJa,
     jaPreviewConfirmedAt: project.jaPreviewConfirmedAt,
     japaneseEnabled: project.japaneseEnabled,
   });

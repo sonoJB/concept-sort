@@ -16,7 +16,7 @@ export const ja = {
     ariaGroupLabel: "参加する国の選択",
   },
   nameStep: {
-    label: "氏名またはニックネーム",
+    label: "名前",
     placeholder: "例：参加者1",
   },
   consentStep: {
@@ -43,7 +43,7 @@ export const ja = {
     grade1: "1年生",
     grade2: "2年生",
     grade3: "3年生",
-    phoneLabel: "謝礼（デジタルギフト）送付用の携帯電話番号",
+    phoneLabel: "スマートフォン番号",
     phonePlaceholder: "例：090-1234-5678",
     submitLabel: "次へ",
   },
@@ -76,13 +76,13 @@ export const ja = {
   errors: {
     COUNTRY_REQUIRED: "参加する国を選択してください。",
     COUNTRY_NOT_AVAILABLE: "選択した国の参加受付は現在行っていません。",
-    PARTICIPANT_NAME_REQUIRED: "氏名またはニックネームを入力してください。",
+    PARTICIPANT_NAME_REQUIRED: "名前を入力してください。",
     CONSENT_REQUIRED: "研究参加への同意が必要です。",
     GENDER_REQUIRED: "性別を選択してください。",
     AGE_INVALID: "年齢を数字で正しく入力してください。",
     SCHOOL_LEVEL_REQUIRED: "学校種を選択してください。",
     GRADE_REQUIRED: "学年を選択してください。",
-    PHONE_REQUIRED: "謝礼送付用の携帯電話番号を入力してください。",
+    PHONE_REQUIRED: "スマートフォン番号を入力してください。",
     UNASSIGNED_STATEMENTS: (count) =>
       `まだ分類されていない記述文が${count}件あります。すべての記述文をいずれかのグループに配置してください。`,
     ONE_GROUP_ONLY: "すべてのカードを1つのグループにまとめることはできません。",

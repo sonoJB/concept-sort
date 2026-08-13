@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireAdminProject } from "@/lib/auth";
 import { isValidJaStatus } from "@/lib/localeContentStatus";
-import { validateNumberedLines } from "@/lib/statementNumbering";
+import { validateNonBlankLines } from "@/lib/statementLines";
 
 /**
  * Bulk paste-in entry for Japanese translations: replaces textJa/jaStatus
@@ -48,9 +48,9 @@ export async function POST(
 
   const trimmed: string[] = lines.map((l: string) => l.trim());
 
-  const numberingCheck = validateNumberedLines(trimmed);
-  if (!numberingCheck.ok) {
-    return NextResponse.json({ error: numberingCheck.error }, { status: 400 });
+  const lineCheck = validateNonBlankLines(trimmed);
+  if (!lineCheck.ok) {
+    return NextResponse.json({ error: lineCheck.error }, { status: 400 });
   }
 
   const statements = await prisma.statement.findMany({

@@ -40,6 +40,16 @@ model Project {
   koPreviewConfirmedAt DateTime?
   jaPreviewConfirmedAt DateTime?
 
+  // Editable similarity-sorting guide instructions. Stores the TEMPLATE
+  // (with {{CARD_COUNT}}/{{MIN_GROUPS}}/etc. placeholders — see
+  // src/lib/guideTemplate.ts), never the final rendered numeric text, so a
+  // researcher can edit wording without a code deploy while the structural
+  // numbers stay derived from the actual live Statement count. Null means
+  // "use the built-in default template" — not every project needs a custom
+  // one.
+  guideTemplateKo String?
+  guideTemplateJa String?
+
   statements   Statement[]
   sortSessions SortSession[]
 

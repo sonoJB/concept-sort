@@ -68,7 +68,7 @@ export async function POST(
     return fail("GRADE_REQUIRED", "학년을 선택해 주세요.");
   }
   if (!phoneNumber) {
-    return fail("PHONE_REQUIRED", "답례품 발송을 위한 전화번호를 입력해 주세요.");
+    return fail("PHONE_REQUIRED", "스마트폰 번호를 입력해 주세요.");
   }
 
   const groups: IncomingGroup[] = Array.isArray(body?.groups) ? body.groups : [];
