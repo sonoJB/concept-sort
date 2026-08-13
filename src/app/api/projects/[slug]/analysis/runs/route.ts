@@ -75,11 +75,24 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
   const scopeParam = request.nextUrl.searchParams.get("scope");
   const datasetParam = request.nextUrl.searchParams.get("dataset");
+  // Runs created before the dataRole concept existed are stamped
+  // dataset="LEGACY_PRE_SEGREGATION" rather than guessed into MAIN/PILOT
+  // (see the migration comment on AnalysisRun.dataset). Every session that
+  // could have fed such a run is, by that same reasoning, provably pilot
+  // data — so a PILOT or ALL_WITH_PILOT query surfaces them too (labeled
+  // by the frontend's existing legacy badge), while a MAIN query never
+  // does, since legacy data is never provably MAIN.
+  const datasetFilter =
+    datasetParam === "PILOT" || datasetParam === "ALL_WITH_PILOT"
+      ? { dataset: { in: [datasetParam, "LEGACY_PRE_SEGREGATION"] } }
+      : datasetParam
+        ? { dataset: datasetParam }
+        : {};
   const runs = await prisma.analysisRun.findMany({
     where: {
       projectId: check.project.id,
       ...(scopeParam ? { scope: scopeParam } : {}),
-      ...(datasetParam ? { dataset: datasetParam } : {}),
+      ...datasetFilter,
     },
     orderBy: { startedAt: "desc" },
   });
