@@ -48,10 +48,13 @@ export const ko = {
     submitLabel: "제출하기",
   },
   guide: {
-    linkText: "[유사성 분류 방법 안내문]",
+    linkText: "[유사성 분류 방법 - 세부 지침]",
     linkDescription: "클릭하시면 유사성 분류 방법(지침)이 활성화됩니다.",
     instructions: (minGroups, maxGroups) =>
       `왼쪽의 진술문을 오른쪽의 묶음으로 드래그해서, 서로 의미가 비슷하다고 생각되는 진술문끼리 같은 묶음에 넣어 주세요. 묶음은 최소 ${minGroups}개에서 최대 ${maxGroups}개까지 만들 수 있으며, 아래 버튼으로 직접 추가하거나 삭제할 수 있습니다. 모든 진술문을 하나 이상의 묶음에 배치한 후 제출해 주세요. 자세한 지침은 위 링크를 클릭해 언제든 다시 확인할 수 있습니다.`,
+  },
+  videoGuide: {
+    linkText: "[유사성 분류 웹앱 사용 방법 - 가이드라인 동영상]",
   },
   sorting: {
     unassignedLabel: (count) => `진술문 (${count}개 남음)`,

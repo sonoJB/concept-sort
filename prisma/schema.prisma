@@ -50,6 +50,25 @@ model Project {
   guideTemplateKo String?
   guideTemplateJa String?
 
+  // Automatic PILOT→MAIN submission-classification boundary (server clock,
+  // never a browser/client clock). null = ordinary/default MAIN behavior —
+  // every submission classifies MAIN, same as before this field existed.
+  // When set, a submission received strictly before this instant classifies
+  // PILOT; at or after, MAIN. See classifySubmissionDataRole. Editable via
+  // Admin only while this project's MAIN SortSession count is 0 — once any
+  // MAIN response exists, changing the boundary would retroactively make no
+  // sense for already-classified rows, so the update route locks it.
+  mainStudyStartsAt DateTime?
+
+  // Participant-facing "가이드라인 동영상" (usage walkthrough video) link,
+  // distinct from guideTemplateKo/Ja (the internal TEXT GUIDE / "세부
+  // 지침" reading material). Null hides the corresponding video-guide
+  // button entirely — see validateGuideVideoUrl for the https-only,
+  // YouTube-host-only validation applied before either field is ever
+  // written.
+  guideVideoUrlKo String?
+  guideVideoUrlJa String?
+
   statements   Statement[]
   sortSessions SortSession[]
 

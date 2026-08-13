@@ -13,6 +13,7 @@ const MIGRATION_ORDER = [
   "20260807180000_scope_legacy_consent_fallback",
   "20260813011500_add_guide_template_fields",
   "20260813062600_add_data_role_and_analysis_dataset",
+  "20260813082418_add_main_study_schedule_and_guide_video",
 ];
 
 /**

@@ -14,6 +14,7 @@ import {
   findUnknownTemplateVariables,
   renderGuideTemplate,
 } from "@/lib/guideTemplate";
+import { utcIsoToKstInputValue, kstInputValueToUtcIso, formatUtcIsoAsKst } from "@/lib/kstTime";
 
 type Statement = {
   id: string;
@@ -78,6 +79,10 @@ export function AdminDashboard({
   legacyConsentFallbackEnabled,
   koPreviewConfirmedAt,
   jaPreviewConfirmedAt,
+  mainStudyStartsAt,
+  guideVideoUrlKo,
+  guideVideoUrlJa,
+  initialMainCount,
   initialStatements,
   initialSubmissionCount,
   initialTab = "ko",
@@ -97,6 +102,10 @@ export function AdminDashboard({
   legacyConsentFallbackEnabled: boolean;
   koPreviewConfirmedAt: string | null;
   jaPreviewConfirmedAt: string | null;
+  mainStudyStartsAt: string | null;
+  guideVideoUrlKo: string | null;
+  guideVideoUrlJa: string | null;
+  initialMainCount: number;
   initialStatements: Statement[];
   initialSubmissionCount: number;
   initialTab?: "ko" | "ja" | "readiness";
@@ -208,9 +217,21 @@ export function AdminDashboard({
   const [jaBulkShowApprovedConfirm, setJaBulkShowApprovedConfirm] = useState(false);
 
   // Readiness / activation
-  const [readiness, setReadiness] = useState<{ ko: LocaleContentStatus; ja: LocaleContentStatus } | null>(
-    null
-  );
+  const [readiness, setReadiness] = useState<{
+    ko: LocaleContentStatus;
+    ja: LocaleContentStatus;
+    counts: {
+      total: number;
+      main: number;
+      pilot: number;
+      krMain: number;
+      krPilot: number;
+      jpMain: number;
+      jpPilot: number;
+    };
+    currentPhase: "PILOT" | "MAIN";
+    serverNow: string;
+  } | null>(null);
   const [loadingReadiness, setLoadingReadiness] = useState(false);
   const [readinessError, setReadinessError] = useState<string | null>(null);
   const [koEnabled, setKoEnabled] = useState(koreanEnabled);
@@ -218,6 +239,25 @@ export function AdminDashboard({
   const [activationError, setActivationError] = useState<string | null>(null);
   const [activationBusy, setActivationBusy] = useState(false);
   const [operatingState, setOperatingState] = useState<OperatingState | null>(null);
+
+  // Main-study auto-cutover schedule (KST/JST wall-clock editing — never the
+  // browser's local timezone) and researcher-editable video-guide URLs.
+  const [mainCount, setMainCount] = useState(initialMainCount);
+  const [scheduleInput, setScheduleInput] = useState(() => utcIsoToKstInputValue(mainStudyStartsAt));
+  const [scheduleSavedValue, setScheduleSavedValue] = useState(mainStudyStartsAt);
+  const [scheduleSaving, setScheduleSaving] = useState(false);
+  const [scheduleError, setScheduleError] = useState<string | null>(null);
+  const [scheduleSavedAt, setScheduleSavedAt] = useState<number | null>(null);
+  const [koVideoUrl, setKoVideoUrl] = useState(guideVideoUrlKo ?? "");
+  const [koVideoSaving, setKoVideoSaving] = useState(false);
+  const [koVideoError, setKoVideoError] = useState<string | null>(null);
+  const [koVideoSavedAt, setKoVideoSavedAt] = useState<number | null>(null);
+  const [koVideoSavedValue, setKoVideoSavedValue] = useState(guideVideoUrlKo);
+  const [jaVideoUrl, setJaVideoUrl] = useState(guideVideoUrlJa ?? "");
+  const [jaVideoSaving, setJaVideoSaving] = useState(false);
+  const [jaVideoError, setJaVideoError] = useState<string | null>(null);
+  const [jaVideoSavedAt, setJaVideoSavedAt] = useState<number | null>(null);
+  const [jaVideoSavedValue, setJaVideoSavedValue] = useState(guideVideoUrlJa);
 
   const participantUrl =
     typeof window !== "undefined"
@@ -829,6 +869,7 @@ export function AdminDashboard({
         return;
       }
       setReadiness(data);
+      setMainCount(data.counts.main);
     } catch {
       setReadinessError("네트워크 오류가 발생했습니다.");
     } finally {
@@ -836,8 +877,10 @@ export function AdminDashboard({
     }
   }
 
+  // Always load once on mount (not just when the readiness tab is initially
+  // active) — the top-of-page status line and the study-phase panel both
+  // depend on this data regardless of which tab the researcher lands on.
   useEffect(() => {
-    if (initialTab !== "readiness") return;
     const timer = setTimeout(() => loadReadiness(), 0);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -870,6 +913,63 @@ export function AdminDashboard({
     }
   }
 
+  async function saveSchedule() {
+    setScheduleSaving(true);
+    setScheduleError(null);
+    try {
+      const nextValue = kstInputValueToUtcIso(scheduleInput);
+      const res = await fetch(`/api/projects/${slug}/main-study-schedule`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ adminToken, mainStudyStartsAt: nextValue }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setScheduleError(data.error ?? "본조사 시작 일시 저장에 실패했습니다.");
+        return;
+      }
+      setScheduleSavedValue(data.mainStudyStartsAt);
+      setScheduleInput(utcIsoToKstInputValue(data.mainStudyStartsAt));
+      setScheduleSavedAt(Date.now());
+    } catch {
+      setScheduleError("네트워크 오류가 발생했습니다.");
+    } finally {
+      setScheduleSaving(false);
+    }
+  }
+
+  async function saveVideoUrl(locale: "ko" | "ja") {
+    const url = locale === "ko" ? koVideoUrl : jaVideoUrl;
+    const setSaving = locale === "ko" ? setKoVideoSaving : setJaVideoSaving;
+    const setErr = locale === "ko" ? setKoVideoError : setJaVideoError;
+    const setSavedAt = locale === "ko" ? setKoVideoSavedAt : setJaVideoSavedAt;
+    const setSavedValue = locale === "ko" ? setKoVideoSavedValue : setJaVideoSavedValue;
+
+    setSaving(true);
+    setErr(null);
+    try {
+      const res = await fetch(`/api/projects/${slug}/guide-video`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ adminToken, locale, url }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setErr(data.error ?? "가이드라인 동영상 URL 저장에 실패했습니다.");
+        return;
+      }
+      const saved = locale === "ko" ? data.guideVideoUrlKo : data.guideVideoUrlJa;
+      setSavedValue(saved);
+      if (locale === "ko") setKoVideoUrl(saved ?? "");
+      else setJaVideoUrl(saved ?? "");
+      setSavedAt(Date.now());
+    } catch {
+      setErr("네트워크 오류가 발생했습니다.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   const tabs: { id: Tab; label: string }[] = [
     { id: "ko", label: "한국어" },
     { id: "ja", label: "日本語" },
@@ -885,6 +985,15 @@ export function AdminDashboard({
         <p className="text-xs text-slate-400 mt-1">
           slug: {slug} · 참여 활성화 상태: 한국어 {koEnabled ? "ON" : "OFF"} / 日本語{" "}
           {jaEnabled ? "ON" : "OFF"}
+          {readiness && (
+            <>
+              {" "}
+              · 현재 접수 단계:{" "}
+              <span className="font-semibold text-slate-600">
+                {readiness.currentPhase === "MAIN" ? "본조사" : "파일럿"}
+              </span>
+            </>
+          )}
         </p>
       </div>
 
@@ -1035,7 +1144,7 @@ export function AdminDashboard({
           </section>
 
           <section className="space-y-3">
-            <h2 className="text-lg font-semibold">한국어 유사성 분류 방법 안내문 본문</h2>
+            <h2 className="text-lg font-semibold">한국어 유사성 분류 방법 - 세부 지침 본문</h2>
             <p className="text-xs text-slate-500">
               카드 수·묶음 규칙처럼 계산되는 값은 직접 숫자를 적지 말고{" "}
               {"{{CARD_COUNT}}"}, {"{{MAX_CARDS_PER_GROUP}}"}, {"{{FIRST_FORBIDDEN_GROUP_SIZE}}"},{" "}
@@ -1127,6 +1236,47 @@ export function AdminDashboard({
                 {koGuideRender.rendered}
               </div>
             </div>
+          </section>
+
+          <section className="space-y-3">
+            <h2 className="text-lg font-semibold">한국어 가이드라인 동영상 URL</h2>
+            <p className="text-xs text-slate-500">
+              [유사성 분류 웹앱 사용 방법 - 가이드라인 동영상] 버튼이 여는 YouTube 링크입니다. https://
+              youtu.be 또는 https://youtube.com 링크만 허용됩니다. 비워두면 참가자 화면에서 동영상 버튼이
+              숨겨집니다.
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="url"
+                value={koVideoUrl}
+                onChange={(e) => setKoVideoUrl(e.target.value)}
+                placeholder="https://youtu.be/..."
+                className="min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              />
+              <button
+                onClick={() => saveVideoUrl("ko")}
+                disabled={koVideoSaving}
+                className="rounded-lg bg-slate-900 px-4 py-2 text-white text-sm font-medium hover:bg-slate-700 disabled:opacity-50"
+              >
+                {koVideoSaving ? "저장 중..." : "저장"}
+              </button>
+              {koVideoSavedValue && (
+                <a
+                  href={koVideoSavedValue}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium hover:bg-slate-100"
+                >
+                  동영상 열어보기
+                </a>
+              )}
+              {koVideoSavedAt && <span className="text-xs text-green-700">저장됨</span>}
+            </div>
+            {koVideoError && (
+              <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                {koVideoError}
+              </p>
+            )}
           </section>
 
           <section className="space-y-3">
@@ -1378,7 +1528,7 @@ export function AdminDashboard({
           </section>
 
           <section className="space-y-3">
-            <h2 className="text-lg font-semibold">日本語 類似性分類方法の案内本文</h2>
+            <h2 className="text-lg font-semibold">日本語 類似性分類の方法－詳細ガイドライン本文</h2>
             <p className="text-xs text-slate-500">
               計算される値は数字を直接書かず {"{{CARD_COUNT}}"}, {"{{MAX_CARDS_PER_GROUP}}"},{" "}
               {"{{FIRST_FORBIDDEN_GROUP_SIZE}}"}, {"{{MIN_GROUPS}}"}, {"{{MAX_GROUPS}}"},{" "}
@@ -1467,6 +1617,47 @@ export function AdminDashboard({
                 {jaGuideRender.rendered}
               </div>
             </div>
+          </section>
+
+          <section className="space-y-3">
+            <h2 className="text-lg font-semibold">日本語 ガイドライン動画 URL</h2>
+            <p className="text-xs text-slate-500">
+              ［類似性分類ウェブアプリの使い方－ガイドライン動画］ 버튼이 여는 YouTube 링크입니다.
+              https://youtu.be 또는 https://youtube.com 링크만 허용됩니다. 비워두면 참가자 화면에서 동영상
+              버튼이 숨겨집니다.
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="url"
+                value={jaVideoUrl}
+                onChange={(e) => setJaVideoUrl(e.target.value)}
+                placeholder="https://youtu.be/..."
+                className="min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              />
+              <button
+                onClick={() => saveVideoUrl("ja")}
+                disabled={jaVideoSaving}
+                className="rounded-lg bg-slate-900 px-4 py-2 text-white text-sm font-medium hover:bg-slate-700 disabled:opacity-50"
+              >
+                {jaVideoSaving ? "저장 중..." : "저장"}
+              </button>
+              {jaVideoSavedValue && (
+                <a
+                  href={jaVideoSavedValue}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium hover:bg-slate-100"
+                >
+                  動画を開く
+                </a>
+              )}
+              {jaVideoSavedAt && <span className="text-xs text-green-700">저장됨</span>}
+            </div>
+            {jaVideoError && (
+              <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                {jaVideoError}
+              </p>
+            )}
           </section>
 
           <section className="space-y-3">
@@ -1725,6 +1916,87 @@ export function AdminDashboard({
               {readinessError}
             </p>
           )}
+
+          <section className="rounded-xl border border-slate-200 p-4 space-y-4">
+            <h2 className="text-lg font-semibold">본조사 운영 현황</h2>
+
+            {readiness && (
+              <div className="grid gap-4 md:grid-cols-2 text-sm">
+                <div className="space-y-1">
+                  <p>
+                    현재 단계:{" "}
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+                        readiness.currentPhase === "MAIN"
+                          ? "bg-emerald-100 text-emerald-700"
+                          : "bg-amber-100 text-amber-700"
+                      }`}
+                    >
+                      {readiness.currentPhase === "MAIN" ? "본조사" : "파일럿"}
+                    </span>
+                  </p>
+                  <p className="text-xs text-slate-500">
+                    현재 서버 기준 시각: {formatUtcIsoAsKst(readiness.serverNow)}
+                  </p>
+                  <p>
+                    전체 N: <span className="font-semibold">{readiness.counts.total}</span> · 파일럿:{" "}
+                    <span className="font-semibold">{readiness.counts.pilot}</span> · 본조사:{" "}
+                    <span className="font-semibold">{readiness.counts.main}</span>
+                  </p>
+                  <p className="text-xs text-slate-500">
+                    Korea — 파일럿 {readiness.counts.krPilot} / 본조사 {readiness.counts.krMain}
+                  </p>
+                  <p className="text-xs text-slate-500">
+                    Japan — 파일럿 {readiness.counts.jpPilot} / 본조사 {readiness.counts.jpMain}
+                  </p>
+                  <p className="text-xs text-slate-500">
+                    한국어 참여: {koEnabled ? "ON" : "OFF"} · 일본어 참여: {jaEnabled ? "ON" : "OFF"}
+                  </p>
+                  <p className="text-xs text-slate-500">
+                    한국어 가이드라인 동영상: {koVideoSavedValue ? "설정됨" : "미설정"} · 일본어 가이드라인
+                    동영상: {jaVideoSavedValue ? "설정됨" : "미설정"}
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <label htmlFor="mainStudyStartsAt" className="block text-sm font-medium">
+                    본조사 자동 시작 (KST/JST, UTC+9)
+                  </label>
+                  <input
+                    id="mainStudyStartsAt"
+                    type="datetime-local"
+                    value={scheduleInput}
+                    onChange={(e) => setScheduleInput(e.target.value)}
+                    disabled={mainCount > 0}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-100 disabled:text-slate-400"
+                  />
+                  <p className="text-xs text-slate-500">
+                    현재 저장된 값: {formatUtcIsoAsKst(scheduleSavedValue)}
+                  </p>
+                  {mainCount > 0 ? (
+                    <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                      본조사 응답이 이미 저장되어 있어 시작 일시를 변경할 수 없습니다.
+                    </p>
+                  ) : (
+                    <button
+                      onClick={saveSchedule}
+                      disabled={scheduleSaving}
+                      className="rounded-lg bg-slate-900 px-4 py-2 text-white text-sm font-medium hover:bg-slate-700 disabled:opacity-50"
+                    >
+                      {scheduleSaving ? "저장 중..." : "본조사 시작 일시 저장"}
+                    </button>
+                  )}
+                  {scheduleSavedAt && <span className="ml-2 text-xs text-green-700">저장됨</span>}
+                  {scheduleError && (
+                    <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                      {scheduleError}
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+          </section>
+
           {activationError && (
             <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 whitespace-pre-line">
               {activationError}
@@ -1846,22 +2118,25 @@ export function AdminDashboard({
           )}
 
           {participants && (() => {
-            const mainCount = participants.filter((p) => p.dataRole === "MAIN").length;
-            const pilotCount = participants.filter((p) => p.dataRole === "PILOT").length;
+            const submittedMainCount = participants.filter((p) => p.dataRole === "MAIN").length;
+            const submittedPilotCount = participants.filter((p) => p.dataRole === "PILOT").length;
             const pilotKr = participants.filter((p) => p.dataRole === "PILOT" && p.countryCode === "KR").length;
             const pilotJp = participants.filter((p) => p.dataRole === "PILOT" && p.countryCode === "JP").length;
+            const mainKr = participants.filter((p) => p.dataRole === "MAIN" && p.countryCode === "KR").length;
+            const mainJp = participants.filter((p) => p.dataRole === "MAIN" && p.countryCode === "JP").length;
             return (
               <div className="rounded-lg bg-slate-50 border border-slate-200 px-4 py-3 text-sm space-y-1">
                 <p>
                   전체 제출: <span className="font-semibold">{participants.length}</span> · 본조사:{" "}
-                  <span className="font-semibold">{mainCount}</span> · 파일럿:{" "}
-                  <span className="font-semibold">{pilotCount}</span>
+                  <span className="font-semibold">{submittedMainCount}</span> · 파일럿:{" "}
+                  <span className="font-semibold">{submittedPilotCount}</span>
                 </p>
-                {pilotCount > 0 && (
-                  <p className="text-xs text-slate-500">
-                    파일럿: Korea {pilotKr} · Japan {pilotJp}
-                  </p>
-                )}
+                <p className="text-xs text-slate-500">
+                  Korea — 파일럿 {pilotKr} / 본조사 {mainKr}
+                </p>
+                <p className="text-xs text-slate-500">
+                  Japan — 파일럿 {pilotJp} / 본조사 {mainJp}
+                </p>
               </div>
             );
           })()}

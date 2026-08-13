@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { computeGroupBounds } from "@/lib/groupBounds";
 import { computeLocaleContentStatus } from "@/lib/localeContentStatus";
 import { GENDER_VALUES, SCHOOL_LEVEL_VALUES, GRADE_VALUES } from "@/lib/participantOptions";
+import { classifySubmissionDataRole } from "@/lib/classifySubmissionDataRole";
 import type { ErrorCode } from "@/lib/errorCodes";
 
 export async function GET(
@@ -158,10 +159,23 @@ export async function POST(
     );
   }
 
+  // Exactly one trusted server timestamp for this submission, captured
+  // immediately before the write — reused for both PILOT/MAIN
+  // classification and the stored createdAt, so a boundary-instant
+  // submission can never be classified against one clock read and recorded
+  // against a different one. Never a browser/client clock, never read from
+  // `body` (there is no pilot/main selector exposed to participants).
+  const receivedAt = new Date();
+  const dataRole = classifySubmissionDataRole({
+    receivedAt,
+    mainStudyStartsAt: project.mainStudyStartsAt,
+  });
+
   await prisma.sortSession.create({
     data: {
       projectId: project.id,
       participantName,
+      createdAt: receivedAt,
       consentAgreed: true,
       gender,
       age,
@@ -169,11 +183,7 @@ export async function POST(
       grade,
       phoneNumber,
       countryCode,
-      // Every real participant submission through this public route is
-      // MAIN by trusted server logic, unconditionally — this field is never
-      // read from `body`, so a client request has no way to set or override
-      // it (there is no pilot/main selector exposed to participants).
-      dataRole: "MAIN",
+      dataRole,
       groups: {
         create: nonEmptyGroups.map((g) => ({
           label: g.label?.trim() ?? "",
