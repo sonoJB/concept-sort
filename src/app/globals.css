@@ -1,6 +1,20 @@
 @import "tailwindcss";
 
+/*
+ * This is a research instrument: every participant (KR/JP) must see the
+ * identical card-sorting screen regardless of their OS/browser color
+ * scheme. There is no dark theme to opt into — `color-scheme: light`
+ * pins native form-control/scrollbar UA rendering to light, and the
+ * absence of any `prefers-color-scheme: dark` override below means
+ * --background/--foreground never flip. (A prior dark-mode override here
+ * was the actual cause of unreadable near-white-on-white card text: it
+ * changed --foreground, which only body's unlayered `color` rule
+ * consumes — cards/inputs/drag-overlay never set an explicit text color
+ * of their own, so they inherited that near-white value while sitting on
+ * explicit bg-white backgrounds.)
+ */
 :root {
+  color-scheme: light;
   --background: #ffffff;
   --foreground: #171717;
 }
@@ -10,13 +24,6 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
 }
 
 /*
