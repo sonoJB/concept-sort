@@ -15,8 +15,30 @@ describe("participant-facing field labels — exact wording", () => {
     expect(ko.demographics.phoneLabel).toBe("스마트폰 번호");
   });
 
-  it("Japanese phone label is exactly スマートフォン番号", () => {
-    expect(ja.demographics.phoneLabel).toBe("スマートフォン番号");
+  it("Japanese phone label is exactly 携帯電話番号の下4桁（本人識別用）", () => {
+    expect(ja.demographics.phoneLabel).toBe("携帯電話番号の下4桁（本人識別用）");
+  });
+
+  it("Korean phone label/placeholder are unchanged by the Japan-only last-4-digits change", () => {
+    expect(ko.demographics.phoneLabel).toBe("스마트폰 번호");
+    expect(ko.demographics.phonePlaceholder).toBe("예: 010-1234-5678");
+    expect(ko.demographics.phoneHelperText).toBe("");
+  });
+
+  it("Japanese phone helper text explains 本人識別 (participant identification), never 本人確認 (identity verification) or a uniqueness guarantee", () => {
+    expect(ja.demographics.phoneHelperText).toContain("本人識別");
+    expect(ja.demographics.phoneHelperText).not.toContain("本人確認");
+    expect(ja.demographics.phoneHelperText).not.toContain("一意");
+    expect(ja.demographics.phoneHelperText).not.toContain("ユニーク");
+  });
+
+  it("Japanese phone placeholder shows a 4-digit example, never a full phone number shape", () => {
+    expect(ja.demographics.phonePlaceholder).toBe("例：1234");
+    expect(ja.demographics.phonePlaceholder).not.toMatch(/\d{2,4}-\d{2,4}-\d{3,4}/);
+  });
+
+  it("Japanese PHONE_INVALID validation message matches the researcher-specified wording exactly", () => {
+    expect(ja.errors.PHONE_INVALID).toBe("携帯電話番号の下4桁を数字4桁で入力してください。");
   });
 
   it("Korean messages no longer contain the old name-field wording", () => {

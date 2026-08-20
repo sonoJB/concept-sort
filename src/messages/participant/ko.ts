@@ -45,6 +45,7 @@ export const ko = {
     grade3: "3학년",
     phoneLabel: "스마트폰 번호",
     phonePlaceholder: "예: 010-1234-5678",
+    phoneHelperText: "",
     submitLabel: "제출하기",
   },
   guide: {
@@ -86,6 +87,7 @@ export const ko = {
     SCHOOL_LEVEL_REQUIRED: "학교급을 선택해 주세요.",
     GRADE_REQUIRED: "학년을 선택해 주세요.",
     PHONE_REQUIRED: "스마트폰 번호를 입력해 주세요.",
+    PHONE_INVALID: "전화번호 형식이 올바르지 않습니다.",
     UNASSIGNED_STATEMENTS: (count) =>
       `아직 분류되지 않은 진술문이 ${count}개 있습니다. 모든 진술문을 하나 이상의 묶음에 배치해 주세요.`,
     ONE_GROUP_ONLY: "모든 카드를 하나의 묶음으로 만들 수 없습니다.",

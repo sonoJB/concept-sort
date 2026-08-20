@@ -43,8 +43,9 @@ export const ja = {
     grade1: "1年生",
     grade2: "2年生",
     grade3: "3年生",
-    phoneLabel: "スマートフォン番号",
-    phonePlaceholder: "例：090-1234-5678",
+    phoneLabel: "携帯電話番号の下4桁（本人識別用）",
+    phonePlaceholder: "例：1234",
+    phoneHelperText: "本人識別のため、携帯電話番号の下4桁のみを入力してください。",
     submitLabel: "次へ",
   },
   guide: {
@@ -85,7 +86,8 @@ export const ja = {
     AGE_INVALID: "年齢を数字で正しく入力してください。",
     SCHOOL_LEVEL_REQUIRED: "学校種を選択してください。",
     GRADE_REQUIRED: "学年を選択してください。",
-    PHONE_REQUIRED: "スマートフォン番号を入力してください。",
+    PHONE_REQUIRED: "携帯電話番号の下4桁を入力してください。",
+    PHONE_INVALID: "携帯電話番号の下4桁を数字4桁で入力してください。",
     UNASSIGNED_STATEMENTS: (count) =>
       `まだ分類されていない記述文が${count}件あります。すべての記述文をいずれかのグループに配置してください。`,
     ONE_GROUP_ONLY: "すべてのカードを1つのグループにまとめることはできません。",

@@ -14,6 +14,7 @@ import {
 } from "@dnd-kit/core";
 import { computeGroupBounds } from "@/lib/groupBounds";
 import { resolveEffectiveConsentKo } from "@/lib/consent";
+import { normalizeFullWidthDigits, isValidJapanesePhoneLast4 } from "@/lib/fullWidthDigits";
 import { GENDER_OPTIONS, SCHOOL_LEVEL_OPTIONS, GRADE_OPTIONS } from "@/lib/participantOptions";
 import { getParticipantMessages, type MessageShape, type ParticipantLocale } from "@/messages/participant";
 import { applyStudyWebAppTextOverride } from "@/lib/studyWebAppText";
@@ -369,6 +370,11 @@ export function SortBoard({
   const [age, setAge] = useState("");
   const [schoolLevel, setSchoolLevel] = useState("");
   const [grade, setGrade] = useState("");
+  // The only back-navigation in the whole flow is the "name" step's button,
+  // which returns to "country" — reachable before demographics (and so
+  // before phoneNumber) is ever touched. Consent and demographics have no
+  // back button, so a participant can never carry a phoneNumber value typed
+  // for one country into a re-render for the other; nothing to reset here.
   const [phoneNumber, setPhoneNumber] = useState("");
   const [demographicsError, setDemographicsError] = useState<string | null>(null);
 
@@ -545,7 +551,15 @@ export function SortBoard({
     }
     if (!schoolLevel) return setDemographicsError(t.errors.SCHOOL_LEVEL_REQUIRED as string);
     if (!grade) return setDemographicsError(t.errors.GRADE_REQUIRED as string);
-    if (!phoneNumber.trim()) {
+    // Japan collects only the last 4 digits of the mobile phone number, for
+    // participant identification — never the full number, from the input
+    // step onward (not collected-then-truncated). Korea keeps the original
+    // full-number field and validation unchanged.
+    if (country === "JP") {
+      if (!isValidJapanesePhoneLast4(phoneNumber)) {
+        return setDemographicsError(t.errors.PHONE_INVALID as string);
+      }
+    } else if (!phoneNumber.trim()) {
       return setDemographicsError(t.errors.PHONE_REQUIRED as string);
     }
     setDemographicsError(null);
@@ -835,11 +849,27 @@ export function SortBoard({
           <label htmlFor="phone" className="block text-sm font-medium mb-1">
             {t.demographics.phoneLabel}
           </label>
+          {t.demographics.phoneHelperText && (
+            <p className="text-xs text-slate-500 mb-1">{t.demographics.phoneHelperText}</p>
+          )}
           <input
             id="phone"
             type="tel"
+            inputMode={country === "JP" ? "numeric" : undefined}
+            maxLength={country === "JP" ? 4 : undefined}
             value={phoneNumber}
-            onChange={(e) => setPhoneNumber(e.target.value)}
+            onChange={(e) => {
+              // Japan: minimize collection at the input step itself — digits
+              // only (full-width IME input auto-normalized, leading zero
+              // preserved as a string throughout), capped at 4 characters.
+              // The full number is never held in state even transiently.
+              // Korea: unchanged raw passthrough.
+              const next =
+                country === "JP"
+                  ? normalizeFullWidthDigits(e.target.value).replace(/[^0-9]/g, "").slice(0, 4)
+                  : e.target.value;
+              setPhoneNumber(next);
+            }}
             placeholder={t.demographics.phonePlaceholder}
             className="w-full rounded-lg border border-slate-300 px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-slate-400"
           />
