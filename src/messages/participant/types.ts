@@ -51,6 +51,8 @@ export type MessageShape = {
     grade3: string;
     phoneLabel: string;
     phonePlaceholder: string;
+    /** Empty string when no extra explanation is needed (Korea) — rendered only when non-empty. */
+    phoneHelperText: string;
     submitLabel: string;
   };
   guide: {

@@ -81,7 +81,12 @@ async function seedReadyProject(
   return { project, statements };
 }
 
-function baseBody(statementIds: string[], countryCode: unknown) {
+function baseBody(statementIds: string[], countryCode: unknown, phoneNumberOverride?: string) {
+  // JP's real shape is 4 digits, never a full number — existing JP-path
+  // tests that don't care about the phone field specifically must still
+  // send something that passes the new Japan validation, so the default
+  // here is country-aware rather than a single hardcoded KR-shaped value.
+  const phoneNumber = phoneNumberOverride ?? (countryCode === "JP" ? "1234" : "010-0000-0000");
   return {
     participantName: "tester",
     consentAgreed: true,
@@ -90,7 +95,7 @@ function baseBody(statementIds: string[], countryCode: unknown) {
     age: 20,
     schoolLevel: "중학교",
     grade: "1학년",
-    phoneNumber: "010-0000-0000",
+    phoneNumber,
     groups: [
       { label: "g1", statementIds: [statementIds[0], statementIds[1]] },
       { label: "g2", statementIds: [statementIds[2], statementIds[3]] },
@@ -282,5 +287,122 @@ describe("POST /api/projects/[slug]/sorts — main-study auto cutover (server cl
 
     const session = await prisma.sortSession.findFirstOrThrow({ where: { projectId: project.id } });
     expect(session.dataRole).toBe("MAIN");
+  });
+});
+
+describe("POST /api/projects/[slug]/sorts — Japan phone-number last-4-digits minimization", () => {
+  it("KR still accepts and stores a full phone number unchanged (no regression)", async () => {
+    const slug = "phone-kr-full-number-unchanged";
+    const { project, statements } = await seedReadyProject(slug);
+    const { status } = await callSorts(
+      slug,
+      baseBody(statements.map((s) => s.id), "KR", "010-1234-5678")
+    );
+    expect(status).toBe(200);
+    const session = await prisma.sortSession.findFirstOrThrow({ where: { projectId: project.id } });
+    expect(session.phoneNumber).toBe("010-1234-5678");
+  });
+
+  it("KR still rejects an empty phone number with PHONE_REQUIRED (no regression)", async () => {
+    const slug = "phone-kr-empty-still-required";
+    const { statements } = await seedReadyProject(slug);
+    const { status, data } = await callSorts(
+      slug,
+      baseBody(statements.map((s) => s.id), "KR", "")
+    );
+    expect(status).toBe(400);
+    expect(data.errorCode).toBe("PHONE_REQUIRED");
+  });
+
+  it("JP accepts exactly 4 digits and stores exactly that value", async () => {
+    const slug = "phone-jp-4-digits";
+    const { project, statements } = await seedReadyProject(slug);
+    const { status } = await callSorts(slug, baseBody(statements.map((s) => s.id), "JP", "1234"));
+    expect(status).toBe(200);
+    const session = await prisma.sortSession.findFirstOrThrow({ where: { projectId: project.id } });
+    expect(session.phoneNumber).toBe("1234");
+  });
+
+  it("JP preserves a leading zero as a string ('0123' stays '0123', never becomes '123')", async () => {
+    const slug = "phone-jp-leading-zero";
+    const { project, statements } = await seedReadyProject(slug);
+    const { status } = await callSorts(slug, baseBody(statements.map((s) => s.id), "JP", "0123"));
+    expect(status).toBe(200);
+    const session = await prisma.sortSession.findFirstOrThrow({ where: { projectId: project.id } });
+    expect(session.phoneNumber).toBe("0123");
+  });
+
+  it("JP normalizes full-width digits server-side too (defense in depth) and preserves a leading zero through normalization", async () => {
+    const slug = "phone-jp-fullwidth-serverside";
+    const { project, statements } = await seedReadyProject(slug);
+    const { status } = await callSorts(
+      slug,
+      baseBody(statements.map((s) => s.id), "JP", "０１２３")
+    );
+    expect(status).toBe(200);
+    const session = await prisma.sortSession.findFirstOrThrow({ where: { projectId: project.id } });
+    expect(session.phoneNumber).toBe("0123");
+  });
+
+  it("JP rejects fewer than 4 digits", async () => {
+    const slug = "phone-jp-too-short";
+    const { statements } = await seedReadyProject(slug);
+    const { status, data } = await callSorts(
+      slug,
+      baseBody(statements.map((s) => s.id), "JP", "123")
+    );
+    expect(status).toBe(400);
+    expect(data.errorCode).toBe("PHONE_INVALID");
+  });
+
+  it("JP rejects more than 4 digits", async () => {
+    const slug = "phone-jp-too-long";
+    const { statements } = await seedReadyProject(slug);
+    const { status, data } = await callSorts(
+      slug,
+      baseBody(statements.map((s) => s.id), "JP", "12345")
+    );
+    expect(status).toBe(400);
+    expect(data.errorCode).toBe("PHONE_INVALID");
+  });
+
+  it("JP rejects a full phone number — the full number is never accepted, even if sent directly to the API", async () => {
+    const slug = "phone-jp-full-number-rejected";
+    const { project, statements } = await seedReadyProject(slug);
+    const { status, data } = await callSorts(
+      slug,
+      baseBody(statements.map((s) => s.id), "JP", "09012345678")
+    );
+    expect(status).toBe(400);
+    expect(data.errorCode).toBe("PHONE_INVALID");
+    const count = await prisma.sortSession.count({ where: { projectId: project.id } });
+    expect(count).toBe(0);
+  });
+
+  it("JP rejects non-digit characters mixed with digits", async () => {
+    const slug = "phone-jp-nondigit";
+    const { statements } = await seedReadyProject(slug);
+    const { status, data } = await callSorts(
+      slug,
+      baseBody(statements.map((s) => s.id), "JP", "12a4")
+    );
+    expect(status).toBe(400);
+    expect(data.errorCode).toBe("PHONE_INVALID");
+  });
+
+  it("JP rejects an empty phone number with PHONE_INVALID (not PHONE_REQUIRED — JP has one unified format check)", async () => {
+    const slug = "phone-jp-empty";
+    const { statements } = await seedReadyProject(slug);
+    const { status, data } = await callSorts(slug, baseBody(statements.map((s) => s.id), "JP", ""));
+    expect(status).toBe(400);
+    expect(data.errorCode).toBe("PHONE_INVALID");
+  });
+
+  it("no SortSession row is created for any rejected JP phone submission", async () => {
+    const slug = "phone-jp-no-rows-on-reject";
+    const { project, statements } = await seedReadyProject(slug);
+    await callSorts(slug, baseBody(statements.map((s) => s.id), "JP", "12345"));
+    const count = await prisma.sortSession.count({ where: { projectId: project.id } });
+    expect(count).toBe(0);
   });
 });

@@ -4,6 +4,7 @@ import { computeGroupBounds } from "@/lib/groupBounds";
 import { computeLocaleContentStatus } from "@/lib/localeContentStatus";
 import { GENDER_VALUES, SCHOOL_LEVEL_VALUES, GRADE_VALUES } from "@/lib/participantOptions";
 import { classifySubmissionDataRole } from "@/lib/classifySubmissionDataRole";
+import { normalizeFullWidthDigits, isValidJapanesePhoneLast4 } from "@/lib/fullWidthDigits";
 import type { ErrorCode } from "@/lib/errorCodes";
 
 export async function GET(
@@ -53,7 +54,7 @@ export async function POST(
   const gender = typeof body?.gender === "string" ? body.gender : "";
   const schoolLevel = typeof body?.schoolLevel === "string" ? body.schoolLevel : "";
   const grade = typeof body?.grade === "string" ? body.grade : "";
-  const phoneNumber = typeof body?.phoneNumber === "string" ? body.phoneNumber.trim() : "";
+  const rawPhoneNumber = typeof body?.phoneNumber === "string" ? body.phoneNumber.trim() : "";
   const age = Number(body?.age);
 
   if (!GENDER_VALUES.has(gender)) {
@@ -68,8 +69,24 @@ export async function POST(
   if (!GRADE_VALUES.has(grade)) {
     return fail("GRADE_REQUIRED", "학년을 선택해 주세요.");
   }
-  if (!phoneNumber) {
-    return fail("PHONE_REQUIRED", "스마트폰 번호를 입력해 주세요.");
+
+  // Japan collects only the last 4 digits of the mobile phone number, for
+  // participant identification — normalized (full-width digits -> ASCII,
+  // leading zero preserved as a string) and validated server-side too,
+  // never trusting the client alone. Korea keeps the original full-number
+  // field and validation unchanged.
+  let phoneNumber: string;
+  if (countryCode === "JP") {
+    const normalized = normalizeFullWidthDigits(rawPhoneNumber);
+    if (!isValidJapanesePhoneLast4(normalized)) {
+      return fail("PHONE_INVALID", "휴대전화번호 마지막 4자리를 숫자 4자리로 입력해 주세요.");
+    }
+    phoneNumber = normalized;
+  } else {
+    if (!rawPhoneNumber) {
+      return fail("PHONE_REQUIRED", "스마트폰 번호를 입력해 주세요.");
+    }
+    phoneNumber = rawPhoneNumber;
   }
 
   const groups: IncomingGroup[] = Array.isArray(body?.groups) ? body.groups : [];
