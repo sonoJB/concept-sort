@@ -5,6 +5,8 @@ import { DeleteConfirmModal } from "@/components/DeleteConfirmModal";
 import { AnalysisPanel } from "@/components/analysis/AnalysisPanel";
 import { toCsv, downloadCsv } from "@/lib/csv";
 import { filterByDataRole, type DataRoleFilter } from "@/lib/participantFilter";
+import OfficialMatrixDownloads from "@/components/OfficialMatrixDownloads";
+import BackupStatusCard from "@/components/BackupStatusCard";
 import { JA_RESPONSIBLE_PARTY_NOTICE } from "@/lib/consent";
 import type { LocaleContentStatus, OperatingState } from "@/lib/localeContentStatus";
 import { validateNonBlankLines, splitBulkLines } from "@/lib/statementLines";
@@ -2028,16 +2030,15 @@ export function AdminDashboard({
 
       {tab === "analysis" && (
         <section className="space-y-4">
+          <h2 className="text-lg font-semibold">개념도 분석</h2>
+
+          <OfficialMatrixDownloads slug={slug} adminToken={adminToken} />
+
+          <BackupStatusCard slug={slug} adminToken={adminToken} />
+
           <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold">개념도 분석</h2>
+            <span className="text-sm text-slate-500">점검용 행렬 (CSV · 공식 본조사 자료 아님)</span>
             <div className="flex gap-2">
-              <button
-                onClick={() => handleDownloadMatrixCsv("MAIN")}
-                disabled={loadingMatrix || submissionCount === 0}
-                className="rounded-lg bg-slate-900 px-4 py-2 text-white text-sm font-medium hover:bg-slate-700 disabled:opacity-50"
-              >
-                {loadingMatrix ? "생성 중..." : "본조사 유사성 행렬"}
-              </button>
               <button
                 onClick={() => handleDownloadMatrixCsv("PILOT")}
                 disabled={loadingMatrix || submissionCount === 0}
