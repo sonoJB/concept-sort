@@ -175,6 +175,26 @@ describe("GET /api/projects/[slug]/official-matrix", () => {
     expect(props[0][1]).toBeCloseTo(4 / 5, 12);
   });
 
+  it("every scope's file has the diagonal-N sheet: diagonal = that scope's valid N, off-diagonal = 빈도행렬, ALL = KR + JP everywhere", async () => {
+    const read = async (scope: string) => {
+      const res = await route.GET(req(`scope=${scope}`, authed), ctx);
+      const sheets = readXlsx(new Uint8Array(await res.arrayBuffer()));
+      const m = (name: string) => sheets.find((s) => s.name === name)!.rows.slice(1).map((r) => r.slice(1)) as number[][];
+      return { n: Number(res.headers.get("X-Official-Matrix-N")), base: m("빈도행렬"), diag: m("분석용_유사성빈도_대각선N"), names: sheets.map((s) => s.name) };
+    };
+    const [all, kr, jp] = [await read("ALL"), await read("KR"), await read("JP")];
+    expect([all.n, kr.n, jp.n]).toEqual([5, 3, 2]); // taken from the data, not hard-coded in the code under test
+    for (const f of [all, kr, jp]) {
+      expect(f.names.slice(0, 4)).toEqual(["메타데이터", "빈도행렬", "분석용_유사성빈도_대각선N", "비율행렬"]);
+      for (let i = 0; i < 4; i++) {
+        expect(f.diag[i][i]).toBe(f.n);
+        expect(f.base[i][i]).toBe(0);
+        for (let j = 0; j < 4; j++) if (i !== j) expect(f.diag[i][j]).toBe(f.base[i][j]);
+      }
+    }
+    for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) expect(all.diag[i][j]).toBe(kr.diag[i][j] + jp.diag[i][j]);
+  });
+
   it("workbook never contains participant names, phone numbers or the admin token", async () => {
     for (const scope of ["ALL", "KR", "JP"]) {
       const res = await route.GET(req(`scope=${scope}`, authed), ctx);

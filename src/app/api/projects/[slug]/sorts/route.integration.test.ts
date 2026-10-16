@@ -406,3 +406,44 @@ describe("POST /api/projects/[slug]/sorts — Japan phone-number last-4-digits m
     expect(count).toBe(0);
   });
 });
+
+describe("POST /api/projects/[slug]/sorts — Korean phone stored as 010-0000-0000 (name and Japan values untouched)", () => {
+  async function submitKr(slug: string, phone: string, name = "홍길동") {
+    const { project, statements } = await seedReadyProject(slug);
+    const res = await callSorts(slug, { ...baseBody(statements.map((s) => s.id), "KR", phone), participantName: name });
+    const session = await prisma.sortSession.findFirst({ where: { projectId: project.id } });
+    return { res, session };
+  }
+
+  it("hyphenates a digits-only number and keeps the leading zero as a string", async () => {
+    const { res, session } = await submitKr("kr-phone-digits", "01012345678");
+    expect(res.status).toBe(200);
+    expect(session?.phoneNumber).toBe("010-1234-5678");
+  });
+
+  it("unifies spaces/hyphens, restores a leading zero only for exactly 10 digits, converts +82", async () => {
+    expect((await submitKr("kr-phone-spaces", "010 1234 5678")).session?.phoneNumber).toBe("010-1234-5678");
+    expect((await submitKr("kr-phone-no-zero", "10-1234-5678")).session?.phoneNumber).toBe("010-1234-5678");
+    expect((await submitKr("kr-phone-plus82", "+82 10-1234-5678")).session?.phoneNumber).toBe("010-1234-5678");
+  });
+
+  it("stores an unclear Korean value exactly as typed (never guessed) and still accepts it, as before", async () => {
+    const { res, session } = await submitKr("kr-phone-unclear", "010-1234-567");
+    expect(res.status).toBe(200);
+    expect(session?.phoneNumber).toBe("010-1234-567");
+  });
+
+  it("does not touch the participant name", async () => {
+    const { session } = await submitKr("kr-phone-name-untouched", "01012345678", "01012345678");
+    expect(session?.participantName).toBe("01012345678");
+  });
+
+  it("does not apply to Japan: last-4 and a full-width name stay as submitted", async () => {
+    const slug = "kr-phone-jp-untouched";
+    const { project, statements } = await seedReadyProject(slug);
+    await callSorts(slug, { ...baseBody(statements.map((s) => s.id), "JP", "0123"), participantName: "０１２３" });
+    const session = await prisma.sortSession.findFirstOrThrow({ where: { projectId: project.id } });
+    expect(session.phoneNumber).toBe("0123");
+    expect(session.participantName).toBe("０１２３");
+  });
+});

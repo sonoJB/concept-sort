@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "node --no-warnings scripts/backup/auto-backup.mjs --once --reason pre-deploy && prisma migrate deploy && next start",
+    "start": "node --no-warnings scripts/backup/pre-migrate-guard.mjs && prisma migrate deploy && next start",
     "postinstall": "prisma generate",
     "lint": "eslint",
     "test": "vitest run"

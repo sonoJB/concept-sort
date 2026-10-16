@@ -5,6 +5,8 @@ import { computeLocaleContentStatus } from "@/lib/localeContentStatus";
 import { GENDER_VALUES, SCHOOL_LEVEL_VALUES, GRADE_VALUES } from "@/lib/participantOptions";
 import { classifySubmissionDataRole } from "@/lib/classifySubmissionDataRole";
 import { normalizeFullWidthDigits, isValidJapanesePhoneLast4 } from "@/lib/fullWidthDigits";
+import { normalizeKoreanMobile } from "@/lib/koreanPhone.mjs";
+import { isMaintenanceMode } from "@/lib/maintenanceMode";
 import type { ErrorCode } from "@/lib/errorCodes";
 
 export async function GET(
@@ -35,6 +37,10 @@ export async function POST(
   { params }: { params: Promise<{ slug: string }> }
 ) {
   const { slug } = await params;
+  if (isMaintenanceMode()) {
+    // Recovery write-freeze (see src/lib/maintenanceMode.ts): refuse before any DB access.
+    return fail("COUNTRY_NOT_AVAILABLE", "현재 점검 중이라 제출을 받을 수 없습니다.", 503);
+  }
   const body = await request.json().catch(() => null);
 
   const participantName =
@@ -86,7 +92,12 @@ export async function POST(
     if (!rawPhoneNumber) {
       return fail("PHONE_REQUIRED", "스마트폰 번호를 입력해 주세요.");
     }
-    phoneNumber = rawPhoneNumber;
+    // Korea keeps full-number input and non-empty validation unchanged; a number
+    // that is unambiguously a Korean mobile number is stored as 010-0000-0000.
+    // Anything unclear is stored exactly as typed (never guessed or repaired).
+    const normalized = normalizeKoreanMobile(rawPhoneNumber);
+    phoneNumber =
+      normalized.status === "NORMALIZED" || normalized.status === "UNCHANGED" ? normalized.value : rawPhoneNumber;
   }
 
   const groups: IncomingGroup[] = Array.isArray(body?.groups) ? body.groups : [];

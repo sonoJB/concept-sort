@@ -81,6 +81,16 @@ export type OfficialMatrixResult = {
   scopeFingerprint: string;
 };
 
+/**
+ * Returns a NEW frequency matrix equal to `count` everywhere off the diagonal,
+ * with every diagonal cell set to `n` (the scope's valid participant count).
+ * The input matrix is never modified, so the analysis engine's matrices and the
+ * other worksheets are unaffected.
+ */
+export function withDiagonalN(count: Matrix, n: number): Matrix {
+  return count.map((row, i) => row.map((v, j) => (i === j ? n : v)));
+}
+
 function sha256(text: string): string {
   return createHash("sha256").update(text).digest("hex");
 }
