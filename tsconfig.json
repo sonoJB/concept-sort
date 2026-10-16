@@ -34,6 +34,7 @@
     "node_modules",
     "**/*.test.ts",
     "**/*.integration.test.ts",
-    "src/lib/analysis/testSupport/**"
+    "src/lib/analysis/testSupport/**",
+    "scripts/backup/**"
   ]
 }
