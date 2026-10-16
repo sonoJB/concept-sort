@@ -14,6 +14,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { toCsvWithBom } from "../../src/lib/csv";
+import { normalizeKoreanMobile } from "../../src/lib/koreanPhone.mjs";
 import { buildXlsx, type XlsxCell } from "../../src/lib/officialMatrix/xlsx";
 import {
   anonymousParticipantId,
@@ -57,6 +58,9 @@ const capturedAt = new Date(need("captured-at"));
 const gitCommit = args["git-commit"] ?? "unknown";
 const deployedCommit = args["deployed-commit"] ?? gitCommit;
 const envNamesFile = args["env-names"];
+const changelogFile = args["changelog"]; // access-restricted before/after record of the Korean phone clean-up (contains personal data)
+const predecessor = args["predecessor"]; // name of the earlier bundle this one supersedes (never modified)
+const phoneSummaryFile = args["phone-summary"]; // printable summary (no phone numbers) of the clean-up run
 if (Number.isNaN(capturedAt.getTime())) throw new Error("bad --captured-at");
 
 const generatedAt = new Date();
@@ -179,6 +183,7 @@ const participantRows: XlsxCell[][] = [
     "[파생] 이름 NFKC 정규화",
     "전화번호(한국=전체 / 일본=끝4자리·원문)",
     "[파생] 일본: 이름과 전화 끝4자리 일치",
+    "[파생] 한국 전화번호 형식(010-0000-0000)",
     "성별",
     "연령",
     "학교급",
@@ -199,6 +204,11 @@ sessionsSorted.forEach((s, i) => {
     match = /^[0-9０-９]{4}$/.test(name) ? (NFKC(name) === phone ? "일치" : "불일치") : "비교 불가(4자리 숫자 아님)";
   }
   const isMain = s.dataRole === "MAIN";
+  let krFormat = "해당 없음(한국 아님)";
+  if (country === "KR") {
+    const st = normalizeKoreanMobile(phone).status;
+    krFormat = st === "UNCHANGED" ? "표준 형식" : st === "EMPTY" ? "빈칸" : st === "NORMALIZED" ? "변환 가능(미적용)" : "확인 필요(임의 변환 안 함)";
+  }
   participantRows.push([
     i + 1,
     isMain ? "본조사" : "파일럿",
@@ -213,6 +223,7 @@ sessionsSorted.forEach((s, i) => {
     NFKC(name),
     phone,
     match,
+    krFormat,
     s.gender as string,
     s.age as number,
     s.schoolLevel as string,
@@ -342,7 +353,7 @@ const runRows: XlsxCell[][] = [
 const jpMain = data.SortSession.filter((s) => s.countryCode === "JP" && s.dataRole === "MAIN");
 const jpFourDigit = jpMain.filter((s) => /^[0-9０-９]{4}$/.test(s.participantName as string)).length;
 const jpFullWidth = jpMain.filter((s) => /^[０-９]{4}$/.test(s.participantName as string)).length;
-const jpNameNote = `일본 본조사 ${jpMain.length}명 중 ${jpFourDigit}명의 '이름(원문)'이 4자리 숫자 코드입니다(전각 ${jpFullWidth}명). 앱에는 별도의 일본어 이름 저장 필드가 없으며, 전각 숫자는 입력된 원문 그대로 보존했습니다.`;
+const jpNameNote = `일본 본조사 ${jpMain.length}명 중 ${jpFourDigit}명의 저장된 '이름' 값이 4자리 숫자입니다(전각 ${jpFullWidth}명). 앱에는 별도의 일본어 이름 필드가 없습니다. 서버 코드는 이름을 저장 후 수정하지 않지만 DB에 변경 이력이 없어, 이 값이 참가자가 처음 입력한 값이라고 증명할 수는 없습니다. 값은 저장된 그대로 두었습니다(전각 포함).`;
 
 const readme: XlsxCell[][] = [
   [{ v: "연구 원자료 전체 (백업용 Excel)", bold: true }],
@@ -360,13 +371,14 @@ const readme: XlsxCell[][] = [
   [],
   [{ v: "열 해석 주의 — 일본 참가자의 '이름'", bold: true }],
   [jpNameNote],
-  ["'[파생]' 표시가 붙은 열은 원문을 바꾸지 않고 비교용으로 계산한 값입니다. 원문 열이 기준 자료입니다. 일치 여부 '불일치'는 수정하지 않고 그대로 두었습니다."],
+  ["'[파생]' 표시가 붙은 열은 원문을 바꾸지 않고 비교용으로 계산한 값입니다. 원문 열이 기준 자료입니다. '불일치'로 표시된 건은 원인을 확인할 수 없으며(기록 부족), 수정하거나 맞추지 않고 그대로 두었습니다."],
+  ["한국 참가자의 전화번호는 010-0000-0000 형식으로 정비되었습니다(변경 전후 값은 접근 제한 변경기록에 있음). 일본 참가자의 전화 끝4자리·이름에는 이 규칙을 적용하지 않았습니다."],
   ["이름·전화번호는 문자열입니다. 앞자리 0이 있는 값도 문자열로 저장되어 있습니다."],
 ];
 
 const researcherXlsx = buildXlsx([
   { name: "안내", rows: readme, colWidths: [150] },
-  { name: "참여자", rows: participantRows, colWidths: [10, 9, 10, 6, 26, 24, 16, 12, 22, 22, 22, 24, 22, 8, 6, 10, 8, 8, 8, 28], freeze: { rows: 1, cols: 0 } },
+  { name: "참여자", rows: participantRows, colWidths: [10, 9, 10, 6, 26, 24, 16, 12, 22, 22, 22, 24, 22, 22, 8, 6, 10, 8, 8, 8, 28], freeze: { rows: 1, cols: 0 } },
   { name: "참여자_요약", rows: summaryRows, colWidths: [12, 10, 14] },
   { name: "분류결과_묶음(long)", rows: longRows, colWidths: [16, 28, 9, 6, 8, 28, 24, 10, 10], freeze: { rows: 1, cols: 0 } },
   { name: "분류결과_참여자x진술문", rows: wideRows, colWidths: [16, 9, 6, ...statements.map(() => 5)], freeze: { rows: 1, cols: 3 } },
@@ -422,6 +434,15 @@ const recoveryMd = fs.readFileSync(path.resolve(__dirname, "RECOVERY_TEMPLATE.md
 writeNew(path.join(outDir, "README_복구절차서.md"), recoveryMd);
 note("README_복구절차서.md", "DOC", false, "장애 유형별 복구 절차서");
 
+// 6b) Korean phone clean-up change log (access-restricted record; contains personal data)
+if (changelogFile) {
+  const rel = "changelog/" + path.basename(changelogFile);
+  ensureDir(path.join(outDir, "changelog"));
+  fs.copyFileSync(changelogFile, path.join(outDir, rel), fs.constants.COPYFILE_EXCL);
+  note(rel, "CHANGELOG", true, "한국 전화번호 정비 변경기록(변경 전·후 값, 개인정보 포함). 서버에서는 웹으로 제공되지 않는 접근 제한 파일");
+}
+const phoneSummary = phoneSummaryFile ? JSON.parse(fs.readFileSync(phoneSummaryFile, "utf8")) : null;
+
 // 7) Manifest
 const files = walkFiles(outDir).filter((f) => f !== "MANIFEST.json" && f !== "SHA256SUMS.txt");
 const manifest = {
@@ -431,8 +452,9 @@ const manifest = {
   dataSnapshot: { capturedAtUtc: capturedAt.toISOString(), capturedAtKst: formatKst(capturedAt), method: "SQLite VACUUM INTO (단일 읽기 트랜잭션, 운영 DB는 읽기 전용으로만 열림)" },
   study: { title: project.title, slug: project.slug, projectId: project.id, statementCount: statements.length, koreanEnabled: project.koreanEnabled, japaneseEnabled: project.japaneseEnabled },
   versions: {
-    appCommit: deployedCommit,
-    bundleToolsCommit: gitCommit,
+    deployedAppCommitAtSnapshot: deployedCommit,
+    bundleBuiltWithCommit: gitCommit,
+    supersedesBundle: predecessor ?? null,
     prismaSchemaLastMigration: lastMig,
     appliedMigrations: data._prisma_migrations.map((m) => m.migration_name),
     officialMatrixSpec: OFFICIAL_MATRIX_SPEC_VERSION,
@@ -443,12 +465,13 @@ const manifest = {
   contentFingerprintSha256: fp.fingerprint,
   perTableFingerprintSha256: fp.perTable,
   submissionsByDataRoleAndCountry: byCountryRole,
-  submissionStatusNote: "SortSession은 최종 제출이 완료될 때만 생성됩니다. 임시저장·미완료 상태의 행은 DB에 존재하지 않으므로 모든 행이 '제출 완료'입니다.",
+  submissionStatusNote: "앱은 최종 제출이 이루어질 때만 SortSession 행을 만듭니다. 따라서 DB에 저장된 임시저장·미완료 기록은 없고 모든 행이 제출 완료 상태입니다. 제출하지 않았거나 중도 이탈한 인원은 이 DB만으로 확인할 수 없으며, 모집 명단 등 별도 기록이 있을 때만 대조해 판단할 수 있습니다.",
   officialMainStudy: {
     validN: { KR: results.KR.nTotal, JP: results.JP.nTotal, ALL: results.ALL.nTotal },
     exclusionCountsAll: results.ALL.exclusionCounts,
     fingerprints: { source: results.ALL.sourceFingerprint, ALL: results.ALL.scopeFingerprint, KR: results.KR.scopeFingerprint, JP: results.JP.scopeFingerprint },
   },
+  koreanPhoneNormalization: phoneSummary,
   environmentVariableNames: envNames,
   retentionNote: "보존기간·삭제 기준은 확인된 연구계획/IRB 기준이 없어 임의로 정하지 않았습니다. 이 백업은 자동으로 삭제되지 않습니다.",
   files: files.map((f) => ({

@@ -1,35 +1,40 @@
 #!/usr/bin/env node
 /**
- * Automatic, non-destructive SQLite backups for the concept-sort production
- * database. Plain Node (node:sqlite only) — no npm dependencies, not part of
- * the Next.js bundle.
+ * Non-destructive SQLite backups for the concept-sort production database.
+ * Plain Node (node:sqlite only) — no npm dependencies, not part of the Next.js
+ * bundle.
  *
- *   node scripts/backup/auto-backup.mjs --once --reason pre-deploy
- *   node scripts/backup/auto-backup.mjs --daemon           (scheduled; used by instrumentation.ts)
- *   node scripts/backup/auto-backup.mjs --once --reason manual
+ *   node scripts/backup/auto-backup.mjs --once --reason manual      (always creates a new backup)
+ *   node scripts/backup/auto-backup.mjs --daemon                    (scheduled watcher, started by instrumentation)
+ *
+ * The strict "may we run database migrations?" decision lives in
+ * pre-migrate-guard.mjs, which reuses the functions exported here.
  *
  * Guarantees:
  *   - The live DB is opened READ-ONLY. A consistent copy is made with
- *     `VACUUM INTO` (a single read transaction), never by copying live files.
+ *     `VACUUM INTO` (one read transaction), never by copying live files.
  *   - Each backup goes into its own new directory; an existing backup is NEVER
- *     overwritten, modified or deleted. There is no retention/cleanup logic:
- *     removing old backups is a deliberate human decision.
+ *     overwritten, modified or deleted by this code. There is no retention or
+ *     clean-up logic: removing backups is a deliberate human decision. Damaged
+ *     copies are reported, not deleted.
  *   - Every backup is integrity-checked, row-counted, fingerprinted and
  *     SHA-256'd; the result is stored beside it and in status.json.
- *   - Failures never block application start (exit code stays 0 for --once
- *     unless --strict), but they are logged loudly and recorded in
- *     status.json (lastResult=FAILED, consecutiveFailures) so the admin
- *     screen can show them.
- *   - Scheduled runs only create a new backup when the data actually changed
- *     since the last successful backup (content fingerprint), so a finished
- *     study does not accumulate identical copies.
+ *   - A scheduled/pre-deploy run may skip creating a backup because "data is
+ *     unchanged" ONLY after re-verifying that the previous backup still exists
+ *     and is intact (manifest present, SHA-256 matches, integrity_check ok,
+ *     same migration history). Otherwise a new backup is created.
+ *   - File permissions (0444 / read-only attribute) only discourage accidental
+ *     edits. They are NOT immutable storage: the owner of the volume can still
+ *     change or delete the files.
  */
 import { DatabaseSync } from "node:sqlite";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const MIN_FREE_BYTES = 100 * 1024 * 1024;
+export const MIN_FREE_BYTES = 100 * 1024 * 1024; // below this a backup is refused
+export const LOW_DISK_WARN_BYTES = 200 * 1024 * 1024; // below this the admin screen warns
 const DAEMON_FIRST_RUN_MS = Number(process.env.AUTO_BACKUP_FIRST_RUN_MS) || 2 * 60 * 1000;
 const DAEMON_INTERVAL_MS = Number(process.env.AUTO_BACKUP_INTERVAL_MS) || 6 * 60 * 60 * 1000;
 
@@ -41,6 +46,10 @@ export function resolveDbPath(databaseUrl) {
   let p = databaseUrl.slice("file:".length).split("?")[0];
   if (p.startsWith("//")) p = p.slice(2);
   return path.isAbsolute(p) ? p : path.resolve(process.cwd(), "prisma", p);
+}
+
+export function backupRootFor(dbPath) {
+  return path.join(path.dirname(dbPath), "backups");
 }
 
 function sqlQuote(p) {
@@ -63,7 +72,7 @@ export function contentFingerprint(db) {
   return { fingerprint: h.digest("hex"), counts };
 }
 
-function sha256File(file) {
+export function sha256File(file) {
   return crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 }
 
@@ -85,33 +94,91 @@ function stamp(d) {
   return d.toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
 }
 
-export function runOnce({ reason, databaseUrl = process.env.DATABASE_URL, now = new Date() }) {
-  const dbPath = resolveDbPath(databaseUrl);
-  if (!dbPath || !fs.existsSync(dbPath)) {
-    log("log", "skipped: no file-based database found", { reason });
-    return { result: "SKIPPED_NO_DB" };
+/** Names of migrations recorded as successfully applied in a DB (null if the table is unreadable/missing). */
+export function appliedMigrationNames(db) {
+  try {
+    return db
+      .prepare("select migration_name from _prisma_migrations where finished_at is not null and rolled_back_at is null order by migration_name")
+      .all()
+      .map((r) => r.migration_name);
+  } catch {
+    return null;
   }
-  const root = path.join(path.dirname(dbPath), "backups");
-  fs.mkdirSync(root, { recursive: true });
-  const statusFile = path.join(root, "status.json");
-  const logFile = path.join(root, "backup-log.jsonl");
-  const prev = readJson(statusFile) ?? { consecutiveFailures: 0 };
+}
 
-  const record = (entry) => {
-    fs.appendFileSync(logFile, JSON.stringify({ at: now.toISOString(), reason, ...entry }) + "\n");
-  };
+/**
+ * Re-verifies an existing backup directory without modifying it.
+ * @returns {{ ok: boolean, problems: string[], manifest: object|null }}
+ */
+export function verifyBackupDir(dir, { expectedMigrations } = {}) {
+  const problems = [];
+  const manifestPath = path.join(dir, "manifest.json");
+  if (!fs.existsSync(dir)) return { ok: false, problems: ["backup directory is missing"], manifest: null };
+  const manifest = readJson(manifestPath);
+  if (!manifest) return { ok: false, problems: ["manifest.json is missing or unreadable"], manifest: null };
+  const dbFile = path.join(dir, manifest.file ?? "");
+  if (!manifest.file || !fs.existsSync(dbFile)) return { ok: false, problems: ["backup database file is missing"], manifest };
+  try {
+    if (sha256File(dbFile) !== manifest.sha256) problems.push("SHA-256 does not match the recorded value");
+  } catch (e) {
+    problems.push("cannot read backup file: " + e.message);
+  }
+  try {
+    const db = new DatabaseSync(dbFile, { readOnly: true });
+    try {
+      const integrity = db.prepare("PRAGMA integrity_check").get().integrity_check;
+      if (integrity !== "ok") problems.push("integrity_check: " + integrity);
+      if (expectedMigrations) {
+        const names = appliedMigrationNames(db);
+        if (names === null) problems.push("migration history is unreadable in the backup");
+        else if (JSON.stringify(names) !== JSON.stringify([...expectedMigrations].sort())) {
+          problems.push("migration history differs from the live database");
+        }
+      }
+    } finally {
+      db.close();
+    }
+  } catch (e) {
+    problems.push("cannot open backup as SQLite: " + e.message);
+  }
+  return { ok: problems.length === 0, problems, manifest };
+}
 
+function readStatus(statusFile) {
+  return readJson(statusFile) ?? { consecutiveFailures: 0 };
+}
+
+function freeBytesOf(dir) {
+  try {
+    const s = fs.statfsSync(dir);
+    return s.bavail * s.bsize;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Creates one new verified backup of the live database.
+ * Never skips and never deletes. Returns { result: "OK"|"FAILED", ... }.
+ */
+export function createBackup({ reason, databaseUrl = process.env.DATABASE_URL, now = new Date() }) {
+  const dbPath = resolveDbPath(databaseUrl);
+  if (!dbPath || !fs.existsSync(dbPath)) return { result: "FAILED", error: "database file not found: " + (dbPath ?? "(no file: URL)") };
+  const root = backupRootFor(dbPath);
   const tmpDir = path.join(root, `.tmp-${stamp(now)}-${process.pid}`);
   try {
-    const free = fs.statfsSync(root);
-    if (free.bavail * free.bsize < MIN_FREE_BYTES) {
-      throw new Error(`low disk space (${Math.round((free.bavail * free.bsize) / 1048576)} MB free) — refusing to write; nothing was deleted`);
+    fs.mkdirSync(root, { recursive: true });
+    const free = freeBytesOf(root);
+    if (free !== null && free < MIN_FREE_BYTES) {
+      throw new Error(`low disk space (${Math.round(free / 1048576)} MB free) — refusing to write; nothing was deleted`);
     }
 
     fs.mkdirSync(tmpDir);
     const tmpDb = path.join(tmpDir, "snapshot.db");
     const src = new DatabaseSync(dbPath, { readOnly: true });
+    let liveMigrations;
     try {
+      liveMigrations = appliedMigrationNames(src);
       src.exec(`VACUUM INTO ${sqlQuote(tmpDb)}`);
     } finally {
       src.close();
@@ -122,28 +189,15 @@ export function runOnce({ reason, databaseUrl = process.env.DATABASE_URL, now = 
     try {
       integrity = snap.prepare("PRAGMA integrity_check").get().integrity_check;
       fp = contentFingerprint(snap);
-      lastMigration = snap
-        .prepare("select migration_name from _prisma_migrations order by started_at desc limit 1")
-        .get()?.migration_name ?? null;
+      try {
+        lastMigration = snap.prepare("select migration_name from _prisma_migrations order by started_at desc limit 1").get()?.migration_name ?? null;
+      } catch {
+        lastMigration = null; // a database without migration history can (and must) still be backed up
+      }
     } finally {
       snap.close();
     }
     if (integrity !== "ok") throw new Error(`integrity_check failed on the new backup: ${integrity}`);
-
-    if (reason !== "manual" && prev.lastBackupFingerprint === fp.fingerprint) {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-      const result = { result: "SKIPPED_UNCHANGED", lastBackup: prev.lastBackupDir ?? null };
-      writeJsonAtomic(statusFile, {
-        ...prev,
-        lastAttemptAt: now.toISOString(),
-        lastResult: "SKIPPED_UNCHANGED",
-        lastError: null,
-        consecutiveFailures: 0,
-      });
-      record(result);
-      log("log", "skipped: data unchanged since last backup", { reason });
-      return result;
-    }
 
     const finalName = `${stamp(now)}_${reason}`;
     const finalDir = path.join(root, finalName);
@@ -163,46 +217,167 @@ export function runOnce({ reason, databaseUrl = process.env.DATABASE_URL, now = 
       tableCounts: fp.counts,
       contentFingerprint: fp.fingerprint,
       lastMigration,
+      appliedMigrations: liveMigrations,
       sourceDb: path.basename(dbPath),
     };
     fs.writeFileSync(path.join(finalDir, "manifest.json"), JSON.stringify(manifest, null, 2));
     fs.chmodSync(finalDb, 0o444);
     fs.chmodSync(path.join(finalDir, "manifest.json"), 0o444);
 
-    writeJsonAtomic(statusFile, {
-      lastAttemptAt: now.toISOString(),
-      lastResult: "OK",
-      lastError: null,
-      lastSuccessAt: now.toISOString(),
-      lastBackupDir: finalName,
-      lastBackupFingerprint: fp.fingerprint,
-      lastBackupSha256: manifest.sha256,
-      consecutiveFailures: 0,
-    });
-    record({ result: "OK", dir: finalName, bytes: manifest.bytes, sha256: manifest.sha256 });
-    log("log", "backup created", { dir: finalName, bytes: manifest.bytes });
-    return { result: "OK", dir: finalName, manifest };
+    // The backup must verify as a whole (file + manifest + migration history) before it counts as a success.
+    const check = verifyBackupDir(finalDir, { expectedMigrations: liveMigrations ?? undefined });
+    if (!check.ok) throw new Error("new backup failed verification: " + check.problems.join("; "));
+
+    return { result: "OK", dir: finalName, dirPath: finalDir, manifest };
   } catch (err) {
     try {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     } catch {
       // ignore
     }
-    const message = err instanceof Error ? err.message : String(err);
+    return { result: "FAILED", error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
+ * One scheduled / best-effort check. May skip creating a backup, but only
+ * after re-verifying the previous backup. Never throws, never blocks start-up.
+ * Always records the check itself (so "checks stopped" is distinguishable from
+ * "data did not change").
+ */
+export function runOnce({ reason, databaseUrl = process.env.DATABASE_URL, now = new Date() }) {
+  const dbPath = resolveDbPath(databaseUrl);
+  if (!dbPath || !fs.existsSync(dbPath)) {
+    log("log", "skipped: no file-based database found", { reason });
+    return { result: "SKIPPED_NO_DB" };
+  }
+  const root = backupRootFor(dbPath);
+  try {
+    fs.mkdirSync(root, { recursive: true });
+  } catch (e) {
+    log("error", "BACKUP FAILED (cannot create backup directory)", { error: String(e) });
+    return { result: "FAILED", error: String(e) };
+  }
+  const statusFile = path.join(root, "status.json");
+  const logFile = path.join(root, "backup-log.jsonl");
+  const prev = readStatus(statusFile);
+  const free = freeBytesOf(root);
+  const base = {
+    lastCheckAt: now.toISOString(),
+    lastAttemptAt: now.toISOString(),
+    freeBytes: free,
+    lowDisk: free !== null && free < LOW_DISK_WARN_BYTES,
+  };
+  const record = (entry) => {
     try {
-      writeJsonAtomic(statusFile, {
-        ...prev,
-        lastAttemptAt: now.toISOString(),
-        lastResult: "FAILED",
-        lastError: message,
-        consecutiveFailures: (prev.consecutiveFailures ?? 0) + 1,
-      });
-      record({ result: "FAILED", error: message });
+      fs.appendFileSync(logFile, JSON.stringify({ at: now.toISOString(), reason, ...entry }) + "\n");
     } catch {
-      // status file itself unwritable: the console line below is all we have.
+      // logging must never break the check
     }
+  };
+  const save = (obj) => {
+    try {
+      writeJsonAtomic(statusFile, obj);
+    } catch {
+      // status file unwritable: the console line is all we have.
+    }
+  };
+
+  let invalidPrev = null;
+  try {
+    // Decide whether the data changed since the last backup (read-only look at the live DB).
+    const live = new DatabaseSync(dbPath, { readOnly: true });
+    let liveFp, liveMigrations;
+    try {
+      liveFp = contentFingerprint(live);
+      liveMigrations = appliedMigrationNames(live);
+    } finally {
+      live.close();
+    }
+
+    if (reason !== "manual" && prev.lastBackupFingerprint === liveFp.fingerprint && prev.lastBackupDir) {
+      const prevDir = path.join(root, prev.lastBackupDir);
+      const check = verifyBackupDir(prevDir, { expectedMigrations: liveMigrations ?? undefined });
+      const sameRecord = check.manifest && check.manifest.sha256 === prev.lastBackupSha256 && check.manifest.contentFingerprint === liveFp.fingerprint;
+      if (check.ok && sameRecord) {
+        save({
+          ...prev,
+          ...base,
+          lastResult: "SKIPPED_UNCHANGED",
+          lastCheckResult: "UNCHANGED_PREVIOUS_BACKUP_VERIFIED",
+          lastError: null,
+          lastVerifiedAt: now.toISOString(),
+          lastVerifiedBackup: prev.lastBackupDir,
+          lastVerifiedOk: true,
+          lastVerifiedProblems: [],
+          consecutiveFailures: 0,
+        });
+        record({ result: "SKIPPED_UNCHANGED", verified: prev.lastBackupDir });
+        log("log", "skipped: data unchanged and previous backup re-verified", { reason, dir: prev.lastBackupDir });
+        return { result: "SKIPPED_UNCHANGED", lastBackup: prev.lastBackupDir };
+      }
+      // Previous backup is missing / damaged / does not match: do NOT skip, and do NOT touch the old copy.
+      const problems = check.ok ? ["status record does not match the backup's manifest"] : check.problems;
+      log("error", "previous backup could not be verified — creating a new backup", { dir: prev.lastBackupDir, problems });
+      record({ result: "PREVIOUS_BACKUP_INVALID", dir: prev.lastBackupDir, problems });
+      invalidPrev = { dir: prev.lastBackupDir, problems };
+    }
+
+    const created = createBackup({ reason, databaseUrl, now });
+    if (created.result !== "OK") throw new Error(created.error);
+    const m = created.manifest;
+    save({
+      ...base,
+      lastResult: "OK",
+      lastCheckResult: invalidPrev ? "NEW_BACKUP_CREATED_PREVIOUS_INVALID" : "NEW_BACKUP_CREATED",
+      lastError: null,
+      lastSuccessAt: now.toISOString(),
+      lastBackupAt: now.toISOString(),
+      lastBackupDir: created.dir,
+      lastBackupFingerprint: m.contentFingerprint,
+      lastBackupSha256: m.sha256,
+      lastVerifiedAt: now.toISOString(),
+      lastVerifiedBackup: created.dir,
+      lastVerifiedOk: true,
+      lastVerifiedProblems: [],
+      previousBackupProblem: invalidPrev,
+      consecutiveFailures: 0,
+      daemonStartedAt: prev.daemonStartedAt,
+      lastDaemonTickAt: prev.lastDaemonTickAt,
+    });
+    record({ result: "OK", dir: created.dir, bytes: m.bytes, sha256: m.sha256 });
+    log("log", "backup created", { dir: created.dir, bytes: m.bytes });
+    return { result: "OK", dir: created.dir, manifest: m };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    save({
+      ...prev,
+      ...base,
+      lastResult: "FAILED",
+      lastCheckResult: "FAILED",
+      lastError: message,
+      consecutiveFailures: (prev.consecutiveFailures ?? 0) + 1,
+    });
+    record({ result: "FAILED", error: message });
     log("error", "BACKUP FAILED", { reason, error: message });
     return { result: "FAILED", error: message };
+  }
+}
+
+/** Marks that the scheduler is alive (separate from whether a backup was needed). */
+function markDaemonTick(databaseUrl, started) {
+  const dbPath = resolveDbPath(databaseUrl);
+  if (!dbPath) return;
+  const statusFile = path.join(backupRootFor(dbPath), "status.json");
+  try {
+    const prev = readStatus(statusFile);
+    writeJsonAtomic(statusFile, {
+      ...prev,
+      daemonStartedAt: started ? new Date().toISOString() : prev.daemonStartedAt,
+      lastDaemonTickAt: new Date().toISOString(),
+    });
+  } catch {
+    // ignore
   }
 }
 
@@ -216,21 +391,23 @@ function main() {
   }
   if (args.includes("--daemon")) {
     log("log", "scheduler started", { firstRunInMs: DAEMON_FIRST_RUN_MS, everyMs: DAEMON_INTERVAL_MS });
+    markDaemonTick(process.env.DATABASE_URL, true);
     setTimeout(function tick() {
       try {
         runOnce({ reason: "scheduled" });
       } catch (err) {
         log("error", "scheduler tick crashed", { error: String(err) });
       }
+      markDaemonTick(process.env.DATABASE_URL, false);
       setTimeout(tick, DAEMON_INTERVAL_MS);
     }, DAEMON_FIRST_RUN_MS);
     return;
   }
+  // reason "manual" always creates a backup; --strict turns a failure into a non-zero exit code.
   const out = runOnce({ reason });
   if (args.includes("--strict") && out.result === "FAILED") process.exit(1);
 }
 
-import { fileURLToPath } from "node:url";
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main();
 }

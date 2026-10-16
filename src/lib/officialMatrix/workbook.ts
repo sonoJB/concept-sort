@@ -1,7 +1,10 @@
-import type { ExcludedReason, OfficialMatrixResult, OfficialScope } from "./build";
+import { withDiagonalN, type ExcludedReason, type OfficialMatrixResult, type OfficialScope } from "./build";
 import { buildXlsx, type XlsxCell, type XlsxSheet } from "./xlsx";
 
-export const OFFICIAL_MATRIX_SPEC_VERSION = "official-matrix-v1";
+export const OFFICIAL_MATRIX_SPEC_VERSION = "official-matrix-v2";
+
+/** Name of the additional frequency sheet whose main diagonal is the scope's valid N. */
+export const DIAGONAL_N_SHEET_NAME = "분석용_유사성빈도_대각선N";
 
 const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
 const pad = (n: number, w = 2) => String(n).padStart(w, "0");
@@ -111,7 +114,14 @@ export function buildOfficialMatrixWorkbook(result: OfficialMatrixResult, ctx: O
     ],
     ["빈도 행렬 계산식", "빈도[i][j] = Σ(유효 참여자) 1{진술문 i와 j를 같은 묶음에 분류} (i≠j)"],
     ["비율 행렬 계산식", "비율[i][j] = 빈도[i][j] ÷ 해당 파일의 유효 N (전체 비율은 국가별 비율의 평균이 아니라 전체 참여자 기준)"],
-    ["대각선 처리", "0 (자기 자신과의 쌍은 관측값이 아니며 분석 엔진 기준과 동일). 값 0/최대값은 모두 유효한 관측치"],
+    ["시트 '빈도행렬' — 종류/대각선", "빈도 행렬. 대각선 = 0 (자기 자신과의 쌍은 관측값이 아니며 분석 엔진 기준과 동일). 값 0/최대값은 모두 유효한 관측치"],
+    ["시트 '비율행렬' — 종류/대각선", "비율 행렬(빈도 ÷ 유효 N). 대각선 = 0 (분석 엔진 기준과 동일)"],
+    [
+      `시트 '${DIAGONAL_N_SHEET_NAME}' — 종류/대각선`,
+      empty
+        ? "빈도 행렬(분석용 표기). 대상 본조사 완료자가 없어 생성하지 않음"
+        : `빈도 행렬(분석용 표기). 주대각선 ${total}칸 모두 = 이 파일의 유효 N(${result.nTotal}). 대각선 밖의 값·진술문ID·순서·크기는 '빈도행렬' 시트와 완전히 같음. 비율 행렬도 비유사성 행렬도 아님. 참고용 표기이며 MDS·군집분석 입력(대각선 0 기준)을 바꾸지 않음`,
+    ],
     ["진술문 순서", "Statement.order 오름차순. 세 파일(전체·한국·일본) 모두 동일한 진술문ID(S01…)·순서 사용"],
     ["원자료 기준 시점", result.asOf ?? "요청 시점의 최신 본조사 자료 (별도 기준 시점 미지정)"],
     ["포함된 마지막 제출 시각", latestIncluded ?? "해당 없음"],
@@ -168,6 +178,7 @@ export function buildOfficialMatrixWorkbook(result: OfficialMatrixResult, ctx: O
   return buildXlsx([
     { name: "메타데이터", rows: meta, colWidths: [44, 110] },
     matrixSheet("빈도행렬", result, result.countMatrix),
+    matrixSheet(DIAGONAL_N_SHEET_NAME, result, result.countMatrix ? withDiagonalN(result.countMatrix, result.nTotal) : null),
     matrixSheet("비율행렬", result, result.proportionMatrix),
     { name: "진술문대응표", rows: mapping, colWidths: [10, 12, 30, 60, 60, 16], freeze: { rows: 1, cols: 0 } },
     { name: "참여자(비식별)", rows: participants, colWidths: [18, 8, 26, 24, 10], freeze: { rows: 1, cols: 0 } },

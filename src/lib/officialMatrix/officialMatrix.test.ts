@@ -14,6 +14,8 @@ import {
   statementCode,
 } from "./workbook";
 import { buildXlsx, columnLetter, sanitizeSheetName } from "./xlsx";
+import { withDiagonalN } from "./build";
+import { DIAGONAL_N_SHEET_NAME } from "./workbook";
 import { readXlsx } from "./readXlsx";
 
 const statements: OfficialStatement[] = ["a", "b", "c", "d"].map((id, i) => ({
@@ -231,6 +233,7 @@ describe("official 본조사 workbook", () => {
     expect(sheets.map((s) => s.name)).toEqual([
       "메타데이터",
       "빈도행렬",
+      "분석용_유사성빈도_대각선N",
       "비율행렬",
       "진술문대응표",
       "참여자(비식별)",
@@ -238,7 +241,7 @@ describe("official 본조사 workbook", () => {
     ]);
     const counts = sheets[1].rows.slice(1).map((row) => row.slice(1));
     expect(counts).toEqual(r.countMatrix);
-    const props = sheets[2].rows.slice(1).map((row) => row.slice(1));
+    const props = sheets[3].rows.slice(1).map((row) => row.slice(1));
     expect(props).toEqual(r.proportionMatrix);
     // Row/column IDs are separated from the numeric block.
     expect(sheets[1].rows[0][0]).toBe("진술문ID");
@@ -256,7 +259,7 @@ describe("official 본조사 workbook", () => {
   it("metadata records scope, phase, N, formulas, diagonal, snapshot and code version", () => {
     const r = build("JP", sessions);
     const text = JSON.stringify(readXlsx(buildOfficialMatrixWorkbook(r, ctx(r))).find((s) => s.name === "메타데이터")!.rows);
-    for (const needle of ["일본", "dataRole = MAIN", "대각선 처리", "계산식", "코드 버전", r.sourceFingerprint, r.scopeFingerprint, "사이버폭력의 특징"]) {
+    for (const needle of ["일본", "dataRole = MAIN", "종류/대각선", "계산식", "코드 버전", r.sourceFingerprint, r.scopeFingerprint, "사이버폭력의 특징"]) {
       expect(text).toContain(needle);
     }
   });
@@ -279,6 +282,65 @@ describe("official 본조사 workbook", () => {
     expect(officialMatrixAsciiFileName("JP", d)).toMatch(/^[\x20-\x7e]+$/);
     expect(statementCode(0, 47)).toBe("S01");
     expect(statementCode(46, 47)).toBe("S47");
+  });
+});
+
+describe("diagonal-N frequency sheet", () => {
+  const kr = [sess("KR", SORT_AB_CD), sess("KR", SORT_AB_CD), sess("KR", SORT_ABC_D)];
+  const jp = [sess("JP", SORT_AC_BD), sess("JP", SORT_AB_CD)];
+  const all = [...kr, ...jp];
+  const sheetMatrix = (r: ReturnType<typeof build>, name: string) =>
+    readXlsx(buildOfficialMatrixWorkbook(r, ctx(r))).find((s) => s.name === name)!.rows.slice(1).map((row) => row.slice(1)) as number[][];
+
+  it("every diagonal cell equals that scope's actual valid N (not hard-coded)", () => {
+    for (const [scope, n] of [["ALL", 5], ["KR", 3], ["JP", 2]] as const) {
+      const r = build(scope, all);
+      const m = sheetMatrix(r, DIAGONAL_N_SHEET_NAME);
+      expect(r.nTotal).toBe(n);
+      for (let i = 0; i < 4; i++) expect(m[i][i]).toBe(n);
+    }
+  });
+
+  it("off-diagonal cells and size are identical to the existing 빈도행렬 sheet", () => {
+    const r = build("ALL", all);
+    const base = sheetMatrix(r, "빈도행렬");
+    const diag = sheetMatrix(r, DIAGONAL_N_SHEET_NAME);
+    expect(diag).toHaveLength(base.length);
+    for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) if (i !== j) expect(diag[i][j]).toBe(base[i][j]);
+    // the original 빈도행렬 sheet keeps its zero diagonal
+    for (let i = 0; i < 4; i++) expect(base[i][i]).toBe(0);
+  });
+
+  it("ALL = KR + JP in every cell including the diagonal", () => {
+    const a = sheetMatrix(build("ALL", all), DIAGONAL_N_SHEET_NAME);
+    const k = sheetMatrix(build("KR", all), DIAGONAL_N_SHEET_NAME);
+    const j = sheetMatrix(build("JP", all), DIAGONAL_N_SHEET_NAME);
+    for (let x = 0; x < 4; x++) for (let y = 0; y < 4; y++) expect(a[x][y]).toBe(k[x][y] + j[x][y]);
+  });
+
+  it("is a separate matrix: the engine's matrix object is not modified", () => {
+    const r = build("ALL", all);
+    const before = JSON.stringify(r.countMatrix);
+    const d = withDiagonalN(r.countMatrix!, r.nTotal);
+    expect(JSON.stringify(r.countMatrix)).toBe(before);
+    expect(d).not.toBe(r.countMatrix);
+    expect(r.countMatrix![0][0]).toBe(0);
+    expect(r.proportionMatrix![0][0]).toBe(0);
+  });
+
+  it("metadata defines the diagonal of each sheet separately", () => {
+    const r = build("KR", all);
+    const text = JSON.stringify(readXlsx(buildOfficialMatrixWorkbook(r, ctx(r))).find((s) => s.name === "메타데이터")!.rows);
+    for (const needle of ["시트 '빈도행렬'", "시트 '비율행렬'", `시트 '${DIAGONAL_N_SHEET_NAME}'`, "대각선 = 0", "= 이 파일의 유효 N(3)"]) {
+      expect(text).toContain(needle);
+    }
+  });
+
+  it("an empty scope gets a notice, not a matrix of zeros", () => {
+    const r = build("JP", [sess("KR", SORT_AB_CD)]);
+    const sheet = readXlsx(buildOfficialMatrixWorkbook(r, ctx(r))).find((s) => s.name === DIAGONAL_N_SHEET_NAME)!;
+    expect(JSON.stringify(sheet.rows)).toContain("대상 본조사 완료자 없음");
+    expect(sheet.rows.flat().some((v) => typeof v === "number")).toBe(false);
   });
 });
 

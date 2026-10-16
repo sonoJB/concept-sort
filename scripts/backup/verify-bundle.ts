@@ -26,7 +26,8 @@ import {
 } from "../../src/lib/officialMatrix/build";
 import { restoreFromJson } from "./restore-from-json";
 import { contentFingerprint, openReadOnly, parseArgs, sha256File, tableColumns, userTables, walkFiles } from "./lib";
-import { formatKst } from "../../src/lib/officialMatrix/workbook";
+import { formatKst, DIAGONAL_N_SHEET_NAME } from "../../src/lib/officialMatrix/workbook";
+import { comparePreservation } from "./verify-preservation";
 
 const args = parseArgs(process.argv.slice(2));
 const bundle = path.resolve(args["bundle"] ?? "");
@@ -35,7 +36,7 @@ if (!args["bundle"] || !args["scratch"]) throw new Error("usage: --bundle <dir> 
 fs.mkdirSync(scratch, { recursive: true });
 if (fs.readdirSync(scratch).length) throw new Error("--scratch must be an empty directory");
 
-type Check = { section: "A" | "B"; name: string; pass: boolean; detail: string };
+type Check = { section: "A" | "B" | "C" | "D"; name: string; pass: boolean; detail: string };
 const checks: Check[] = [];
 const check = (section: Check["section"], name: string, pass: boolean, detail = "") => {
   checks.push({ section, name, pass, detail });
@@ -109,7 +110,7 @@ async function loadViaPrisma(dbFile: string) {
 }
 
 function matricesFromBundle() {
-  const out: Record<string, { count: number[][] | null; prop: number[][] | null; n: number | string | null; fileName: string }> = {};
+  const out: Record<string, { count: number[][] | null; diag: number[][] | null; sheetNames: string[]; prop: number[][] | null; n: number | string | null; fileName: string }> = {};
   for (const f of manifest.files.filter((x: { role: string }) => x.role === "OFFICIAL_MATRIX")) {
     const sheets = readXlsx(new Uint8Array(fs.readFileSync(path.join(bundle, f.path))));
     const meta = sheets.find((s) => s.name === "메타데이터")!.rows;
@@ -121,6 +122,8 @@ function matricesFromBundle() {
     };
     out[scope] = {
       count: grab("빈도행렬"),
+      diag: sheets.some((s) => s.name === DIAGONAL_N_SHEET_NAME) ? grab(DIAGONAL_N_SHEET_NAME) : null,
+      sheetNames: sheets.map((s) => s.name),
       prop: grab("비율행렬"),
       n: meta.find((r) => r[0] === "이 파일의 유효 N (국가 범위 내)")![1],
       fileName: path.basename(f.path),
@@ -247,6 +250,80 @@ async function verifyRestored(tag: string, dbFile: string) {
   }
   check("B", "matrices regenerated from DB-restore and JSON-restore are identical", OFFICIAL_SCOPES.every((s) => eq(reg1[s].countMatrix, reg2[s].countMatrix) && eq(reg1[s].proportionMatrix, reg2[s].proportionMatrix)));
 
+  // ---------------- B2b. JSON restore: the NEW admin credentials work, the old ones do not (no secret is printed)
+  {
+    const newToken = fs.readFileSync(jsonRestore + ".admin-token.txt", "utf8").trim();
+    const orig = openReadOnly(path.join(bundle, dbRel));
+    const oldToken = (orig.prepare("select adminToken from Project").get() as { adminToken: string }).adminToken;
+    orig.close();
+    process.env.DATABASE_URL = "file:" + jsonRestore.split(path.sep).join("/");
+    const { prisma } = await import("../../src/lib/db");
+    const route = await import("../../src/app/api/projects/[slug]/official-matrix/route");
+    const { NextRequest } = await import("next/server");
+    const slug = manifest.study.slug as string;
+    const call = (token: string | null) =>
+      route.GET(
+        new NextRequest(`http://localhost/api/projects/${slug}/official-matrix?scope=ALL&format=json`, { headers: token ? { "x-admin-token": token } : {} }),
+        { params: Promise.resolve({ slug }) }
+      );
+    const okRes = await call(newToken);
+    const okBody = okRes.status === 200 ? await okRes.json() : null;
+    check("B", "[JSON restore] the newly issued admin token opens the admin API of the restored database", okRes.status === 200 && okBody?.nTotal === reg2.ALL.nTotal, `HTTP ${okRes.status}, N=${okBody?.nTotal}`);
+    check("B", "[JSON restore] the pre-restore admin token and a missing token are rejected", (await call(oldToken)).status === 403 && (await call(null)).status === 403);
+    await prisma.$disconnect();
+  }
+
+  // ---------------- C. the diagonal-N sheet and the per-sheet definitions
+  {
+    const fb = matricesFromBundle();
+    const expectN: Record<string, number> = {};
+    for (const part of (args["expect-n"] ?? "").split(",").filter(Boolean)) {
+      const [k, v] = part.split("=");
+      expectN[k] = Number(v);
+    }
+    const required = ["메타데이터", "빈도행렬", DIAGONAL_N_SHEET_NAME, "비율행렬", "진술문대응표", "참여자(비식별)", "제외내역"];
+    for (const scope of OFFICIAL_SCOPES) {
+      const b = fb[scope];
+      const n = reg1[scope].nTotal;
+      const size = reg1[scope].statements.length;
+      check("C", `[${scope}] all existing sheets are kept and the new sheet ${DIAGONAL_N_SHEET_NAME} is present`, required.every((s) => b.sheetNames.includes(s)), b.sheetNames.join(" | "));
+      const diag = b.diag;
+      check("C", `[${scope}] the diagonal sheet is ${size}x${size}`, !!diag && diag.length === size && diag.every((r) => r.length === size));
+      check("C", `[${scope}] every one of the ${size} diagonal cells equals the scope's actual valid N (${n})`, !!diag && diag.every((r, i) => r[i] === n));
+      let off = !!diag && !!b.count;
+      let zeroDiag = !!b.count;
+      for (let i = 0; i < size && diag && b.count; i++) for (let j = 0; j < size; j++) {
+        if (i !== j && diag[i][j] !== b.count[i][j]) off = false;
+        if (i === j && b.count[i][j] !== 0) zeroDiag = false;
+      }
+      check("C", `[${scope}] off-diagonal cells equal the existing 빈도행렬 sheet in every cell`, off);
+      check("C", `[${scope}] the existing 빈도행렬 sheet keeps its zero diagonal`, zeroDiag);
+      check("C", `[${scope}] diagonal sheet equals the engine's frequency matrix with the diagonal replaced by N`, !!diag && eq(diag, reg1[scope].countMatrix!.map((r, i) => r.map((v, j) => (i === j ? n : v)))));
+      if (expectN[scope] !== undefined) check("C", `[${scope}] valid N equals the confirmed value ${expectN[scope]}`, n === expectN[scope], `observed ${n}`);
+      const sheets = readXlsx(new Uint8Array(fs.readFileSync(path.join(bundle, manifest.files.find((x: { path: string }) => x.path.endsWith(b.fileName)).path))));
+      const metaText = JSON.stringify(sheets.find((s) => s.name === "메타데이터")!.rows);
+      check("C", `[${scope}] the metadata defines the diagonal of each sheet separately`, ["시트 '빈도행렬'", "시트 '비율행렬'", `시트 '${DIAGONAL_N_SHEET_NAME}'`].every((s) => metaText.includes(s)));
+      const hdr = (name: string) => sheets.find((s) => s.name === name)!.rows[0];
+      check("C", `[${scope}] row/column statement ids and order are identical across the frequency, diagonal and proportion sheets`, eq(hdr("빈도행렬"), hdr(DIAGONAL_N_SHEET_NAME)) && eq(hdr("빈도행렬"), hdr("비율행렬")));
+    }
+    const a = fb.ALL.diag, k = fb.KR.diag, j = fb.JP.diag;
+    let sumOk = !!a && !!k && !!j;
+    for (let x = 0; sumOk && x < a!.length; x++) for (let y = 0; y < a![x].length; y++) if (a![x][y] !== k![x][y] + j![x][y]) sumOk = false;
+    check("C", "diagonal sheets: ALL = KR + JP in every cell including the diagonal", sumOk);
+    check("C", "all three files use the same statement ids in the same order", eq(reg1.KR.statements.map((s) => s.id), reg1.ALL.statements.map((s) => s.id)) && eq(reg1.JP.statements.map((s) => s.id), reg1.ALL.statements.map((s) => s.id)));
+  }
+
+  // ---------------- D. preservation against a baseline snapshot (only if given)
+  if (args["baseline-db"] && args["changelog"]) {
+    const log = JSON.parse(fs.readFileSync(path.resolve(args["changelog"]), "utf8")) as { changes: { sessionId: string; before: string; after: string; rule: string }[] };
+    const before = openReadOnly(path.resolve(args["baseline-db"]));
+    const after = openReadOnly(path.join(bundle, dbRel));
+    const res = comparePreservation(before, after, log.changes);
+    before.close();
+    after.close();
+    for (const c of res.checks) check("D", c.name, c.pass, c.detail);
+  }
+
   // ---------------- B3. definitional identities on the regenerated matrices
   {
     const { ALL, KR, JP } = reg1;
@@ -295,7 +372,9 @@ async function verifyRestored(tag: string, dbFile: string) {
 
   // ---------------- report
   const failed = checks.filter((c) => !c.pass);
-  const section = (s: "A" | "B") => checks.filter((c) => c.section === s);
+  const section = (s: "A" | "B" | "C" | "D") => checks.filter((c) => c.section === s);
+  const row = (label: string, s: "A" | "B" | "C" | "D") =>
+    section(s).length === 0 ? "" : `| ${label} | ${section(s).every((c) => c.pass) ? "**성공**" : "**실패**"} (${section(s).filter((c) => c.pass).length}/${section(s).length}) |`;
   const md = [
     "# 백업 검증 보고서 (VERIFICATION_REPORT)",
     "",
@@ -307,8 +386,11 @@ async function verifyRestored(tag: string, dbFile: string) {
     "",
     `| 구분 | 결과 |`,
     `|---|---|`,
-    `| A. 백업 파일 생성·무결성(체크섬) | ${section("A").every((c) => c.pass) ? "**성공**" : "**실패**"} (${section("A").filter((c) => c.pass).length}/${section("A").length}) |`,
-    `| B. 복원 검증(DB 복원 · JSON 복원 · 행렬 재생성) | ${section("B").every((c) => c.pass) ? "**성공**" : "**실패**"} (${section("B").filter((c) => c.pass).length}/${section("B").length}) |`,
+    row("A. 백업 파일 생성·무결성(체크섬)", "A"),
+    row("B. 복원 검증(DB 복원 · JSON 복원 · 행렬 재생성 · 새 관리자 인증)", "B"),
+    row("C. 대각선N 시트·시트별 정의·세 파일 일관성", "C"),
+    row("D. 정비 전 스냅샷 대비 보존(허용된 전화번호 변경 외 변경 없음)", "D"),
+    `| 전체 | ${failed.length === 0 ? "**성공**" : "**실패**"} (${checks.length - failed.length}/${checks.length}) |`,
     "",
     "> 'A 백업 파일 생성 성공'과 'B 복원 검증 성공'은 별개입니다. A는 파일이 온전하다는 뜻이고, B는 그 파일로 실제 DB를 되살리고 결과를 다시 만들 수 있음을 확인한 것입니다.",
     "",
