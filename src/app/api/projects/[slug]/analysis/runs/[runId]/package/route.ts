@@ -3,7 +3,8 @@ import { prisma } from "@/lib/db";
 import { requireAdminProjectFromRequest } from "@/lib/analysis/auth";
 import { serializeRunMetadata, isResultBodyExposable } from "@/lib/analysis/runSerializer";
 import { readPackageFile, writePackageFile, removePackageFileIfUnreferenced } from "@/lib/analysis/packageStore";
-import { scanPackageForPersonalData, sha256, verifyPackageBytes } from "@/lib/analysis/packageVerify";
+import { scanPackageForPersonalData, sha256, verifyPackageBytes, type RunSnapshotForPackage } from "@/lib/analysis/packageVerify";
+import { DEFAULT_ANALYSIS_PARAMETERS } from "@/lib/analysis/config";
 
 const MAX_BYTES = 80 * 1024 * 1024;
 
@@ -51,7 +52,11 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
   const actual = sha256(body);
   if (!declared || declared.toLowerCase() !== actual) return NextResponse.json({ errorCode: "PACKAGE_HASH_MISMATCH" }, { status: 422 });
   const bundle = JSON.parse(run.resultBundle) as { meta: { fingerprints: { participantsHash: string; numericDataHash: string; parameterHash: string } } };
-  const verdict = verifyPackageBytes(body, { id: run.id, scope: run.scope }, bundle.meta.fingerprints);
+  // Only a fresh, current-version result may take a package (a stale run could never be downloaded anyway).
+  const meta = await serializeRunMetadata(prisma, run);
+  if (!isResultBodyExposable(run.executionStatus, meta.freshness) || run.algorithmVersion !== DEFAULT_ANALYSIS_PARAMETERS.algorithmVersion) return NextResponse.json({ errorCode: "RESULT_NOT_CURRENT" }, { status: 409 });
+  const snapshot = JSON.parse(run.inputSnapshot) as RunSnapshotForPackage;
+  const verdict = verifyPackageBytes(body, { id: run.id, scope: run.scope }, bundle.meta.fingerprints, snapshot);
   if (!verdict.ok) return NextResponse.json({ errorCode: verdict.errorCode, detail: verdict.detail }, { status: 422 });
   const pii = await scanPackageForPersonalData(prisma, check.project.id, body);
   if (!pii.clean) return NextResponse.json({ errorCode: "PACKAGE_CONTAINS_PERSONAL_DATA", findings: pii.findings }, { status: 422 });

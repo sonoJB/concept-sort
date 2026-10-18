@@ -66,12 +66,16 @@ describe("analysis packages travel with the database backup", () => {
     expect(check.problems.join(" ")).toContain("does not match its recorded SHA-256");
   });
 
-  it("refuses to back up a package file whose name does not match its content hash", () => {
+  it("a damaged package file (name does not match content) is reported but never stops the DATABASE backup", () => {
     const v = volume("t4", zips);
-    fs.writeFileSync(path.join(v.pkgDir, `${"a".repeat(64)}.zip`), "not what the name says");
+    const bad = `${"a".repeat(64)}.zip`;
+    fs.writeFileSync(path.join(v.pkgDir, bad), "not what the name says");
     const r = createBackup({ reason: "pre-deploy", databaseUrl: `file:${v.file}`, now: new Date("2026-10-18T10:00:00Z") });
-    expect(r.result).toBe("FAILED");
-    expect(r.error).toContain("does not match its own SHA-256");
+    expect(r.result).toBe("OK");
+    expect(r.manifest.analysisPackages).toHaveLength(3);
+    expect(r.manifest.analysisPackageProblems).toEqual([{ file: bad, problem: expect.stringContaining("does not match its own SHA-256") }]);
+    expect(fs.existsSync(path.join(r.dirPath, "analysis-packages", bad))).toBe(false);
+    expect(fs.existsSync(path.join(v.pkgDir, bad))).toBe(true); // left untouched for a human
   });
 });
 
@@ -92,6 +96,21 @@ describe("restoring packages after a database replacement", () => {
     const again = restorePackages({ dbPath: v.file, from: b.dirPath });
     expect(again.restored).toHaveLength(0);
     expect(again.identical).toHaveLength(3);
+  });
+
+  it("an interrupted restore copy leaves no partial file under the final name", () => {
+    const v = volume("r3", zips);
+    const b = createBackup({ reason: "pre-deploy", databaseUrl: `file:${v.file}`, now: new Date("2026-10-18T10:00:00Z") });
+    fs.rmSync(v.pkgDir, { recursive: true, force: true });
+    // damage one backup file so the verified copy step fails midway
+    const name = `${sha(zips[0])}.zip`;
+    const f = path.join(b.dirPath, "analysis-packages", name);
+    fs.chmodSync(f, 0o666);
+    fs.writeFileSync(f, "tampered");
+    expect(() => restorePackages({ dbPath: v.file, from: b.dirPath })).toThrow();
+    expect(fs.existsSync(path.join(v.pkgDir, name))).toBe(false);
+    const leftovers = fs.existsSync(v.pkgDir) ? fs.readdirSync(v.pkgDir).filter((n) => n.startsWith(".tmp-")) : [];
+    expect(leftovers).toEqual([]);
   });
 
   it("refuses to overwrite a same-named file with different content and reports rows whose file is missing", () => {

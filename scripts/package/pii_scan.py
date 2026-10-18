@@ -49,7 +49,9 @@ for base in dirs:
             for ph in {x for x in phones if len(x.strip()) >= 7}:
                 if ph in t:
                     hits["phone"] += 1
-            if re.search(r"01[0-9]-\d{3,4}-\d{4}", t):
+            if re.search(r"(?<![\d.])0\d{1,4}-\d{1,4}-\d{4}(?!\d)", t):
                 hits["generic_phone_pattern"] += 1
+            if re.search(r"[\w.+-]+@[\w-]+(\.[\w-]+)+", t):
+                hits["email_pattern"] = hits.get("email_pattern", 0) + 1
 print({"text_files_scanned": scanned, "hits": hits, "identifier_counts_checked": {"names": len(names), "phones": len(phones), "session_ids": len(sessions), "tokens": len(tokens)}})
 sys.exit(0 if not any(hits.values()) else 1)

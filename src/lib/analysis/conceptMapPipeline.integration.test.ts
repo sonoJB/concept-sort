@@ -6,6 +6,7 @@ import os from "node:os";
 import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { zipSync, strToU8 } from "fflate";
+import { buildPackageZip, responseCsvFor } from "./testSupport/packageFixture";
 
 const dbFile = path.join(os.tmpdir(), `concept-sort-cmpipe-vitest-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
 const MIGRATIONS_DIR = path.resolve(process.cwd(), "prisma/migrations");
@@ -37,6 +38,7 @@ const N_ST = 12;
 const REAL_NAME = "REAL-NAME-SHOULD-NEVER-LEAK";
 const REAL_PHONE = "010-9999-8888";
 const DIGIT_NAME = "7391";
+const RESPONSE_PATH_FOR_TEST = "02_원자료_가명/참여자별_분류응답표.csv";
 
 const req = (url: string, init?: RequestInit) => new NextRequest(`http://localhost${url}`, { ...init, headers: { Authorization: `Bearer ${TOKEN}`, ...(init?.headers ?? {}) } } as never);
 const ctx = (extra: Record<string, string> = {}) => ({ params: Promise.resolve({ slug: SLUG, ...extra }) });
@@ -186,20 +188,8 @@ describe("package upload / download and superseded-result cleanup", () => {
   async function official(scope: string) {
     return prisma.analysisRun.findFirstOrThrow({ where: { scope, executionStatus: "COMPLETED", algorithmVersion: "2.0.0" }, orderBy: { startedAt: "desc" } });
   }
-  function buildZip(run: { id: string; scope: string; resultBundle: string | null }, mutate?: (m: Record<string, unknown>, files: Record<string, Uint8Array>) => void) {
-    const f = JSON.parse(run.resultBundle!).meta.fingerprints;
-    const files: Record<string, Uint8Array> = { "pkg/README.txt": strToU8("hello"), "pkg/data.csv": strToU8("a,b\n1,2\n") };
-    const manifest: Record<string, unknown> = {
-      manifestVersion: 1,
-      runId: run.id,
-      scope: run.scope,
-      zipFilename: `${run.scope}_분석자료.zip`,
-      fingerprints: { participantsHash: f.participantsHash, numericDataHash: f.numericDataHash, parameterHash: f.parameterHash },
-      files: Object.entries(files).map(([p, b]) => ({ path: p.replace(/^pkg\//, ""), sha256: sha(b), bytes: b.byteLength })),
-    };
-    mutate?.(manifest, files);
-    const all: Record<string, Uint8Array> = { ...files, "pkg/manifest.json": strToU8(JSON.stringify(manifest)) };
-    return zipSync(all);
+  function buildZip(run: { id: string; scope: string; inputSnapshot: string; resultBundle: string | null }, mutate?: (m: Record<string, unknown>, files: Record<string, Uint8Array>) => void) {
+    return buildPackageZip(run, { files: { "pkg/data.csv": strToU8("a,b\n1,2\n") }, mutate });
   }
   const put = async (runId: string, bytes: Uint8Array, hash = sha(bytes)) =>
     packageRoute.PUT(req(`/api/projects/${SLUG}/analysis/runs/${runId}/package`, { method: "PUT", body: bytes as never, headers: { "x-package-sha256": hash } }), ctx({ runId }));
@@ -239,42 +229,90 @@ describe("package upload / download and superseded-result cleanup", () => {
   it("rejects an upload that contains personal data (name, phone, real session id, admin token) without echoing it", async () => {
     const run = await official("JP");
     const sess = await prisma.sortSession.findFirstOrThrow();
-    const f = JSON.parse(run.resultBundle!).meta.fingerprints;
     for (const [label, secret] of [["name", REAL_NAME], ["phone", REAL_PHONE], ["sessionId", sess.id], ["adminToken", TOKEN]] as const) {
-      const files: Record<string, Uint8Array> = { "pkg/README.txt": strToU8("hello"), "pkg/data.csv": strToU8(`a,b\n${secret},2\n`) };
-      const manifest = {
-        manifestVersion: 1,
-        runId: run.id,
-        scope: run.scope,
-        zipFilename: "x.zip",
-        fingerprints: { participantsHash: f.participantsHash, numericDataHash: f.numericDataHash, parameterHash: f.parameterHash },
-        files: Object.entries(files).map(([p2, b]) => ({ path: p2.replace(/^pkg\//, ""), sha256: sha(b), bytes: b.byteLength })),
-      };
-      const bytes = zipSync({ ...files, "pkg/manifest.json": strToU8(JSON.stringify(manifest)) });
-      const res = await put(run.id, bytes);
+      const res = await put(run.id, buildPackageZip(run, { files: { "pkg/data.csv": strToU8(`a,b\n${secret},2\n`) } }));
       const j = await res.json();
       expect(res.status, label).toBe(422);
       expect(j.errorCode).toBe("PACKAGE_CONTAINS_PERSONAL_DATA");
       expect(JSON.stringify(j)).not.toContain(secret);
     }
+    // e-mail addresses and Japanese-style phone numbers typed as free text are rejected too
+    for (const free of ["write me: someone@example.com", "call 090-1234-5678"]) {
+      const res = await put(run.id, buildPackageZip(run, { files: { "pkg/notes.txt": strToU8(free) } }));
+      expect(res.status, free).toBe(422);
+    }
     expect(await prisma.analysisPackage.count({ where: { analysisRunId: run.id } })).toBe(0);
+  });
+
+  it("a package whose response table does not equal the run's stored records is rejected (country separation is enforced by the server)", async () => {
+    const run = await official("KR");
+    await prisma.analysisPackage.deleteMany({ where: { analysisRunId: run.id } });
+    const other = await official("JP");
+    // (a) a JP participant smuggled into a KR package
+    const jpRows = JSON.parse(other.inputSnapshot).participants.slice(0, 1) as { pid: string; country: string; assignment: number[] }[];
+    const withJp = buildPackageZip(run, { files: { [`pkg/${RESPONSE_PATH_FOR_TEST}`]: responseCsvFor(run, (rows) => jpRows[0].assignment.forEach((g, i) => rows.push([jpRows[0].pid, "JP", "2026-01-01 00:00:00", `S${i + 1}`, i + 1, g + 1, ""]))) } });
+    let j = await (await put(run.id, withJp)).json();
+    expect(j.errorCode).toBe("PACKAGE_RESPONSES_MISMATCH");
+    // (b) the whole table replaced by the other country's responses
+    const swapped = buildPackageZip(run, { files: { [`pkg/${RESPONSE_PATH_FOR_TEST}`]: responseCsvFor(other) } });
+    j = await (await put(run.id, swapped)).json();
+    expect(j.errorCode).toBe("PACKAGE_RESPONSES_MISMATCH");
+    // (c) one edited assignment
+    const edited = buildPackageZip(run, { files: { [`pkg/${RESPONSE_PATH_FOR_TEST}`]: responseCsvFor(run, (rows) => { rows[3][5] = Number(rows[3][5]) + 1; }) } });
+    j = await (await put(run.id, edited)).json();
+    expect(j.errorCode).toBe("PACKAGE_RESPONSES_MISMATCH");
+    // (d) a missing response table
+    const missing = buildPackageZip(run, { omitResponses: true });
+    j = await (await put(run.id, missing)).json();
+    expect(j.errorCode).toBe("PACKAGE_RESPONSES_MISMATCH");
+    expect(await prisma.analysisPackage.count({ where: { analysisRunId: run.id } })).toBe(0);
+    // the genuine table is accepted
+    expect((await put(run.id, buildZip(run))).status).toBe(200);
+    await prisma.analysisPackage.deleteMany({ where: { analysisRunId: run.id } });
+  });
+
+  it("unsafe entry names, several root folders and oversized declarations are rejected before anything is inflated or stored", async () => {
+    const run = await official("KR");
+    const zipRaw = (names: string[]) => zipSync(Object.fromEntries(names.map((n) => [n, strToU8("x")])));
+    for (const [label, bytes, code] of [
+      ["dot-dot", zipRaw(["pkg/../evil.txt", "pkg/manifest.json"]), "UNSAFE_ENTRY_NAME"],
+      ["backslash", zipRaw(["pkg\\evil.txt", "pkg/manifest.json"]), "UNSAFE_ENTRY_NAME"],
+      ["absolute", zipRaw(["/abs.txt", "pkg/manifest.json"]), "UNSAFE_ENTRY_NAME"],
+      ["two roots", zipRaw(["a/x.txt", "b/manifest.json"]), "EXACTLY_ONE_ROOT_FOLDER_REQUIRED"],
+      ["no root", zipRaw(["manifest.json"]), "EXACTLY_ONE_ROOT_FOLDER_REQUIRED"],
+    ] as const) {
+      const res = await put(run.id, bytes);
+      expect(res.status, label).toBe(422);
+      expect((await res.json()).errorCode, label).toBe(code);
+    }
+  });
+
+  it("a package cannot be attached to a stale run (the result would not be downloadable anyway)", async () => {
+    const run = await official("JP");
+    const sess = await prisma.sortSession.create({ data: { projectId: project.id, participantName: "x-stale", gender: "x", age: 20, schoolLevel: "x", grade: "x", phoneNumber: "000", countryCode: "JP", dataRole: "MAIN", groups: { create: [{ items: { create: JSON.parse(run.inputSnapshot).statements.map((s: { id: string }) => ({ statementId: s.id })) } }] } } });
+    const res = await put(run.id, buildZip(run));
+    expect(res.status).toBe(409);
+    expect((await res.json()).errorCode).toBe("RESULT_NOT_CURRENT");
+    await prisma.sortSession.delete({ where: { id: sess.id } });
+  });
+
+  it("an unexpected exception during execution marks the run FAILED and releases the lock (the scope is not blocked)", async () => {
+    const { runId } = await createAnalysisRun({ prisma, projectId: project.id, scope: "KR", dataset: "MAIN", analysisParameters: LIGHT, validationBaselineSha: VALIDATION_BASELINE_SHA, engineSourceCommitSha: "c".repeat(40) });
+    await prisma.analysisRun.update({ where: { id: runId }, data: { inputSnapshot: "{}" } }); // corrupt snapshot -> TypeError inside the engine path
+    await executeAnalysisRun(prisma, runId);
+    const run = await prisma.analysisRun.findUniqueOrThrow({ where: { id: runId } });
+    expect(run.executionStatus).toBe("FAILED");
+    expect(run.errorCode).toBe("ANALYSIS_EXCEPTION");
+    expect(await prisma.analysisExecutionLock.count({ where: { analysisRunId: runId } })).toBe(0);
+    await post("KR"); // a new run for the same scope is possible immediately
   });
 
   it("digit-only identifiers are rejected inside the participant response folder but ordinary numbers elsewhere are accepted", async () => {
     const run = await official("JP");
-    const f = JSON.parse(run.resultBundle!).meta.fingerprints;
-    const build = (files: Record<string, Uint8Array>) => {
-      const manifest = { manifestVersion: 1, runId: run.id, scope: run.scope, zipFilename: "x.zip", fingerprints: { participantsHash: f.participantsHash, numericDataHash: f.numericDataHash, parameterHash: f.parameterHash }, files: Object.entries(files).map(([p2, b]) => ({ path: p2.replace(/^pkg\//, ""), sha256: sha(b), bytes: b.byteLength })) };
-      return zipSync({ ...files, "pkg/manifest.json": strToU8(JSON.stringify(manifest)) });
-    };
-    const bad = await put(run.id, build({ "pkg/02_원자료_가명/응답.csv": strToU8(`id,label
-JP-001,${DIGIT_NAME}
-`) }));
+    const bad = await put(run.id, buildPackageZip(run, { files: { "pkg/02_원자료_가명/응답.csv": strToU8(`id,label\nJP-001,${DIGIT_NAME}\n`) } }));
     expect(bad.status).toBe(422);
     expect((await bad.json()).findings.digitOnlyIdentifierCell).toBe(1);
-    const fine = await put(run.id, build({ "pkg/05_MDS/초기화별.csv": strToU8(`iterations
-${DIGIT_NAME}
-`) }));
+    const fine = await put(run.id, buildPackageZip(run, { files: { "pkg/05_MDS/초기화별.csv": strToU8(`iterations\n${DIGIT_NAME}\n`) } }));
     expect(fine.status).toBe(200);
     await prisma.analysisPackage.deleteMany({ where: { analysisRunId: run.id } });
   });
@@ -348,11 +386,12 @@ ${DIGIT_NAME}
     });
 
     it("checks the package file on disk (existence, SHA-256, manifest) and cross-scope consistency before allowing deletion", async () => {
-      for (const scope of ["JP", "ALL"]) {
+      for (const scope of ["KR", "JP", "ALL"]) {
         const run = await official(scope);
         expect((await put(run.id, buildZip(run))).status).toBe(200);
       }
-      expect((await get0()).preconditions.ok).toBe(true);
+      const dry = await get0();
+      expect(dry.preconditions.problems).toEqual([]);
       // 1) package file corrupted on disk (same name, different bytes)
       const pkg = await prisma.analysisPackage.findFirstOrThrow({ where: { scope: "KR" } });
       const { packageStorageDir } = await import("@/lib/analysis/packageStore");

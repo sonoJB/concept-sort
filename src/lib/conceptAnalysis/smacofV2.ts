@@ -303,8 +303,12 @@ export function shepardData(points: Point[], dissimilarity: Matrix, weight: Weig
   };
 }
 
+/**
+ * Iteration bookkeeping: for the MAIN run `iterations` counts evaluated configurations (the start counts as the first); for
+ * the strict continuation it counts the additional Guttman updates. main + strict equals the length of the joined trace.
+ */
 export type RunTrace = {
-  /** raw stress after each evaluated iteration (1-based position + 1 = iteration number) */
+  /** raw stress of each evaluated configuration in order (entry 0 = the start configuration) */
   rawStress: number[];
   /** relative decrease at each iteration >= 2 (index 0 corresponds to iteration 2) */
   relativeChange: number[];

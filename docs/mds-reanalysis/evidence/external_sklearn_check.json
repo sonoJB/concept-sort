@@ -1,0 +1,143 @@
+{
+ "sklearn_version": "1.9.1",
+ "numpy_version": "2.5.4",
+ "note": "scikit-learn normalises disparities over the full matrix and uses its own stopping rule; tie handling is the pooled (secondary-like) isotonic fit",
+ "KR": {
+  "ours": {
+   "raw": 98.9288101992852,
+   "stress1_kruskal": 0.3025161369833417,
+   "sqrt_raw_over_q": 0.3025161369833417,
+   "v1_definition": 0.31738756513329425,
+   "rsq": 0.4620572545483191
+  },
+  "selected_start_seed": 1502081690,
+  "sklearn_eps_1e-09": {
+   "iterations": 227,
+   "sklearn_reported_normalized_stress": 0.3173875767408774,
+   "sklearn_reported_raw_stress": 98.92881673077297,
+   "metrics_by_this_analysis_on_sklearn_configuration": {
+    "raw": 98.92881672678438,
+    "stress1_kruskal": 0.30251614696361845,
+    "sqrt_raw_over_q": 0.3025161469636184,
+    "v1_definition": 0.3173875767344792,
+    "rsq": 0.46205686518852723
+   },
+   "procrustes_relative_difference_vs_ours": 1.0086418373783561e-07
+  },
+  "sklearn_eps_1e-12": {
+   "iterations": 280,
+   "sklearn_reported_normalized_stress": 0.3173875651442757,
+   "sklearn_reported_raw_stress": 98.92881020546837,
+   "metrics_by_this_analysis_on_sklearn_configuration": {
+    "raw": 98.9288102054646,
+    "stress1_kruskal": 0.30251613699278984,
+    "sqrt_raw_over_q": 0.30251613699278973,
+    "v1_definition": 0.31738756514426963,
+    "rsq": 0.46205723506266244
+   },
+   "procrustes_relative_difference_vs_ours": 6.714248521928733e-11
+  },
+  "sklearn_best_of_64_own_random_starts": {
+   "normalized_stress": 0.31738757567102316,
+   "metrics_by_this_analysis": {
+    "raw": 98.92881612614286,
+    "stress1_kruskal": 0.3025161460452624,
+    "sqrt_raw_over_q": 0.3025161460452624,
+    "v1_definition": 0.31738757566754155,
+    "rsq": 0.46205657682536594
+   }
+  }
+ },
+ "JP": {
+  "ours": {
+   "raw": 65.06577957735166,
+   "stress1_kruskal": 0.24533723807461283,
+   "sqrt_raw_over_q": 0.2453372380746128,
+   "v1_definition": 0.25307166605035847,
+   "rsq": 0.6641770520298571
+  },
+  "selected_start_seed": 1145603489,
+  "sklearn_eps_1e-09": {
+   "iterations": 185,
+   "sklearn_reported_normalized_stress": 0.25307167587461843,
+   "sklearn_reported_raw_stress": 65.06578430033642,
+   "metrics_by_this_analysis_on_sklearn_configuration": {
+    "raw": 65.06578428930857,
+    "stress1_kruskal": 0.24533724695807257,
+    "sqrt_raw_over_q": 0.2453372469580726,
+    "v1_definition": 0.25307167585317214,
+    "rsq": 0.6641730193848306
+   },
+   "procrustes_relative_difference_vs_ours": 5.6871476499734324e-08
+  },
+  "sklearn_eps_1e-12": {
+   "iterations": 227,
+   "sklearn_reported_normalized_stress": 0.2530716660628339,
+   "sklearn_reported_raw_stress": 65.06577958335433,
+   "metrics_by_this_analysis_on_sklearn_configuration": {
+    "raw": 65.0657795833449,
+    "stress1_kruskal": 0.2453372380859119,
+    "sqrt_raw_over_q": 0.24533723808591187,
+    "v1_definition": 0.25307166606281556,
+    "rsq": 0.6641769071468047
+   },
+   "procrustes_relative_difference_vs_ours": 5.300361704380242e-11
+  },
+  "sklearn_best_of_64_own_random_starts": {
+   "normalized_stress": 0.2530716753124415,
+   "metrics_by_this_analysis": {
+    "raw": 65.06578402035376,
+    "stress1_kruskal": 0.24533724645101168,
+    "sqrt_raw_over_q": 0.24533724645101168,
+    "v1_definition": 0.25307167529750246,
+    "rsq": 0.6641778726892941
+   }
+  }
+ },
+ "ALL": {
+  "ours": {
+   "raw": 76.21920862429579,
+   "stress1_kruskal": 0.2655335309931304,
+   "sqrt_raw_over_q": 0.2655335309931304,
+   "v1_definition": 0.2754206859767128,
+   "rsq": 0.6098891999375847
+  },
+  "selected_start_seed": 1595161593,
+  "sklearn_eps_1e-09": {
+   "iterations": 260,
+   "sklearn_reported_normalized_stress": 0.2754206935067241,
+   "sklearn_reported_raw_stress": 76.21921246878637,
+   "metrics_by_this_analysis_on_sklearn_configuration": {
+    "raw": 76.21921245715927,
+    "stress1_kruskal": 0.2655335376696217,
+    "sqrt_raw_over_q": 0.2655335376696217,
+    "v1_definition": 0.2754206934857167,
+    "rsq": 0.6098946418806257
+   },
+   "procrustes_relative_difference_vs_ours": 3.9926079687003865e-08
+  },
+  "sklearn_eps_1e-12": {
+   "iterations": 297,
+   "sklearn_reported_normalized_stress": 0.27542068598567976,
+   "sklearn_reported_raw_stress": 76.21920862888106,
+   "metrics_by_this_analysis_on_sklearn_configuration": {
+    "raw": 76.21920862887407,
+    "stress1_kruskal": 0.2655335310011053,
+    "sqrt_raw_over_q": 0.2655335310011053,
+    "v1_definition": 0.2754206859856671,
+    "rsq": 0.6098893119993025
+   },
+   "procrustes_relative_difference_vs_ours": 3.201933771563153e-11
+  },
+  "sklearn_best_of_64_own_random_starts": {
+   "normalized_stress": 0.2754206923530332,
+   "metrics_by_this_analysis": {
+    "raw": 76.21921186632837,
+    "stress1_kruskal": 0.2655335366404492,
+    "sqrt_raw_over_q": 0.2655335366404492,
+    "v1_definition": 0.2754206923340775,
+    "rsq": 0.6098938168320005
+   }
+  }
+ }
+}

@@ -1,0 +1,410 @@
+{
+ "KR": {
+  "N": 30,
+  "nKr": 30,
+  "nJp": 0,
+  "statements": 47,
+  "v1 as deployed (8 inits, 300 it)": {
+   "initOutcomes": {
+    "STRESS_INCREASED": 8
+   },
+   "selected": {
+    "initIndex": 6,
+    "converged": false,
+    "errorCodeOfSelectedInit": "STRESS_INCREASED",
+    "iterations": 2,
+    "rawStress": 179.20042841873024,
+    "stress1": 0.44626751909242246
+   },
+   "runLevelErrorCodeVisible": null,
+   "selectedIsNonConverged": true,
+   "lowestFive": [
+    {
+     "i": 6,
+     "s1": 0.44627,
+     "it": 2,
+     "conv": false,
+     "err": "STRESS_INCREASED"
+    },
+    {
+     "i": 2,
+     "s1": 0.44872,
+     "it": 2,
+     "conv": false,
+     "err": "STRESS_INCREASED"
+    },
+    {
+     "i": 4,
+     "s1": 0.44894,
+     "it": 2,
+     "conv": false,
+     "err": "STRESS_INCREASED"
+    },
+    {
+     "i": 5,
+     "s1": 0.4513,
+     "it": 2,
+     "conv": false,
+     "err": "STRESS_INCREASED"
+    },
+    {
+     "i": 3,
+     "s1": 0.45189,
+     "it": 2,
+     "conv": false,
+     "err": "STRESS_INCREASED"
+    }
+   ]
+  },
+  "v1 engine, 64 inits, 3000 it": {
+   "initOutcomes": {
+    "STRESS_INCREASED": 64
+   },
+   "selected": {
+    "initIndex": 52,
+    "converged": false,
+    "errorCodeOfSelectedInit": "STRESS_INCREASED",
+    "iterations": 2,
+    "rawStress": 177.33143744768807,
+    "stress1": 0.4436400303236526
+   },
+   "runLevelErrorCodeVisible": null,
+   "selectedIsNonConverged": true,
+   "lowestFive": [
+    {
+     "i": 52,
+     "s1": 0.44364,
+     "it": 2,
+     "conv": false,
+     "err": "STRESS_INCREASED"
+    },
+    {
+     "i": 40,
+     "s1": 0.44469,
+     "it": 2,
+     "conv": false,
+     "err": "STRESS_INCREASED"
+    },
+    {
+     "i": 57,
+     "s1": 0.44481,
+     "it": 2,
+     "conv": false,
+     "err": "STRESS_INCREASED"
+    },
+    {
+     "i": 59,
+     "s1": 0.44575,
+     "it": 2,
+     "conv": false,
+     "err": "STRESS_INCREASED"
+    },
+    {
+     "i": 6,
+     "s1": 0.44627,
+     "it": 2,
+     "conv": false,
+     "err": "STRESS_INCREASED"
+    }
+   ]
+  },
+  "replay_stress1_up_while_raw_down": {
+   "seed": 3856264912,
+   "initIndex": 0,
+   "v1FlagsStressIncreasedAtIteration": 2,
+   "window": [
+    {
+     "it": 1,
+     "rawStress": 272.438761,
+     "stress1": 0.435302,
+     "sumD2": 1437.7658
+    },
+    {
+     "it": 2,
+     "rawStress": 183.741411,
+     "stress1": 0.454256,
+     "sumD2": 890.4402
+    },
+    {
+     "it": 3,
+     "rawStress": 177.223279,
+     "stress1": 0.44343,
+     "sumD2": 901.3027
+    }
+   ],
+   "rawStressDecreasedAtThatStep": true
+  }
+ },
+ "JP": {
+  "N": 38,
+  "nKr": 0,
+  "nJp": 38,
+  "statements": 47,
+  "v1 as deployed (8 inits, 300 it)": {
+   "initOutcomes": {
+    "STRESS_INCREASED": 8
+   },
+   "selected": {
+    "initIndex": 6,
+    "converged": false,
+    "errorCodeOfSelectedInit": "STRESS_INCREASED",
+    "iterations": 2,
+    "rawStress": 179.01912007271807,
+    "stress1": 0.4459986493346137
+   },
+   "runLevelErrorCodeVisible": null,
+   "selectedIsNonConverged": true,
+   "lowestFive": [
+    {
+     "i": 6,
+     "s1": 0.446,
+     "it": 2,
+     "conv": false,
+     "err": "STRESS_INCREASED"
+    },
+    {
+     "i": 2,
+     "s1": 0.44769,
+     "it": 2,
+     "conv": false,
+     "err": "STRESS_INCREASED"
+    },
+    {
+     "i": 4,
+     "s1": 0.44849,
+     "it": 2,
+     "conv": false,
+     "err": "STRESS_INCREASED"
+    },
+    {
+     "i": 3,
+     "s1": 0.44857,
+     "it": 2,
+     "conv": false,
+     "err": "STRESS_INCREASED"
+    },
+    {
+     "i": 5,
+     "s1": 0.45296,
+     "it": 2,
+     "conv": false,
+     "err": "STRESS_INCREASED"
+    }
+   ]
+  },
+  "v1 engine, 64 inits, 3000 it": {
+   "initOutcomes": {
+    "STRESS_INCREASED": 64
+   },
+   "selected": {
+    "initIndex": 57,
+    "converged": false,
+    "errorCodeOfSelectedInit": "STRESS_INCREASED",
+    "iterations": 2,
+    "rawStress": 177.53478042258786,
+    "stress1": 0.443761352491252
+   },
+   "runLevelErrorCodeVisible": null,
+   "selectedIsNonConverged": true,
+   "lowestFive": [
+    {
+     "i": 57,
+     "s1": 0.44376,
+     "it": 2,
+     "conv": false,
+     "err": "STRESS_INCREASED"
+    },
+    {
+     "i": 52,
+     "s1": 0.44401,
+     "it": 2,
+     "conv": false,
+     "err": "STRESS_INCREASED"
+    },
+    {
+     "i": 38,
+     "s1": 0.44565,
+     "it": 2,
+     "conv": false,
+     "err": "STRESS_INCREASED"
+    },
+    {
+     "i": 40,
+     "s1": 0.44569,
+     "it": 2,
+     "conv": false,
+     "err": "STRESS_INCREASED"
+    },
+    {
+     "i": 6,
+     "s1": 0.446,
+     "it": 2,
+     "conv": false,
+     "err": "STRESS_INCREASED"
+    }
+   ]
+  },
+  "replay_stress1_up_while_raw_down": {
+   "seed": 3856264912,
+   "initIndex": 0,
+   "v1FlagsStressIncreasedAtIteration": 2,
+   "window": [
+    {
+     "it": 1,
+     "rawStress": 273.704545,
+     "stress1": 0.436312,
+     "sumD2": 1437.7658
+    },
+    {
+     "it": 2,
+     "rawStress": 184.871909,
+     "stress1": 0.455937,
+     "sumD2": 889.3273
+    },
+    {
+     "it": 3,
+     "rawStress": 178.394002,
+     "stress1": 0.445175,
+     "sumD2": 900.1596
+    }
+   ],
+   "rawStressDecreasedAtThatStep": true
+  }
+ },
+ "ALL": {
+  "N": 68,
+  "nKr": 30,
+  "nJp": 38,
+  "statements": 47,
+  "v1 as deployed (8 inits, 300 it)": {
+   "initOutcomes": {
+    "STRESS_INCREASED": 8
+   },
+   "selected": {
+    "initIndex": 6,
+    "converged": false,
+    "errorCodeOfSelectedInit": "STRESS_INCREASED",
+    "iterations": 2,
+    "rawStress": 178.11894797087845,
+    "stress1": 0.4446679325163932
+   },
+   "runLevelErrorCodeVisible": null,
+   "selectedIsNonConverged": true,
+   "lowestFive": [
+    {
+     "i": 6,
+     "s1": 0.44467,
+     "it": 2,
+     "conv": false,
+     "err": "STRESS_INCREASED"
+    },
+    {
+     "i": 2,
+     "s1": 0.44792,
+     "it": 2,
+     "conv": false,
+     "err": "STRESS_INCREASED"
+    },
+    {
+     "i": 4,
+     "s1": 0.44882,
+     "it": 2,
+     "conv": false,
+     "err": "STRESS_INCREASED"
+    },
+    {
+     "i": 3,
+     "s1": 0.45019,
+     "it": 2,
+     "conv": false,
+     "err": "STRESS_INCREASED"
+    },
+    {
+     "i": 5,
+     "s1": 0.45195,
+     "it": 2,
+     "conv": false,
+     "err": "STRESS_INCREASED"
+    }
+   ]
+  },
+  "v1 engine, 64 inits, 3000 it": {
+   "initOutcomes": {
+    "STRESS_INCREASED": 64
+   },
+   "selected": {
+    "initIndex": 57,
+    "converged": false,
+    "errorCodeOfSelectedInit": "STRESS_INCREASED",
+    "iterations": 2,
+    "rawStress": 177.35109077891823,
+    "stress1": 0.4434905855296559
+   },
+   "runLevelErrorCodeVisible": null,
+   "selectedIsNonConverged": true,
+   "lowestFive": [
+    {
+     "i": 57,
+     "s1": 0.44349,
+     "it": 2,
+     "conv": false,
+     "err": "STRESS_INCREASED"
+    },
+    {
+     "i": 52,
+     "s1": 0.44369,
+     "it": 2,
+     "conv": false,
+     "err": "STRESS_INCREASED"
+    },
+    {
+     "i": 40,
+     "s1": 0.44447,
+     "it": 2,
+     "conv": false,
+     "err": "STRESS_INCREASED"
+    },
+    {
+     "i": 6,
+     "s1": 0.44467,
+     "it": 2,
+     "conv": false,
+     "err": "STRESS_INCREASED"
+    },
+    {
+     "i": 29,
+     "s1": 0.44563,
+     "it": 2,
+     "conv": false,
+     "err": "STRESS_INCREASED"
+    }
+   ]
+  },
+  "replay_stress1_up_while_raw_down": {
+   "seed": 3856264912,
+   "initIndex": 0,
+   "v1FlagsStressIncreasedAtIteration": 2,
+   "window": [
+    {
+     "it": 1,
+     "rawStress": 272.629654,
+     "stress1": 0.435454,
+     "sumD2": 1437.7658
+    },
+    {
+     "it": 2,
+     "rawStress": 184.014871,
+     "stress1": 0.454669,
+     "sumD2": 890.1476
+    },
+    {
+     "it": 3,
+     "rawStress": 177.399336,
+     "stress1": 0.443705,
+     "sumD2": 901.0811
+    }
+   ],
+   "rawStressDecreasedAtThatStep": true
+  }
+ }
+}

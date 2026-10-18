@@ -11,6 +11,7 @@
 2. 배포 커밋 확인: `railway ssh` 안에서 `RAILWAY_GIT_COMMIT_SHA`, `/data/backups/status.json`(새 백업 OK), 마이그레이션 9개 적용.
 
 ## 2. 운영 재분석 (범위당 약 1~2분, 동기 실행)
+계산이 서버의 단일 Node 프로세스에서 돌아 그동안 같은 서버의 다른 요청(참여자 제출·화면)이 지연됩니다. 조사는 종료됐지만 실행 전에 최근 제출이 없는지 확인하고(`SortSession` 최신 `createdAt`), 세 범위를 **차례로** 실행하며(동시 실행 금지), 클라이언트 제한 시간은 15분 이상(`curl -m 900`)으로 합니다. 응답이 끊겨도 서버 실행은 계속되며 같은 범위를 다시 보내면 `RUN_ALREADY_RUNNING`입니다 — 15분이 지나기 전에는 다시 보내지 말고 `GET …/runs`로 상태를 확인합니다. 예외가 나면 실행은 `FAILED(ANALYSIS_EXCEPTION)`로 닫히고 잠금이 풀립니다.
 `POST /api/projects/rrrvvnux/analysis/runs {"scope":"KR|JP|ALL","dataset":"MAIN"}` 를 세 번. 응답이 `COMPLETED`이고 `GET …/runs/<id>/bundle`의 `officialResult:true`인지 확인. 로컬 동일 빌드 결과와 좌표가 같은지(비트 단위) 대조.
 
 ## 3. 국가별 ZIP 생성·검증·등록

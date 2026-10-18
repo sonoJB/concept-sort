@@ -236,6 +236,19 @@ export async function createAnalysisRun(deps: CreateAnalysisRunDeps): Promise<Cr
  * stand in for the 2D result.
  */
 export async function executeAnalysisRun(prisma: PrismaClient, runId: string): Promise<void> {
+  try {
+    await executeAnalysisRunUnguarded(prisma, runId);
+  } catch (e) {
+    // An unexpected exception must never leave the run RUNNING with its lock held (the scope would stay blocked until the orphan timeout).
+    const message = e instanceof Error ? e.message.slice(0, 160) : "unexpected error";
+    await prisma.$transaction(async (tx) => {
+      await tx.analysisRun.updateMany({ where: { id: runId, executionStatus: "RUNNING" }, data: { executionStatus: "FAILED", errorCode: "ANALYSIS_EXCEPTION", errorMessageSafe: `The analysis stopped with an unexpected error (${message.replace(/[\r\n]+/g, " ")}). No result was stored.`, finishedAt: new Date(), wardStatus: "NOT_RUN" } });
+      await tx.analysisExecutionLock.deleteMany({ where: { analysisRunId: runId } });
+    });
+  }
+}
+
+async function executeAnalysisRunUnguarded(prisma: PrismaClient, runId: string): Promise<void> {
   const run = await prisma.analysisRun.findUniqueOrThrow({ where: { id: runId } });
   const inputSnapshot = JSON.parse(run.inputSnapshot) as InputSnapshot;
   const parametersSnapshot = JSON.parse(run.parametersSnapshot) as { analysisParameters: AnalysisParameters };

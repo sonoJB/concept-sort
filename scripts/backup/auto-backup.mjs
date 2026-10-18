@@ -91,27 +91,36 @@ const PACKAGE_FILE = /^[0-9a-f]{64}\.zip$/;
  */
 export function captureAnalysisPackages(dbPath, finalDir) {
   const src = packagesDirFor(dbPath);
-  if (!fs.existsSync(src)) return [];
-  const out = [];
+  const packages = [];
+  const problems = [];
+  if (!fs.existsSync(src)) return { packages, problems };
   const dst = path.join(finalDir, "analysis-packages");
   for (const name of fs.readdirSync(src).sort()) {
     if (!PACKAGE_FILE.test(name)) continue;
     const from = path.join(src, name);
-    const sha = sha256File(from);
-    if (sha + ".zip" !== name) {
-      throw new Error(`analysis package ${name} does not match its own SHA-256 — refusing to back it up silently`);
-    }
-    fs.mkdirSync(dst, { recursive: true });
-    const to = path.join(dst, name);
     try {
-      fs.linkSync(from, to);
-    } catch {
-      fs.copyFileSync(from, to, fs.constants.COPYFILE_EXCL);
+      const sha = sha256File(from);
+      if (sha + ".zip" !== name) {
+        // A damaged live file (e.g. an interrupted copy) must not stop the DATABASE backup — least of all the strict pre-deploy one.
+        // It is reported (log + manifest) and left untouched for a human to deal with; the package can be regenerated.
+        problems.push({ file: name, problem: "does not match its own SHA-256 — not backed up" });
+        continue;
+      }
+      fs.mkdirSync(dst, { recursive: true });
+      const to = path.join(dst, name);
+      try {
+        fs.linkSync(from, to);
+      } catch {
+        fs.copyFileSync(from, to, fs.constants.COPYFILE_EXCL);
+      }
+      if (sha256File(to) !== sha) throw new Error("copy failed verification");
+      packages.push({ file: name, bytes: fs.statSync(to).size, sha256: sha });
+    } catch (e) {
+      problems.push({ file: name, problem: "could not be backed up: " + (e instanceof Error ? e.message : String(e)) });
     }
-    if (sha256File(to) !== sha) throw new Error(`copy of analysis package ${name} failed verification`);
-    out.push({ file: name, bytes: fs.statSync(to).size, sha256: sha });
   }
-  return out;
+  if (problems.length) log("error", "analysis package files with problems (database backup continues)", problems);
+  return { packages, problems };
 }
 
 function readJson(file) {
@@ -254,7 +263,7 @@ export function createBackup({ reason, databaseUrl = process.env.DATABASE_URL, n
     fs.renameSync(tmpDb, finalDb);
     fs.rmSync(tmpDir, { recursive: true, force: true });
 
-    const analysisPackages = captureAnalysisPackages(dbPath, finalDir);
+    const { packages: analysisPackages, problems: analysisPackageProblems } = captureAnalysisPackages(dbPath, finalDir);
     const manifest = {
       createdAtUtc: now.toISOString(),
       reason,
@@ -268,6 +277,7 @@ export function createBackup({ reason, databaseUrl = process.env.DATABASE_URL, n
       appliedMigrations: liveMigrations,
       sourceDb: path.basename(dbPath),
       analysisPackages,
+      analysisPackageProblems,
     };
     fs.writeFileSync(path.join(finalDir, "manifest.json"), JSON.stringify(manifest, null, 2));
     fs.chmodSync(finalDb, 0o444);

@@ -59,7 +59,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     packagesOutsideTargets: await tx.analysisPackage.count({ where: { analysisRunId: { notIn: ids } } }),
   });
   const files = await prisma.analysisPackage.findMany({ where: { analysisRunId: { in: ids } }, select: { storedFile: true } });
-  const result = await prisma.$transaction(async (tx) => {
+  let result;
+  try {
+    result = await prisma.$transaction(async (tx) => {
     const before = await counts(tx as unknown as typeof prisma);
     const del = await tx.analysisRun.deleteMany({ where: { id: { in: ids }, projectId, dataset: CLEANUP_DATASET, scope: { in: [...CLEANUP_SCOPES] }, algorithmVersion: { in: [...ERRONEOUS_ALGORITHM_VERSIONS] } } });
     const after = await counts(tx as unknown as typeof prisma);
@@ -68,7 +70,13 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       throw new Error("CLEANUP_INVARIANT_VIOLATED");
     }
     return { deletedRuns: del.count, before, after };
-  });
+    });
+  } catch (e) {
+    if (e instanceof Error && e.message === "CLEANUP_INVARIANT_VIOLATED") {
+      return NextResponse.json({ errorCode: "CLEANUP_INVARIANT_VIOLATED", note: "nothing was deleted (rolled back); retry when no participant submission is in progress" }, { status: 409 });
+    }
+    throw e;
+  }
   for (const f of files) removePackageFileIfUnreferenced(f.storedFile, (await prisma.analysisPackage.count({ where: { storedFile: f.storedFile } })) > 0);
   return NextResponse.json({ ...result, deleted: targets, preconditions: { ok: true } });
 }

@@ -1,4 +1,8 @@
-import { describe, it, expect, afterAll } from "vitest";
+import { describe, it, expect, afterAll, vi } from "vitest";
+
+// These tests POST the real route with the production defaults (64 starts x 5 dimensions + tie sensitivity + split-half);
+// under a parallel full-suite run that can exceed the 20 s default.
+vi.setConfig({ testTimeout: 120000 });
 import { NextRequest } from "next/server";
 import fs from "node:fs";
 import path from "node:path";

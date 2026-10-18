@@ -1,0 +1,257 @@
+{
+ "KR": {
+  "N": 30,
+  "tie_groups": 25,
+  "recomputed_from_TS_coordinates": {
+   "raw": 98.9288101992852,
+   "stress1": 0.3025161369833417,
+   "sqrt_raw_over_q": 0.3025161369833417,
+   "v1_def": 0.31738756513329425,
+   "rsq": 0.4620572545483191
+  },
+  "TS_reported": {
+   "raw": 98.92881019928453,
+   "stress1": 0.3025161369833413,
+   "sqrt_raw_over_q": 0.3025161369833407,
+   "v1_def": 0.31738756513329286,
+   "rsq": 0.46205725454832075
+  },
+  "max_abs_metric_diff": 6.679101716144942e-13,
+  "same_start": {
+   "py_main": {
+    "reason": "CONVERGED",
+    "iterations": 256,
+    "raw": 98.92881094716174
+   },
+   "ts_main": {
+    "reason": "CONVERGED",
+    "iterations": 256,
+    "rawStress": 98.92881094716158,
+    "finalRelativeChange": 9.30048630047587e-10
+   },
+   "py_strict": {
+    "reason": "CONVERGED",
+    "extra_iterations": 62,
+    "raw": 98.92881019928522,
+    "final_rel_change": 9.818291737527853e-13
+   },
+   "ts_strict": {
+    "reason": "CONVERGED",
+    "iterations": 62,
+    "rawStress": 98.92881019928453,
+    "finalRelativeChange": 9.874314177581062e-13,
+    "maxRelativeIncrease": 0
+   },
+   "raw_trace_first5_py": [
+    232.7166781420524,
+    183.37490028840375,
+    178.72677658764763,
+    176.66590137114983,
+    175.65716440080422
+   ],
+   "raw_trace_first5_ts": [
+    232.7166781420526,
+    183.37490028840563,
+    178.72677658765025,
+    176.66590137115008,
+    175.65716440080567
+   ],
+   "max_abs_raw_diff_over_common_prefix": 3.694822225952521e-12,
+   "coord_max_abs_diff_no_alignment": 2.4424906541753444e-15
+  },
+  "python_multistart": {
+   "starts": 64,
+   "converged": 64,
+   "reasons": {
+    "CONVERGED": 64
+   },
+   "best_raw_after_strict": 98.92881019924484,
+   "best_stress1": 0.30251613698328,
+   "best_rsq": 0.4620571976435749,
+   "ts_best_raw": 98.92881019928453,
+   "raw_diff_py_minus_ts": -3.9690917219559196e-11,
+   "procrustes_rms_vs_ts": 5.548689171314852e-06,
+   "config_rms_size": 0.6667662785173067,
+   "procrustes_relative": 8.32179033356863e-06,
+   "py_raw_min_median_max_converged": [
+    98.9288110987925,
+    102.58886745454274,
+    110.11426888645533
+   ],
+   "n_starts_within_1e-6_rel_of_best": 1
+  },
+  "ts_starts_within_1e-6_rel_of_best": 1,
+  "ts_starts_converged": 64,
+  "stress1_minus_sqrt_raw_over_q_at_solution": 0.0
+ },
+ "JP": {
+  "N": 38,
+  "tie_groups": 31,
+  "recomputed_from_TS_coordinates": {
+   "raw": 65.06577957735166,
+   "stress1": 0.24533723807461283,
+   "sqrt_raw_over_q": 0.2453372380746128,
+   "v1_def": 0.25307166605035847,
+   "rsq": 0.6641770520298571
+  },
+  "TS_reported": {
+   "raw": 65.06577957735136,
+   "stress1": 0.24533723807461288,
+   "sqrt_raw_over_q": 0.24533723807461225,
+   "v1_def": 0.25307166605035786,
+   "rsq": 0.6641770520298593
+  },
+  "max_abs_metric_diff": 2.984279490192421e-13,
+  "same_start": {
+   "py_main": {
+    "reason": "CONVERGED",
+    "iterations": 204,
+    "raw": 65.06577990967529
+   },
+   "ts_main": {
+    "reason": "CONVERGED",
+    "iterations": 204,
+    "rawStress": 65.06577990967527,
+    "finalRelativeChange": 9.023931996365989e-10
+   },
+   "py_strict": {
+    "reason": "CONVERGED",
+    "extra_iterations": 46,
+    "raw": 65.06577957735166,
+    "final_rel_change": 9.048623019268681e-13
+   },
+   "ts_strict": {
+    "reason": "CONVERGED",
+    "iterations": 46,
+    "rawStress": 65.06577957735136,
+    "finalRelativeChange": 9.107593046186424e-13,
+    "maxRelativeIncrease": 0
+   },
+   "raw_trace_first5_py": [
+    251.2190119056268,
+    179.91849157158507,
+    176.66088011228098,
+    175.43778706895813,
+    174.86619377291015
+   ],
+   "raw_trace_first5_ts": [
+    251.21901190562687,
+    179.9184915715817,
+    176.66088011228058,
+    175.43778706895594,
+    174.86619377290867
+   ],
+   "max_abs_raw_diff_over_common_prefix": 3.353761712787673e-12,
+   "coord_max_abs_diff_no_alignment": 1.4432899320127035e-15
+  },
+  "python_multistart": {
+   "starts": 64,
+   "converged": 64,
+   "reasons": {
+    "CONVERGED": 64
+   },
+   "best_raw_after_strict": 65.065779577369,
+   "best_stress1": 0.24533723807464555,
+   "best_rsq": 0.6641770514691719,
+   "ts_best_raw": 65.06577957735136,
+   "raw_diff_py_minus_ts": 1.7635670701565687e-11,
+   "procrustes_rms_vs_ts": 2.1923742336851091e-07,
+   "config_rms_size": 0.6781643199973213,
+   "procrustes_relative": 3.232806812504923e-07,
+   "py_raw_min_median_max_converged": [
+    65.06577991979972,
+    65.06578006215665,
+    167.77122000545455
+   ],
+   "n_starts_within_1e-6_rel_of_best": 56
+  },
+  "ts_starts_within_1e-6_rel_of_best": 51,
+  "ts_starts_converged": 64,
+  "stress1_minus_sqrt_raw_over_q_at_solution": 2.7755575615628914e-17
+ },
+ "ALL": {
+  "N": 68,
+  "tie_groups": 51,
+  "recomputed_from_TS_coordinates": {
+   "raw": 76.21920862429579,
+   "stress1": 0.2655335309931304,
+   "sqrt_raw_over_q": 0.2655335309931304,
+   "v1_def": 0.2754206859767128,
+   "rsq": 0.6098891999375847
+  },
+  "TS_reported": {
+   "raw": 76.21920862429607,
+   "stress1": 0.26553353099313065,
+   "sqrt_raw_over_q": 0.2655335309931309,
+   "v1_def": 0.2754206859767135,
+   "rsq": 0.6098891999375844
+  },
+  "max_abs_metric_diff": 2.8421709430404007e-13,
+  "same_start": {
+   "py_main": {
+    "reason": "CONVERGED",
+    "iterations": 367,
+    "raw": 76.21920892689293
+   },
+   "ts_main": {
+    "reason": "CONVERGED",
+    "iterations": 367,
+    "rawStress": 76.21920892689299,
+    "finalRelativeChange": 8.619500477496216e-10
+   },
+   "py_strict": {
+    "reason": "CONVERGED",
+    "extra_iterations": 38,
+    "raw": 76.21920862429579,
+    "final_rel_change": 9.706438965004848e-13
+   },
+   "ts_strict": {
+    "reason": "CONVERGED",
+    "iterations": 38,
+    "rawStress": 76.21920862429607,
+    "finalRelativeChange": 9.671014005278551e-13,
+    "maxRelativeIncrease": 0
+   },
+   "raw_trace_first5_py": [
+    281.42336648949015,
+    182.02720051611703,
+    178.49025114000895,
+    176.65891882530514,
+    175.66881412201934
+   ],
+   "raw_trace_first5_ts": [
+    281.4233664894896,
+    182.02720051611598,
+    178.49025114000878,
+    176.65891882530372,
+    175.6688141220178
+   ],
+   "max_abs_raw_diff_over_common_prefix": 3.399236447876319e-11,
+   "coord_max_abs_diff_no_alignment": 3.1127878052927827e-14
+  },
+  "python_multistart": {
+   "starts": 64,
+   "converged": 64,
+   "reasons": {
+    "CONVERGED": 64
+   },
+   "best_raw_after_strict": 76.21920862427665,
+   "best_stress1": 0.265533530993097,
+   "best_rsq": 0.6098891891430677,
+   "ts_best_raw": 76.21920862429607,
+   "raw_diff_py_minus_ts": -1.942623839568114e-11,
+   "procrustes_rms_vs_ts": 3.3902610094744873e-07,
+   "config_rms_size": 0.67443143446151,
+   "procrustes_relative": 5.026843109976616e-07,
+   "py_raw_min_median_max_converged": [
+    76.21920893471518,
+    76.58341952264824,
+    96.55111712743445
+   ],
+   "n_starts_within_1e-6_rel_of_best": 12
+  },
+  "ts_starts_within_1e-6_rel_of_best": 9,
+  "ts_starts_converged": 64,
+  "stress1_minus_sqrt_raw_over_q_at_solution": 0.0
+ }
+}

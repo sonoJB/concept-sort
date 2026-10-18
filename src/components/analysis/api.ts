@@ -25,11 +25,6 @@ export function analysisApi(slug: string, adminToken: string) {
     createRun: (scope: string, dataset: string) =>
       analysisFetch(adminToken, `${base}/runs`, { method: "POST", body: JSON.stringify({ scope, dataset }) }),
     getRun: (runId: string) => analysisFetch(adminToken, `${base}/runs/${runId}`),
-    exportData: (runId: string, lang: "ko" | "ja", interpretationId?: string | null) =>
-      analysisFetch(
-        adminToken,
-        `${base}/runs/${runId}/export-data?lang=${lang}${interpretationId ? `&interpretationId=${interpretationId}` : ""}`
-      ),
     listInterpretations: (runId: string) => analysisFetch(adminToken, `${base}/runs/${runId}/interpretations`),
     createInterpretation: (runId: string, selectedClusterCount: number, previousInterpretationId?: string | null) =>
       analysisFetch(adminToken, `${base}/runs/${runId}/interpretations`, {

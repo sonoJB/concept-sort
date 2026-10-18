@@ -86,7 +86,7 @@ export async function verifyCurrentResults(prisma: PrismaClient, projectId: stri
       continue;
     }
     info.packageBytes = bytes.byteLength;
-    const check = verifyPackageBytes(bytes, { id: chosen.id, scope: chosen.scope }, bundle.meta.fingerprints);
+    const check = verifyPackageBytes(bytes, { id: chosen.id, scope: chosen.scope }, bundle.meta.fingerprints, JSON.parse(chosen.inputSnapshot));
     if (!check.ok) {
       problems.push(`${scope}: package verification failed (${check.errorCode}${check.detail ? `: ${JSON.stringify(check.detail)}` : ""})`);
       continue;

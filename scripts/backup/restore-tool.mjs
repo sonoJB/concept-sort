@@ -240,8 +240,16 @@ export function restorePackages({ dbPath, from, dryRun = false }) {
       }
       if (!dryRun) {
         fs.mkdirSync(dstDir, { recursive: true });
-        fs.copyFileSync(src, dst, fs.constants.COPYFILE_EXCL);
-        if (sha256File(dst) !== sha256File(src)) throw new Error(`copy of ${name} failed verification`);
+        // temp file + rename: an interrupted copy can never leave a partial file under the final (hash) name
+        const tmp = path.join(dstDir, `.tmp-${process.pid}-${Date.now()}-${name}`);
+        try {
+          fs.copyFileSync(src, tmp, fs.constants.COPYFILE_EXCL);
+          if (sha256File(tmp) !== sha256File(src)) throw new Error(`copy of ${name} failed verification`);
+          fs.renameSync(tmp, dst);
+        } catch (e) {
+          fs.rmSync(tmp, { force: true });
+          throw e;
+        }
       }
       restored.push(name);
     }
@@ -262,6 +270,10 @@ export function checkPackages({ dbPath }) {
     const dir = packagesDirFor(dbPath);
     const problems = [];
     for (const r of rows) {
+      if (!/^[0-9a-f]{64}\.zip$/.test(String(r.storedFile))) {
+        problems.push({ scope: r.scope, filename: r.filename, problem: "stored file name is not a SHA-256 name" });
+        continue;
+      }
       const f = path.join(dir, r.storedFile);
       if (!fs.existsSync(f)) problems.push({ scope: r.scope, filename: r.filename, problem: "file missing — regenerate this package" });
       else if (sha256File(f) !== r.sha256) problems.push({ scope: r.scope, filename: r.filename, problem: "SHA-256 does not match the database row" });

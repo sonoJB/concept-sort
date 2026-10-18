@@ -227,7 +227,7 @@ def build_one(scope, bundles, raw, args):
 - 제외: 파일럿/비본조사, 국가 코드 없음, 미완료, 진술문 중복 배치, 무효 진술문. 적합도를 높이기 위한 참여자·진술문 제외, 재분류, 빈도 수정, 가중치, 평활화, 잡음 추가는 없음.
 - 유효 참여자: {d.N}명 (한국 {b['meta']['nKr']}, 일본 {b['meta']['nJp']}).
 - 가명화: 이름·전화번호·실제 세션 ID·접근 토큰·인구통계 항목(성별·나이·학교급·학년)은 이 패키지에 없음. 가명 ID는 제출 순서(KR-001…, JP-001…)이며 원본과의 연결표는 이 패키지에 없음.
-- 보존: 분류 응답값(묶음 구성)과 참여자가 붙인 묶음 이름은 원본과 동일. 묶음 이름 {ls['labels']}개 중 빈 이름 {ls['empty']}개, 식별자 의심 패턴 {len(ls['flagged_possible_identifier'])}개(수정하지 않음).
+- 보존: 분류 응답값(묶음 구성)과 참여자가 붙인 묶음 이름은 원본과 동일. 제출 시각(KST)은 제출 순서의 가명 ID와 함께 준식별자가 될 수 있으나 기존 공식 행렬 Excel에도 포함된 항목이라 유지했고, 묶음 이름은 참여자가 직접 입력한 자유 문장이라 이메일·전화 패턴 검사(서버 업로드 시 자동 거부)를 거쳤음. 묶음 이름 {ls['labels']}개 중 빈 이름 {ls['empty']}개, 식별자 의심 패턴 {len(ls['flagged_possible_identifier'])}개(수정하지 않음).
 - 원본 개인정보 포함 자료는 기존 보호된 백업에만 있음.
 
 ## 지문(sha256)
@@ -448,7 +448,10 @@ def slice_evidence(evdir, scope):
                         keep.pop(k, None)
                 out[name] = keep
         elif name.endswith(".txt") or name.endswith(".md"):
-            out[name] = open(p, encoding="utf-8").read()
+            text = open(p, encoding="utf-8").read()
+            if scope != "ALL" and re.search(r"(KR|JP)|한국|일본", text):
+                raise SystemExit(f"evidence text file {name} mentions a country; it cannot be copied unfiltered into the {scope} package (convert it to per-scope JSON)")
+            out[name] = text
     return out
 
 

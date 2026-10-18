@@ -1,0 +1,103 @@
+{
+ "statements": 47,
+ "sessions_total": 75,
+ "main_by_country": {
+  "JP": 38,
+  "KR": 30
+ },
+ "non_main_by_role": {
+  "PILOT": 7
+ },
+ "scope_N": {
+  "KR": 30,
+  "JP": 38,
+  "ALL": 68
+ },
+ "problems": {
+  "KR": [],
+  "JP": [],
+  "ALL": []
+ },
+ "ALL_equals_KR_plus_JP": true,
+ "KR": {
+  "excel_ids_equal_header": true,
+  "excel_ids_S01_to_S47_in_order": true,
+  "excel_shape": [
+   47,
+   47
+  ],
+  "recount_vs_excel_zero_diag_offdiag_max_abs_diff": 0.0,
+  "excel_zero_diag_all_zero": true,
+  "recount_vs_excel_diagN_offdiag_max_abs_diff": 0.0,
+  "excel_diagN_diag_equals_N": true,
+  "excel_proportion_vs_recount_over_N_max_abs_diff": 0.0,
+  "symmetric_recount": true,
+  "symmetric_excel_zero_diag": true,
+  "min_offdiag": 0,
+  "max_offdiag": 26,
+  "in_range_0_to_N": true,
+  "pairs_total": 1081,
+  "pairs_never_together": 19,
+  "pairs_always_together": 0,
+  "distinct_offdiag_levels": 25,
+  "dissimilarity_range": [
+   0.1333333333333333,
+   1.0
+  ],
+  "dissimilarity_symmetric": true
+ },
+ "JP": {
+  "excel_ids_equal_header": true,
+  "excel_ids_S01_to_S47_in_order": true,
+  "excel_shape": [
+   47,
+   47
+  ],
+  "recount_vs_excel_zero_diag_offdiag_max_abs_diff": 0.0,
+  "excel_zero_diag_all_zero": true,
+  "recount_vs_excel_diagN_offdiag_max_abs_diff": 0.0,
+  "excel_diagN_diag_equals_N": true,
+  "excel_proportion_vs_recount_over_N_max_abs_diff": 0.0,
+  "symmetric_recount": true,
+  "symmetric_excel_zero_diag": true,
+  "min_offdiag": 0,
+  "max_offdiag": 32,
+  "in_range_0_to_N": true,
+  "pairs_total": 1081,
+  "pairs_never_together": 40,
+  "pairs_always_together": 0,
+  "distinct_offdiag_levels": 31,
+  "dissimilarity_range": [
+   0.1578947368421053,
+   1.0
+  ],
+  "dissimilarity_symmetric": true
+ },
+ "ALL": {
+  "excel_ids_equal_header": true,
+  "excel_ids_S01_to_S47_in_order": true,
+  "excel_shape": [
+   47,
+   47
+  ],
+  "recount_vs_excel_zero_diag_offdiag_max_abs_diff": 0.0,
+  "excel_zero_diag_all_zero": true,
+  "recount_vs_excel_diagN_offdiag_max_abs_diff": 0.0,
+  "excel_diagN_diag_equals_N": true,
+  "excel_proportion_vs_recount_over_N_max_abs_diff": 0.0,
+  "symmetric_recount": true,
+  "symmetric_excel_zero_diag": true,
+  "min_offdiag": 0,
+  "max_offdiag": 58,
+  "in_range_0_to_N": true,
+  "pairs_total": 1081,
+  "pairs_never_together": 3,
+  "pairs_always_together": 0,
+  "distinct_offdiag_levels": 51,
+  "dissimilarity_range": [
+   0.1470588235294118,
+   1.0
+  ],
+  "dissimilarity_symmetric": true
+ }
+}

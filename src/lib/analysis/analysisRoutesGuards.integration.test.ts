@@ -9,8 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { DatabaseSync } from "node:sqlite";
-import { zipSync, strToU8 } from "fflate";
-import { createHash } from "node:crypto";
+import { buildPackageZip, sha } from "./testSupport/packageFixture";
 
 const dbFile = path.join(os.tmpdir(), `concept-sort-guards-vitest-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
 const MIGRATIONS_DIR = path.resolve(process.cwd(), "prisma/migrations");
@@ -35,7 +34,6 @@ const N_ST = 8;
 const MARKER_NAME = "PARTICIPANT-NAME-MARKER";
 const MARKER_PHONE = "010-5555-4444";
 const MARKER_LABEL = "PILE-LABEL-MARKER";
-const sha = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
 
 let seed = 11;
 const rnd = () => ((seed = (seed * 1664525 + 1013904223) % 4294967296) / 4294967296);
@@ -69,12 +67,7 @@ async function newRun(scope: "KR" | "JP" | "ALL", dataset: "MAIN" | "PILOT" = "M
   await executeAnalysisRun(prisma, runId);
   return prisma.analysisRun.findUniqueOrThrow({ where: { id: runId } });
 }
-function zipFor(run: { id: string; scope: string; resultBundle: string | null }) {
-  const f = JSON.parse(run.resultBundle!).meta.fingerprints;
-  const files: Record<string, Uint8Array> = { "pkg/README.txt": strToU8("hello") };
-  const manifest = { manifestVersion: 1, runId: run.id, scope: run.scope, zipFilename: `${run.scope}.zip`, fingerprints: { participantsHash: f.participantsHash, numericDataHash: f.numericDataHash, parameterHash: f.parameterHash }, files: Object.entries(files).map(([p, b]) => ({ path: p.replace(/^pkg\//, ""), sha256: sha(b), bytes: b.byteLength })) };
-  return zipSync({ ...files, "pkg/manifest.json": strToU8(JSON.stringify(manifest)) });
-}
+const zipFor = (run: { id: string; scope: string; inputSnapshot: string; resultBundle: string | null }) => buildPackageZip(run);
 const getBundle = async (run: { id: string }, slug = "guards-a", token?: string | null) => bundleRoute.GET(req(slug, `/x`, undefined, token), ctx(slug, run.id));
 const getPackage = async (run: { id: string }, slug = "guards-a", token?: string | null) => packageRoute.GET(req(slug, `/x`, undefined, token), ctx(slug, run.id));
 const putPackage = async (run: { id: string }, bytes: Uint8Array, slug = "guards-a", token?: string | null) => packageRoute.PUT(req(slug, `/x`, { method: "PUT", body: bytes as never, headers: { "x-package-sha256": sha(bytes) } }, token), ctx(slug, run.id));
