@@ -29,7 +29,7 @@
 
 ## 5. 최종 확인
 - API: overview 3범위 official·package, bundle·package 응답 ↔ 로컬 결과 일치.
-- 서버 백업에 새 ZIP 3개가 포함됐는지(`manifest.json`의 `analysisPackages`), `node scripts/backup/restore-tool.mjs check-packages`.
+- 서버 백업에 새 ZIP 3개가 포함됐는지(`manifest.json`의 `analysisPackages`이며 `analysisPackageProblems`는 비어 있어야 함 — 손상된 ZIP은 백업을 막지 않고 이 항목에만 기록됨), `node scripts/backup/restore-tool.mjs check-packages`.
 - 운영 관리자 화면은 토큰이 주소에 들어가므로 작업자가 직접 열지 않는다 — 사용자가 확인하거나 미확인으로 기록. 같은 빌드·같은 데이터의 로컬 화면 확인과 구분해 보고.
 - 연구자 PC 새 결과 폴더(`concept-sort-research-backups\<시각>_mds-v2-reanalysis-results\`)에 최종 ZIP 3종, 근거 폴더, 번들 JSON, 검증 출력, 재현 코드(스냅샷 커밋)를 보존. 기존 v1·v2 백업, D: 패키지, 키는 건드리지 않는다.
 - 인수인계 문서(`인수인계_한페이지.md`)와 날짜별 기록에 실제 완료·미완료를 갱신.

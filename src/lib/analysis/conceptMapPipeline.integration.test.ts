@@ -6,7 +6,7 @@ import os from "node:os";
 import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { zipSync, strToU8 } from "fflate";
-import { buildPackageZip, responseCsvFor } from "./testSupport/packageFixture";
+import { buildPackageZip, responseCsvFor, participantFilesFor } from "./testSupport/packageFixture";
 
 const dbFile = path.join(os.tmpdir(), `concept-sort-cmpipe-vitest-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
 const MIGRATIONS_DIR = path.resolve(process.cwd(), "prisma/migrations");
@@ -265,6 +265,32 @@ describe("package upload / download and superseded-result cleanup", () => {
     const missing = buildPackageZip(run, { omitResponses: true });
     j = await (await put(run.id, missing)).json();
     expect(j.errorCode).toBe("PACKAGE_RESPONSES_MISMATCH");
+    expect(await prisma.analysisPackage.count({ where: { analysisRunId: run.id } })).toBe(0);
+    // (e) a row for a middle statement deleted (same length, sparse hole) and (f) a duplicate row
+    const dropMiddle = buildPackageZip(run, { files: { [`pkg/${RESPONSE_PATH_FOR_TEST}`]: responseCsvFor(run, (rows) => { rows.splice(5, 1); }) } });
+    j = await (await put(run.id, dropMiddle)).json();
+    expect(j.errorCode, "missing middle row").toBe("PACKAGE_RESPONSES_MISMATCH");
+    const dup = buildPackageZip(run, { files: { [`pkg/${RESPONSE_PATH_FOR_TEST}`]: responseCsvFor(run, (rows) => { rows.splice(6, 1, [...rows[5]]); }) } });
+    j = await (await put(run.id, dup)).json();
+    expect(j.errorCode, "duplicate row").toBe("PACKAGE_RESPONSES_MISMATCH");
+    // (g) the other participant-level files are compared with the run too
+    const jpPid = (JSON.parse(other.inputSnapshot).participants[0] as { pid: string }).pid;
+    const variants: [string, Record<string, Uint8Array>][] = [
+      ["wide table with a foreign participant", participantFilesFor(run, { wide: (rows) => { rows[1][0] = jpPid; } })],
+      ["wide table with a flipped bit", participantFilesFor(run, { wide: (rows) => { rows[1][2] = rows[1][2] === 1 ? 0 : 1; } })],
+      ["wide table missing a participant", participantFilesFor(run, { wide: (rows) => { rows.pop(); } })],
+      ["summary with a foreign country", participantFilesFor(run, { summary: (rows) => { rows[1][1] = "JP"; } })],
+      ["summary missing a participant", participantFilesFor(run, { summary: (rows) => { rows.pop(); } })],
+      ["S matrix with an altered cell", participantFilesFor(run, { s: (rows) => { rows[1][2] = Number(rows[1][2]) + 1; } })],
+    ];
+    for (const [label, files] of variants) {
+      j = await (await put(run.id, buildPackageZip(run, { files }))).json();
+      expect(j.errorCode, label).toBe("PACKAGE_RESPONSES_MISMATCH");
+    }
+    // (h) an office file that cannot be opened cannot be shown to be free of personal data
+    const unreadable = await put(run.id, buildPackageZip(run, { files: { "pkg/02_원자료_가명/표.xlsx": strToU8("not a zip") } }));
+    expect(unreadable.status).toBe(422);
+    expect((await unreadable.json()).findings.unreadableOfficeFile).toBe(1);
     expect(await prisma.analysisPackage.count({ where: { analysisRunId: run.id } })).toBe(0);
     // the genuine table is accepted
     expect((await put(run.id, buildZip(run))).status).toBe(200);

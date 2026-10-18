@@ -84,36 +84,112 @@ export function verifyPackageBytes(bytes: Uint8Array, run: { id: string; scope: 
   if (extra.length > 0) return { ok: false, errorCode: "UNLISTED_FILES_PRESENT", detail: extra.slice(0, 5) };
   if (!manifest.zipFilename || /[\\/]/.test(manifest.zipFilename)) return { ok: false, errorCode: "ZIP_FILENAME_INVALID" };
   if (snapshot) {
-    const bad = checkResponses(entries[root + RESPONSE_FILE], run.scope, snapshot, fingerprints.participantsHash);
+    const bad = checkResponses(entries, root, run.scope, snapshot, fingerprints.participantsHash);
     if (bad) return { ok: false, errorCode: "PACKAGE_RESPONSES_MISMATCH", detail: bad };
   }
   return { ok: true, manifest, entryCount: Object.keys(entries).length };
 }
 
-function checkResponses(csvBytes: Uint8Array | undefined, scope: string, snap: RunSnapshotForPackage, expectedHash: string): string | null {
-  if (!csvBytes) return "response table missing";
+const WIDE_FILE = "02_원자료_가명/참여자별_이진유사성행렬_상삼각.csv";
+const SUMMARY_FILE = "02_원자료_가명/참여자별_묶음요약.csv";
+const S_FILE = "04_행렬/S_집단유사성빈도_대각선N.csv";
+
+function allowedCountries(scope: string): Set<string> {
+  return scope === "ALL" ? new Set(["KR", "JP"]) : new Set([scope]);
+}
+
+/**
+ * Every participant-level file of the package must describe exactly the participants stored with the run:
+ *  - response table: same pseudonymous ids, countries and the full pile assignment (exactly one row per participant and
+ *    statement, no duplicates, no missing rows — compared by index over dense arrays);
+ *  - wide binary-similarity table and participant summary: the same id/country set; the wide table's bits must equal the
+ *    similarity implied by the stored assignments;
+ *  - the S matrix file must equal S recomputed from the stored participants.
+ * (The .xlsx copy of the responses is only pinned by the manifest hash.)
+ */
+function checkResponses(entries: Record<string, Uint8Array>, root: string, scope: string, snap: RunSnapshotForPackage, expectedHash: string): string | null {
   if (canonicalHash(snap.participants) !== snap.participantsHash || snap.participantsHash !== expectedHash) return "stored participant records do not reproduce the participants fingerprint";
-  const rows = parseCsv(new TextDecoder().decode(csvBytes));
+  const dec = new TextDecoder();
+  const need = (rel: string) => entries[root + rel];
+  const expected = new Map(snap.participants.map((p) => [p.pid, p]));
+  const allowed = allowedCountries(scope);
+  const nStatements = snap.participants[0]?.assignment.length ?? 0;
+
+  // ---- response table
+  const resp = need(RESPONSE_FILE);
+  if (!resp) return "response table missing";
+  const rows = parseCsv(dec.decode(resp));
   const h = rows[0] ?? [];
   const ix = { pid: h.indexOf("가명ID"), country: h.indexOf("국가"), st: h.indexOf("문항번호"), pile: h.indexOf("묶음번호(참여자 내)") };
   if (Object.values(ix).some((i) => i < 0)) return "response table header unexpected";
-  const got = new Map<string, { country: string; a: number[] }>();
+  const got = new Map<string, { country: string; a: (number | undefined)[]; count: number }>();
   for (const r of rows.slice(1)) {
-    if (r.length < h.length) continue;
-    const e = got.get(r[ix.pid]) ?? { country: r[ix.country], a: [] };
+    if (r.length === 0 || (r.length === 1 && r[0] === "")) continue;
+    if (r.length < h.length) return "response table has an incomplete row";
+    const e = got.get(r[ix.pid]) ?? { country: r[ix.country], a: new Array<number | undefined>(nStatements).fill(undefined), count: 0 };
     if (e.country !== r[ix.country]) return "a participant appears with two countries";
-    e.a[Number(r[ix.st]) - 1] = Number(r[ix.pile]) - 1;
+    const st = Number(r[ix.st]) - 1;
+    if (!Number.isInteger(st) || st < 0 || st >= nStatements) return "response table has an invalid statement number";
+    if (e.a[st] !== undefined) return "response table has a duplicate row for a participant and statement";
+    e.a[st] = Number(r[ix.pile]) - 1;
+    e.count++;
     got.set(r[ix.pid], e);
   }
-  const expected = new Map(snap.participants.map((p) => [p.pid, p]));
-  const allowed = scope === "ALL" ? new Set(["KR", "JP"]) : new Set([scope]);
   if (got.size !== expected.size) return `participant count differs (package ${got.size}, run ${expected.size})`;
   for (const [pid, e] of got) {
     const p = expected.get(pid);
     if (!p) return "package contains a participant that is not part of this run";
     if (!allowed.has(e.country) || e.country !== p.country) return "package contains a country that does not belong to this scope";
-    if (e.a.length !== p.assignment.length || e.a.some((v, i) => v !== p.assignment[i])) return "pile assignments differ from the run's stored records";
+    if (e.count !== nStatements) return "a participant does not have exactly one row per statement";
+    for (let i = 0; i < nStatements; i++) if (e.a[i] !== p.assignment[i]) return "pile assignments differ from the run's stored records";
   }
+
+  // ---- wide binary-similarity table
+  const wide = need(WIDE_FILE);
+  if (!wide) return "binary similarity table missing";
+  const wr = parseCsv(dec.decode(wide));
+  const wh = wr[0] ?? [];
+  if (wh[0] !== "가명ID" || wh[1] !== "국가") return "binary similarity table header unexpected";
+  if (wh.length !== 2 + (nStatements * (nStatements - 1)) / 2) return "binary similarity table has an unexpected number of columns";
+  const seenWide = new Set<string>();
+  for (const r of wr.slice(1)) {
+    if (r.length === 1 && r[0] === "") continue;
+    const p = expected.get(r[0]);
+    if (!p || seenWide.has(r[0])) return "binary similarity table has an unknown or duplicate participant";
+    seenWide.add(r[0]);
+    if (r[1] !== p.country || !allowed.has(r[1])) return "binary similarity table has a wrong country";
+    if (r.length !== wh.length) return "binary similarity table has an incomplete row";
+    let k = 2;
+    for (let i = 0; i < nStatements; i++) for (let j = i + 1; j < nStatements; j++) if (Number(r[k++]) !== (p.assignment[i] === p.assignment[j] ? 1 : 0)) return "binary similarity bits differ from the run's stored assignments";
+  }
+  if (seenWide.size !== expected.size) return "binary similarity table does not list every participant";
+
+  // ---- participant summary
+  const summ = need(SUMMARY_FILE);
+  if (!summ) return "participant summary missing";
+  const sr = parseCsv(dec.decode(summ));
+  const si = { pid: (sr[0] ?? []).indexOf("가명 ID"), country: (sr[0] ?? []).indexOf("국가") };
+  if (si.pid < 0 || si.country < 0) return "participant summary header unexpected";
+  const seenSum = new Set<string>();
+  for (const r of sr.slice(1)) {
+    if (r.length === 1 && r[0] === "") continue;
+    const p = expected.get(r[si.pid]);
+    if (!p || seenSum.has(r[si.pid]) || r[si.country] !== p.country) return "participant summary has an unknown, duplicate or wrongly attributed participant";
+    seenSum.add(r[si.pid]);
+  }
+  if (seenSum.size !== expected.size) return "participant summary does not list every participant";
+
+  // ---- S matrix
+  const sm = need(S_FILE);
+  if (!sm) return "S matrix missing";
+  const smr = parseCsv(dec.decode(sm)).filter((r) => !(r.length === 1 && r[0] === ""));
+  if (smr.length !== nStatements + 1) return "S matrix has an unexpected size";
+  for (let i = 0; i < nStatements; i++)
+    for (let j = 0; j < nStatements; j++) {
+      let c = 0;
+      for (const p of snap.participants) if (p.assignment[i] === p.assignment[j]) c++;
+      if (Number(smr[i + 1][j + 1]) !== c) return "S matrix differs from the matrix implied by the stored participants";
+    }
   return null;
 }
 
@@ -144,7 +220,7 @@ export async function scanPackageForPersonalData(prisma: PrismaClient, projectId
     if (ph.length >= 7) phones.add(ph);
   }
   const ids = sessions.map((s) => s.id);
-  const findings = { name: 0, phone: 0, sessionId: 0, adminToken: 0, digitOnlyIdentifierCell: 0, phonePattern: 0, email: 0 };
+  const findings = { name: 0, phone: 0, sessionId: 0, adminToken: 0, digitOnlyIdentifierCell: 0, phonePattern: 0, email: 0, unreadableOfficeFile: 0 };
   const dec = new TextDecoder("utf-8", { fatal: false });
   const scanText = (path: string, text: string) => {
     for (const n of names) if (text.includes(n)) findings.name++;
@@ -169,7 +245,7 @@ export async function scanPackageForPersonalData(prisma: PrismaClient, projectId
         const inner = unzipSync(data, { filter: (f) => f.originalSize < 50 * 1024 * 1024 });
         for (const [ip, idata] of Object.entries(inner)) if (/\.(xml|rels)$/i.test(ip)) scanText(`${path}!${ip}`, dec.decode(idata));
       } catch {
-        findings.name += 0; // unreadable office file: the manifest hash check already pins its exact bytes
+        findings.unreadableOfficeFile++; // an office file this scanner cannot open cannot be shown to be clean: reject
       }
     }
   }

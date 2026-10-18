@@ -240,9 +240,9 @@ export async function executeAnalysisRun(prisma: PrismaClient, runId: string): P
     await executeAnalysisRunUnguarded(prisma, runId);
   } catch (e) {
     // An unexpected exception must never leave the run RUNNING with its lock held (the scope would stay blocked until the orphan timeout).
-    const message = e instanceof Error ? e.message.slice(0, 160) : "unexpected error";
+    console.error("[analysis] run failed with an unexpected error", runId, e instanceof Error ? e.message : e); // detail goes to the server log only
     await prisma.$transaction(async (tx) => {
-      await tx.analysisRun.updateMany({ where: { id: runId, executionStatus: "RUNNING" }, data: { executionStatus: "FAILED", errorCode: "ANALYSIS_EXCEPTION", errorMessageSafe: `The analysis stopped with an unexpected error (${message.replace(/[\r\n]+/g, " ")}). No result was stored.`, finishedAt: new Date(), wardStatus: "NOT_RUN" } });
+      await tx.analysisRun.updateMany({ where: { id: runId, executionStatus: "RUNNING" }, data: { executionStatus: "FAILED", errorCode: "ANALYSIS_EXCEPTION", errorMessageSafe: "The analysis stopped with an unexpected error before a result was complete; no official result was stored (see the server log).", finishedAt: new Date(), wardStatus: "NOT_RUN" } });
       await tx.analysisExecutionLock.deleteMany({ where: { analysisRunId: runId } });
     });
   }
