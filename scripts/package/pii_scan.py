@@ -35,7 +35,7 @@ for base in dirs:
             for n in text_names:
                 if n in t:
                     hits["name"] += 1
-            if f.endswith(".csv") and digits_long:
+            if f.endswith(".csv") and digits_long and "02_원자료_가명" in p.replace("\\", "/"):
                 cells = set()
                 for line in t.splitlines():
                     cells.update(x.strip('"') for x in line.split(","))

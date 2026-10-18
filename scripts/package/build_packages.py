@@ -136,7 +136,7 @@ def build_one(scope, bundles, raw, args):
         fig("sil", f"F06_silhouette_k{k}_{scope}", f"{label} 문항별 실루엣(지도 좌표 기준)", lambda: F.fig_silhouette(d.sol["labels"], d.sol["silhouetteMap"]["perPoint"], names, f"{label} 실루엣 (k={k})"))
         fig("kcmp", f"F07_k_comparison_{scope}", f"{label} 군집 수 비교", lambda: F.fig_k_comparison(d.a["solutions"], d.a["ward"]["merges"], k, f"{label} 군집 수 비교"))
     pr = d.a["pairDiagnostics"]
-    fig("shepard", f"F08_shepard_{scope}", f"{label} Shepard 다이어그램", lambda: F.fig_shepard([x["delta"] for x in pr], [x["distance"] for x in pr], [x["disparity"] for x in pr], f"{label} Shepard 다이어그램 (2차원)"))
+    fig("shepard", f"F08_shepard_{scope}", f"{label} Shepard 다이어그램", lambda: F.fig_shepard([x["delta"] for x in pr], [x["distance"] for x in pr], [x["disparityKruskal"] for x in pr], f"{label} Shepard 다이어그램 (2차원)"))
     fig("iter", f"F09_objective_history_{scope}", f"{label} 목적함수 반복 이력", lambda: F.fig_iterations(d.a["primary"]["trace"]["rawStress"], d.a["primary"]["selected"]["main"]["iterations"], d.a["primary"]["trace"]["thinned"], f"{label} raw stress 반복 이력"))
     fig("dims", f"F10_stress_by_dimension_{scope}", f"{label} 차원별 Stress-1", lambda: F.fig_dimensions(d.a["dimensions"], f"{label} 차원별 Stress-1 (1~5차원, 보조 비교)"))
     sh = d.a["splitHalf"]
@@ -159,19 +159,19 @@ def build_one(scope, bundles, raw, args):
         "summary": "01_요약/분석요약.csv", "metrics": "01_요약/지표_기준_출처.csv", "recommended": "07_군집/추천_군집.csv", "items": "07_군집/군집별_문항_명명근거.csv",
         "coords": "05_MDS/좌표_2D.csv", "kcompare": "07_군집/군집후보비교.csv", "membership": "07_군집/군집소속_k별.csv", "merges": "07_군집/병합이력_병합비용.csv", "clusters_all_k": "07_군집/군집구성_k별.csv",
         "dims": "05_MDS/차원비교_1-5D.csv", "starts": "05_MDS/초기화별_결과_2D.csv", "history": "05_MDS/반복이력_2D.csv", "tie": "05_MDS/동점처리_민감도.csv",
-        "pairs": "06_진단/쌍진단_1081.csv", "spp": "06_진단/점별_stress기여.csv", "reliability": "09_보완분석/반복분할_신뢰도_요약.csv", "split_values": "09_보완분석/반복분할_신뢰도_전체값.csv",
+        "pairs": "06_진단/쌍진단_1081.csv", "metric_recompute": "06_진단/지표_독립재계산표.csv", "spp": "06_진단/점별_stress기여.csv", "reliability": "09_보완분석/반복분할_신뢰도_요약.csv", "split_values": "09_보완분석/반복분할_신뢰도_전체값.csv",
         "validation": "02_원자료_가명/자료검증표.csv", "participants_summary": "02_원자료_가명/참여자별_묶음요약.csv", "references": "01_요약/참고문헌.csv",
         "M_S": "04_행렬/S_집단유사성빈도_대각선N.csv", "M_P": "04_행렬/P_유사성비율_대각선1.csv", "M_D": "04_행렬/D_비유사성빈도_대각선0.csv", "M_delta": "04_행렬/delta_비유사성비율_MDS입력_대각선0.csv",
         "M_legacy0": "04_행렬/기존표시형식_빈도행렬_대각선0.csv", "M_legacyN": "04_행렬/기존표시형식_분석용_유사성빈도_대각선N.csv",
         "compare": "09_보완분석/한일비교_요약.csv", "compare_diff": "09_보완분석/P_KR-P_JP.csv", "compare_pkr": "09_보완분석/P_KR.csv", "compare_pjp": "09_보완분석/P_JP.csv",
     }
-    desc_csv = {"summary": "분석 요약(핵심 수치)", "metrics": "지표별 정의·계산식·값·기준·판정·출처·한계", "recommended": "추천 군집 표(이름·핵심 내용·명명 근거·경계 문항·검토 상태)", "items": "군집별 문항(한국어·일본어)·실루엣·경계 여부", "coords": "2차원 최종 좌표와 군집", "kcompare": "군집 수 후보 비교", "membership": "k=2~10 군집 소속", "merges": "Ward 전체 병합 이력과 병합 비용", "clusters_all_k": "k별 군집 구성", "dims": "1~5차원 Stress·수렴 비교", "starts": "초기화별(2D) 결과·종료 사유", "history": "선택한 해의 목적함수 반복 이력", "tie": "동점 처리 민감도(공식 결과 아님)", "pairs": "1,081개 문항 쌍 진단표(δ·거리·디스패리티·잔차)", "spp": "점별 stress 기여", "reliability": "반복 분할 신뢰도 요약", "split_values": "반복 분할 신뢰도 전체 값", "validation": "자료 검증표", "participants_summary": "참여자별 묶음 수·크기 요약", "references": "참고문헌과 열람 상태", "M_S": "S: 집단 유사성 빈도(대각선 N)", "M_P": "P = S/N (대각선 1)", "M_D": "D = N − S (대각선 0)", "M_delta": "δ = 1 − S/N (대각선 0) — MDS 실제 입력", "M_legacy0": "기존 표시 형식: 빈도행렬(대각선만 0으로 표시한 유사성 빈도; 비유사성 아님)", "M_legacyN": "기존 표시 형식: 분석용 유사성빈도(대각선 N)", "compare": "한국·일본 비교(탐색적)", "compare_diff": "P_KR − P_JP", "compare_pkr": "P_KR", "compare_pjp": "P_JP"}
+    desc_csv = {"summary": "분석 요약(핵심 수치)", "metrics": "지표별 정의·계산식·값·기준·판정·출처·한계", "recommended": "추천 군집 표(이름·핵심 내용·명명 근거·경계 문항·검토 상태)", "items": "군집별 문항(한국어·일본어)·실루엣·경계 여부", "coords": "2차원 최종 좌표와 군집", "kcompare": "군집 수 후보 비교", "membership": "k=2~10 군집 소속", "merges": "Ward 전체 병합 이력과 병합 비용", "clusters_all_k": "k별 군집 구성", "dims": "1~5차원 Stress·수렴 비교", "starts": "초기화별(2D) 결과·종료 사유", "history": "선택한 해의 목적함수 반복 이력", "tie": "동점 처리 민감도(공식 결과 아님)", "pairs": "1,081개 문항 쌍 진단표(δ·거리·정규화 디스패리티 d̂·Kruskal 디스패리티 d̂*·각 잔차)", "spp": "점별 stress 기여", "metric_recompute": "쌍 진단표만으로 raw stress·Stress-1(Kruskal)·√(raw/q)·이전 정의·RSQ를 다시 계산해 저장값과 대조한 표", "reliability": "반복 분할 신뢰도 요약", "split_values": "반복 분할 신뢰도 전체 값", "validation": "자료 검증표", "participants_summary": "참여자별 묶음 수·크기 요약", "references": "참고문헌과 열람 상태", "M_S": "S: 집단 유사성 빈도(대각선 N)", "M_P": "P = S/N (대각선 1)", "M_D": "D = N − S (대각선 0)", "M_delta": "δ = 1 − S/N (대각선 0) — MDS 실제 입력", "M_legacy0": "기존 표시 형식: 빈도행렬(대각선만 0으로 표시한 유사성 빈도; 비유사성 아님)", "M_legacyN": "기존 표시 형식: 분석용 유사성빈도(대각선 N)", "compare": "한국·일본 비교(탐색적)", "compare_diff": "P_KR − P_JP", "compare_pkr": "P_KR", "compare_pjp": "P_JP"}
     written = write_csvs(root, T, csv_map)
     for key, rel in csv_map.items():
         if key in T:
             reg(os.path.join(root, rel), desc_csv[key])
 
-    order = ["summary", "metrics", "recommended", "items", "coords", "M_S", "M_P", "M_D", "M_delta", "M_legacy0", "M_legacyN", "kcompare", "merges", "membership", "dims", "starts", "pairs", "spp", "reliability", "validation", "tie", "compare", "compare_diff", "references"]
+    order = ["summary", "metrics", "recommended", "items", "coords", "M_S", "M_P", "M_D", "M_delta", "M_legacy0", "M_legacyN", "kcompare", "merges", "membership", "dims", "starts", "pairs", "metric_recompute", "spp", "reliability", "validation", "tie", "compare", "compare_diff", "references"]
     xl = os.path.join(D01, f"{SCOPE_NAME_KO[scope]}_분석요약.xlsx")
     write_xlsx(xl, T, order)
     reg(xl, "요약 Excel: 분석요약·지표·기준·출처·추천군집·군집별문항·명명근거·좌표·S·P·D·δ·군집후보비교·신뢰도·자료검증·참고문헌 등")
@@ -201,6 +201,7 @@ def build_one(scope, bundles, raw, args):
 
     xp = os.path.join(D02, "참여자별_분류응답표.xlsx")
     wb = xlsxwriter.Workbook(xp)
+    wb.set_properties({"created": datetime(2026, 1, 1, tzinfo=timezone.utc), "title": os.path.basename(xp), "author": "concept-sort analysis package"})
     ws = wb.add_worksheet("분류응답")
     for j, h in enumerate(["가명ID", "국가", "제출시각(KST)", "진술문", "문항번호", "묶음번호", "묶음 이름(참여자 입력)"]):
         ws.write(0, j, h)
@@ -214,6 +215,9 @@ def build_one(scope, bundles, raw, args):
         for j, v in enumerate(r):
             ws2.write(i + 1, j, v)
     wb.close()
+    from common import rewrite_zip_deterministic
+
+    rewrite_zip_deterministic(xp)
     reg(xp, "참여자별 분류 응답 Excel(분류응답·묶음요약)")
     ls = d.label_scan()
     rules = f"""# 자료 포함 규칙 · 원자료 지문 ({SCOPE_LABEL_KO[scope]})
@@ -306,7 +310,11 @@ def build_one(scope, bundles, raw, args):
     zpath = os.path.join(args.out, base + ".zip")
     with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
         for rel in sorted(list(files) + ["manifest.json"]):
-            z.write(os.path.join(root, rel), f"{base}/{rel}")
+            zi = zipfile.ZipInfo(f"{base}/{rel}", date_time=(2026, 1, 1, 0, 0, 0))  # fixed time: identical content gives identical ZIP bytes
+            zi.compress_type = zipfile.ZIP_DEFLATED
+            zi.external_attr = 0o644 << 16
+            with open(os.path.join(root, rel), "rb") as fh:
+                z.writestr(zi, fh.read(), compresslevel=6)
     # zip self-check
     with zipfile.ZipFile(zpath) as z:
         bad = z.testzip()
@@ -452,9 +460,18 @@ def verification_report(d, vr, repro_ok, repro_out, ev, figs, root):
     L += ["## 2. MDS 계산", f"- 수치적 수렴: {p['numericallyConverged']}; 시작 {p['convergedStarts']}/{p['startCount']} 수렴; 종료 사유 집계 {json.dumps(p['terminationReasonTally'])}", f"- 선택: 시작 #{p['selected']['initIndex']}, seed {p['selected']['seed']}, 주 실행 {p['selected']['main']['reason']}, 엄격 계속 {p['selected']['strict']['reason']}", f"- 최종 좌표에서 재계산한 지표: raw stress {p['rawStress']}, Stress-1 {p['stress1']}, √(raw/q) {p['stressNormalizedSqrt']}, RSQ {p['rsq']} (Stress-1 = √(raw/q): 국소 최소에서 성립하는 식(Mair et al., 2022, 식 4)을 계산으로 확인)", ""]
     L += ["## 3. 독립 구현 재현(패키지 안의 reproduce_mds.py)", "```", repro_out.strip() or "(실행하지 않음)", "```", ""]
     L += ["## 4. 교차 검증 근거 파일", *(f"- 11_검증/교차검증/{k}" for k in ev), ""]
-    L += ["## 5. 이전 계산 방식에서 확인되어 수정한 결함(근거는 교차검증 폴더의 진단 파일)", "- 목적함수(raw stress)가 줄고 있는데 Stress-1이 일시적으로 올랐다는 이유로 시작을 실패 처리해 모든 시작이 2번째 반복에서 끝남.", "- 미수렴·오류 시작이 최종 해로 선택될 수 있었고, 실제 종료 사유가 저장·표시되지 않아 COMPLETED 또는 ‘수렴’처럼 보일 수 있었음.", "- ‘Stress-1’이 Kruskal의 암묵적 정규화(분모 Σd²)와 SMACOF의 명시적 정규화 디스패리티를 섞어 계산되어 Kruskal Stress-1·smacof 보고값과 달랐음.", "- 수정: raw stress 기준 상대 감소 수렴, 명시적 종료 사유, 수렴한 시작만 선택, 최종 좌표에서 모든 지표 재계산.", ""]
+    L += ["## 5. 이전 계산 방식에서 확인되어 수정한 결함(근거는 교차검증 폴더의 진단 파일)", "- 목적함수(raw stress)가 줄고 있는데 Stress-1이 일시적으로 올랐다는 이유로 시작을 실패 처리해 모든 시작이 2번째 반복에서 끝남.", "- 미수렴·오류 시작이 최종 해로 선택될 수 있었고, 실제 종료 사유가 저장·표시되지 않아 COMPLETED 또는 ‘수렴’처럼 보일 수 있었음.", "- 이전 구현이 표시한 ‘Stress-1’은 분자에 명시적으로 정규화한 디스패리티, 분모에 Σd²를 쓰는 정의로 scikit-learn의 normalized_stress와 같은 정의였음. 오류가 아니라 Kruskal 원정의(디스패리티 크기 최적화)·smacof(R) 보고값과 다른 정의이며 같은 좌표에서 더 큰 값을 냄. 새 분석은 Kruskal 정의를 ‘Stress-1’로 쓰고 이전 정의 값도 함께 보고함. 이전 표시값과 새 값의 차이에는 수렴 상태의 변화와 정의 정비가 함께 들어 있음(교차검증 폴더의 stress_definition_decomposition.json).", "- 수정: raw stress 기준 상대 감소 수렴, 명시적 종료 사유, 수렴한 시작만 선택, 최종 좌표에서 모든 지표 재계산.", ""]
+    L += ["## 5-0. Stress 계산 정의와 이전 표시값과의 차이", "- 같은 최종 좌표에서 raw stress(정규화 d̂), Stress-1(Kruskal, 크기 제약 없는 단조 회귀 d̂*), √(raw/q), 이전 구현·scikit-learn 정의 √(raw/Σd²)를 구분해 보고함. 06_진단/지표_독립재계산표.csv는 06_진단/쌍진단_1081.csv의 거리·d̂·d̂*만으로 이들을 다시 계산해 저장값과 대조한 표임.", "- 쌍 진단표·잔차표에는 두 디스패리티(정규화 d̂ → raw stress·√(raw/q)·RSQ, Kruskal d̂* → Stress-1)와 각각의 잔차를 모두 실었고, Shepard 다이어그램의 계단선은 d̂*(Stress-1 정의)임."]
+    dec = ev.get("stress_definition_decomposition.json")
+    if dec and d.scope in dec:
+        r_ = dec[d.scope]
+        L += [f"- 이전 표시값 {r_['previously_displayed_stress1_old_engine_unconverged_2_iterations']:.4f}(이전 엔진, 2회 반복 미수렴 상태) → 새 Stress-1 {r_['kruskal_stress1_at_converged_solution']:.4f}. 전체 변화 {r_['total_change']:+.4f} 중 수렴 상태 변화의 효과(이전 정의로 미수렴→수렴) {r_['effect_of_convergence (old definition: unconverged -> converged)']:+.4f}({r_['share_of_total_from_convergence']:.0%}), 정의 정비의 효과(같은 수렴 좌표에서 이전 정의 {r_['old_definition_at_converged_solution']:.4f} → Kruskal {r_['kruskal_stress1_at_converged_solution']:.4f}) {r_['effect_of_definition (old definition -> Kruskal, same converged coordinates)']:+.4f}({r_['share_of_total_from_definition']:.0%}). 감소분 전부가 수렴 개선 효과는 아님."]
+    sk = ev.get("external_sklearn_check.json")
+    if sk and d.scope in sk:
+        x = sk[d.scope]["sklearn_eps_1e-12"]
+        L += [f"- 외부 라이브러리 비교(scikit-learn {sk['sklearn_version']}, 같은 시작 배치): 최종 배치 Procrustes 상대 차이 {x['procrustes_relative_difference_vs_ours']:.1e}; sklearn이 보고한 normalized_stress {x['sklearn_reported_normalized_stress']:.5f} = 이전 정의 값 {sk[d.scope]['ours']['v1_definition']:.5f}, 이 분석의 Kruskal Stress-1 {sk[d.scope]['ours']['stress1_kruskal']:.5f}는 sklearn 배치에서 다시 계산해도 {x['metrics_by_this_analysis_on_sklearn_configuration']['stress1_kruskal']:.5f}로 같음.", ""]
     L += ["## 5-1. 라이브러리 동작 확인(비유사성 0의 처리)", "- 이 분석의 엔진은 비유사성 δ=0인 쌍을 결측으로 처리하지 않고 가중치 1의 실제 관측치로 유지함(단위 시험으로 확인).", f"- 이번 자료에서 한 번도 빠짐없이 모두가 함께 분류한 문항 쌍(δ=0)은 {a['matrixChecks']['alwaysTogether']}개이므로 어떤 라이브러리의 0 처리 방식도 결과에 영향을 주지 않음.", "- 참고: scikit-learn 1.8 소스(`sklearn/manifold/_mds.py`, _smacof_single)는 비계량 모드에서 대각선 밖 비유사성 0을 등위회귀에서 제외(결측 취급)하고, 수렴 판정에 정규화 전 raw stress를 사용함(소스 직접 열람).", ""]
-    L += ["## 6. 한계", "- 독립 구현은 같은 알고리즘 정의를 다른 코드로 구현한 것이며 전역 최적을 보증하지 않음.", "- 참고문헌 일부는 원문을 열람하지 못했음(보고서 참고문헌 표의 ‘열람 상태’ 참조).", "- 번역 동등성·표집·내용 타당도 검토는 이 분석에 포함되지 않음.", ""]
+    L += ["## 6. 한계", "- 독립 numpy 구현(reproduce_mds.py·crossval.py)은 같은 알고리즘 정의를 다른 코드로 다시 구현한 것이지 외부 검증이 아님. 외부 라이브러리와의 비교: scikit-learn 1.9.1(격리 설치)을 같은 시작 배치로 실행해 최종 배치가 일치함(Procrustes 상대 차이 약 1e-10~1e-7)을 확인했고, sklearn이 보고하는 normalized_stress는 이전 정의 값과 일치함. 이 비교는 R smacof와는 하지 않았음(R 미설치).", "- 참고문헌 일부는 원문을 열람하지 못했음(보고서 참고문헌 표의 ‘열람 상태’ 참조).", "- 번역 동등성·표집·내용 타당도 검토는 이 분석에 포함되지 않음.", ""]
     return "\n".join(L)
 
 

@@ -118,3 +118,20 @@ def derive(S, N):
 
 def sid(i):
     return f"S{i + 1:02d}"
+
+
+FIXED_ZIP_TIME = (2026, 1, 1, 0, 0, 0)
+
+
+def rewrite_zip_deterministic(path):
+    """Rewrites a ZIP-based file (xlsx/docx) with fixed entry timestamps so that identical content gives identical bytes."""
+    import zipfile
+
+    tmp = path + ".tmp"
+    with zipfile.ZipFile(path) as zin, zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zout:
+        for info in zin.infolist():
+            zi = zipfile.ZipInfo(info.filename, date_time=FIXED_ZIP_TIME)
+            zi.compress_type = zipfile.ZIP_DEFLATED
+            zi.external_attr = 0o644 << 16
+            zout.writestr(zi, zin.read(info.filename))
+    os.replace(tmp, path)

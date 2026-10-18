@@ -27,6 +27,11 @@ export function writePackageFile(bytes: Uint8Array): { storedFile: string; sha25
     const tmp = path.join(dir, `.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     fs.writeFileSync(tmp, bytes, { flag: "wx" });
     fs.renameSync(tmp, target);
+    try {
+      fs.chmodSync(target, 0o444); // write-once: discourages in-place edits (backups may hard-link this inode)
+    } catch {
+      /* best effort */
+    }
   }
   return { storedFile, sha256 };
 }

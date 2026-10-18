@@ -123,7 +123,29 @@ def build_tables(d: ScopeData, raw, cross=None):
 
     # ------------------------------------------------------------------ pair diagnostics + stress per point
     pr = a["pairDiagnostics"] or []
-    T["pairs"] = ("쌍진단_1081", ["문항 i", "문항 j", "S", "P", "D", "δ(입력)", "배치 거리 d", "디스패리티 d̂", "잔차 d̂−d"], [[sid(x["i"]), sid(x["j"]), x["S"], x["P"], x["D"], x["delta"], x["distance"], x["disparity"], x["residual"]] for x in pr], "")
+    T["pairs"] = ("쌍진단_1081", ["문항 i", "문항 j", "S", "P", "D", "δ(입력)", "배치 거리 d", "정규화 디스패리티 d̂ (raw stress·√(raw/q)·RSQ에 사용; Σd̂²=q)", "잔차 d̂−d (정규화)", "Kruskal 디스패리티 d̂* (Stress-1에 사용; 단조 회귀, 크기 제약 없음)", "잔차 d̂*−d (Kruskal)"], [[sid(x["i"]), sid(x["j"]), x["S"], x["P"], x["D"], x["delta"], x["distance"], x["disparity"], x["residual"], x["disparityKruskal"], x["residualKruskal"]] for x in pr], "")
+    # independent recomputation of every metric from the exported pair table alone (no stored metric is used as input)
+    if pr:
+        dd = np.array([x["distance"] for x in pr])
+        dh = np.array([x["disparity"] for x in pr])
+        ds = np.array([x["disparityKruskal"] for x in pr])
+        qn = d.n * (d.n - 1) / 2
+        raw_ = float(((dh - dd) ** 2).sum())
+        num_ = float(((ds - dd) ** 2).sum())
+        den_ = float((dd**2).sum())
+        rec = [
+            ["쌍 수 (= n(n−1)/2)", len(pr), qn, len(pr) == qn],
+            ["Σ d̂² (정규화 디스패리티; q와 같아야 함)", float((dh**2).sum()), qn, abs((dh**2).sum() - qn) < 1e-6],
+            ["raw stress σ_raw = Σ(d̂−d)²", raw_, p["rawStress"], abs(raw_ - p["rawStress"]) < 1e-8],
+            ["Kruskal 분자 Σ(d̂*−d)²", num_, p["kruskalNumerator"], abs(num_ - p["kruskalNumerator"]) < 1e-8],
+            ["분모 Σ d²", den_, p["sumDistSq"], abs(den_ - p["sumDistSq"]) < 1e-8],
+            ["Stress-1 (Kruskal) = √(분자/분모)", float(np.sqrt(num_ / den_)), p["stress1"], abs(np.sqrt(num_ / den_) - p["stress1"]) < 1e-9],
+            ["√(σ_raw / q)", float(np.sqrt(raw_ / qn)), p["stressNormalizedSqrt"], abs(np.sqrt(raw_ / qn) - p["stressNormalizedSqrt"]) < 1e-9],
+            ["이전 정의 √(σ_raw / Σd²)", float(np.sqrt(raw_ / den_)), p["stress1V1Definition"], abs(np.sqrt(raw_ / den_) - p["stress1V1Definition"]) < 1e-9],
+            ["RSQ = corr(d̂, d)²", float(np.corrcoef(dh, dd)[0, 1] ** 2), p["rsq"], abs(np.corrcoef(dh, dd)[0, 1] ** 2 - p["rsq"]) < 1e-9],
+            ["Stress-1 − √(σ_raw/q) (국소 최소에서 0)", float(np.sqrt(num_ / den_) - np.sqrt(raw_ / qn)), 0.0, abs(np.sqrt(num_ / den_) - np.sqrt(raw_ / qn)) < 1e-6],
+        ]
+        T["metric_recompute"] = ("지표_독립재계산", ["항목", "쌍 진단표에서 다시 계산한 값", "저장된 값(분석 결과)", "일치"], rec, "")
     contrib = np.zeros(d.n)
     for x in pr:
         contrib[x["i"]] += x["residual"] ** 2
@@ -195,6 +217,7 @@ def build_tables(d: ScopeData, raw, cross=None):
 def write_xlsx(path, T, order, extra_sheets=()):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     wb = xlsxwriter.Workbook(path, {"constant_memory": False, "strings_to_numbers": False})
+    wb.set_properties({"created": datetime(2026, 1, 1, tzinfo=timezone.utc), "title": os.path.basename(path), "author": "concept-sort analysis package"})
     head = wb.add_format({"bold": True, "bg_color": "#E2E8F0", "border": 1, "text_wrap": True, "valign": "top"})
     wrap = wb.add_format({"text_wrap": True, "valign": "top"})
     used = set()
@@ -230,6 +253,9 @@ def write_xlsx(path, T, order, extra_sheets=()):
         for j, w in enumerate(widths):
             ws.set_column(j, j, min(max(w + 2, 8), 60))
     wb.close()
+    from common import rewrite_zip_deterministic
+
+    rewrite_zip_deterministic(path)
 
 
 def write_csvs(outdir, T, mapping):

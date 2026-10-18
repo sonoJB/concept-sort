@@ -8,7 +8,8 @@ from common import SCOPE_LABEL_KO, fmt, sid
 from scopedata import ScopeData
 
 CLAIM_SOURCE_ROWS = [
-    ["입력 비유사성 δ = 1 − S/N, 대각선 0 (유사성 빈도 S의 대각선은 N)", "trochim1989 (개념도 절차의 일반 출처, 원문 미열람)", "해당 없음(위치 미확인)", "정의는 이 분석의 명시적 변환식이며 계산으로 검증함"],
+    ["개인 이진 유사성 행렬(대각선 1)과 집단 유사성 빈도 S(대각선 N), MDS→Ward 절차", "trochim1989", "Step 3, Step 4 (저자 공개 본문, 절 제목)", "전문 열람. 비유사성으로의 변환식(δ = 1 − S/N)은 이 본문에 없으며 이 분석이 명시한 변환식임(독립 재계산으로 검증)"],
+    ["군집 수는 수학적 기준이 아닌 재량·내용 판단, 군집명은 합의로 제안, 지도 방향의 임의성과 군집 모양의 무의미", "trochim1989; trochim1994", "Trochim(1989) Step 4–5; Trochim 외(1994) Results·Session 2", "전문 열람. 두 논문 모두 신뢰도·Stress의 허용 기준을 제시하지 않음"],
     ["서열 SMACOF, 명시적 정규화 Σd̂² = n(n−1)/2, raw stress / Stress-1 식", "mair2022", "p. 4, 식 (2)–(4)", "전문 열람"],
     ["동점 처리 primary/secondary/tertiary", "mair2022", "pp. 3–4", "전문 열람"],
     ["임의 시작 여러 번과 국소 최소 문제", "mair2022", "p. 6, §3.1", "전문 열람"],
@@ -18,7 +19,7 @@ CLAIM_SOURCE_ROWS = [
     ["RSQ 정의(디스패리티와 거리의 제곱 상관)", "multbiplotr (공식 문서)", "MDS 도움말 Value절", "양호 기준은 확인되지 않음"],
     ["Ward 최소분산 군집", "ward1963 (원문 미열람)", "위치 미확인", "독립 구현(군집 내 제곱합 증가량 직접 계산)과의 일치로 검증"],
     ["실루엣", "rousseeuw1987 (초록·서지만 확인)", "위치 미확인", "정의는 독립 구현과의 일치로 검증; 해석 구간은 확인하지 못함"],
-    ["반복 분할 신뢰도", "trochim1994 (원문 미열람)", "위치 미확인", "이 분석의 설계(1,000회, 국가 층화, seed 고정)는 사전 고정 설정"],
+    ["무작위 이분 + Spearman–Brown 보정 분할 신뢰도의 개념(사례 값 행렬 .79, 배치 .56)", "trochim1994", "Results > Reliability and Consistency of Maps", "전문 열람. 이 분석의 설계(1,000회, 국가 층화, seed 고정)는 사전 고정 설정이며 논문 설계가 아님; 허용 기준 없음"],
     ["순열 기반 Stress 규준(참고)", "mair2016", "원고 pp. 14–15", "이번 분석에서는 계산하지 않음(미실시)"],
 ]
 
@@ -91,7 +92,7 @@ def blocks_for(d: ScopeData, figs, tables, verif):
         pr = d.proposal
         B.append(("p", f"추천 군집 수 {d.rec_k}(검토 상태: 자동 제안·연구자 검토 전). ‘최적’은 검토한 후보(k={a['settings']['ward']['kMin']}–{a['settings']['ward']['kMax']})와 아래 기준에서의 추천을 뜻하며 수학적 유일 정답이 아닙니다."))
         B.append(("ul", pr["recommendationRationaleKo"]))
-        B.append(("fig", figs["map_color"], f"그림 2. 사분면 개념도(2차원, {d.rec_k}군집, 색). 점은 문항이며 좌표는 변경하지 않았고, 볼록 껍질은 군집 소속 표시일 뿐 인과·영향 경로가 아니다. 사분면은 x=0, y=0 기준선에 의한 시각적 구획이며 군집 수 4개나 축의 의미를 뜻하지 않는다."))
+        B.append(("fig", figs["map_color"], f"그림 2. 사분면 개념도(2차원, {d.rec_k}군집, 색). 점은 문항이며 좌표는 변경하지 않았고, 볼록 껍질은 군집 소속 표시일 뿐 인과·영향 경로가 아니다. 사분면은 x=0, y=0 기준선에 의한 시각적 구획이며 군집 수 4개나 축의 의미를 뜻하지 않는다. 지도의 방향은 임의이고 군집의 크기·모양에는 의미 있는 해석이 없다(Trochim et al., 1994)."))
         B.append(("fig", figs["map_gray"], "그림 3. 같은 지도의 흑백판(기호·해치로 군집 구분)"))
         bd = d.boundary(d.sol)
         rows = []
@@ -254,7 +255,13 @@ def render_pdf(blocks, figdir, out_pdf):
         w.end_page()
     w.close()
     doc = pymupdf.open(out_pdf)
-    return doc.page_count
+    pages = doc.page_count
+    doc.set_metadata({"title": os.path.basename(out_pdf), "creationDate": "", "modDate": "", "producer": "", "creator": "", "author": "", "subject": "", "keywords": "", "format": "PDF 1.7", "trapped": "", "encryption": None})
+    data = doc.tobytes(garbage=4, deflate=True, no_new_id=True)
+    doc.close()
+    with open(out_pdf, "wb") as fh:
+        fh.write(data)
+    return pages
 
 
 def render_docx(blocks, figdir, out_docx):
@@ -298,4 +305,13 @@ def render_docx(blocks, figdir, out_docx):
         elif t == "refs":
             for r in b[1]:
                 doc.add_paragraph(f"{r['apa'].replace('*', '')} [열람 상태: {r['access']} — {r['accessNoteKo']}]", style="List Bullet")
+    from datetime import datetime
+
+    cp = doc.core_properties
+    cp.created = cp.modified = cp.last_printed = datetime(2026, 1, 1)
+    cp.author = cp.last_modified_by = "concept-sort analysis package"
+    cp.title = os.path.basename(out_docx)
     doc.save(out_docx)
+    from common import rewrite_zip_deterministic
+
+    rewrite_zip_deterministic(out_docx)

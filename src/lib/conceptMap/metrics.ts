@@ -30,6 +30,8 @@ export type MetricRecord = {
   verdicts: { aspectKo: string; textKo: string; tone: Tone }[];
   sourceKeys: ReferenceKey[];
   limitsKo: string[];
+  /** optional detail table (header + rows) rendered under the metric */
+  table?: { header: string[]; rows: (string | number)[][] };
 };
 
 const f = (v: number | null | undefined, d = 4) => (v === null || v === undefined || !Number.isFinite(v) ? "계산 불가" : v.toFixed(d));
@@ -133,9 +135,9 @@ export function evaluateMetrics(a: ScopeAnalysis, recommendedK: number | null): 
       {
         kind: "empirical_comparison_range",
         labelKo: "개념도 연구의 비교 범위",
-        text: `${CONCEPT_MAPPING_STRESS_RANGE.low}–${CONCEPT_MAPPING_STRESS_RANGE.high}: Henderikx & Stoffers(2023)가 Rosas & Kane(2012)을 인용해 제시한 개념도 연구들의 Stress 범위. Rosas & Kane 원문에서의 위치는 확인하지 못했고, 개념도 소프트웨어의 Stress 정의가 위 Stress-1과 같은지는 원문에 명시되어 있지 않아 동일 정의의 비교인지 미확정`,
-        sourceKeys: ["henderikx2023", "rosas2012"],
-        location: "Henderikx & Stoffers (2023) 초록, §3.1, §4.1",
+        text: `${CONCEPT_MAPPING_STRESS_RANGE.low}–${CONCEPT_MAPPING_STRESS_RANGE.high}: Henderikx & Stoffers(2023)가 Rosas & Kane(2012)을 인용해 제시한 개념도 연구들의 Stress 범위. Rosas & Kane 원문에서의 위치는 확인하지 못했고, 개념도 소프트웨어의 Stress 정의가 위 Stress-1과 같은지는 원문에 명시되어 있지 않아 동일 정의의 비교인지 미확정. 참고 사례: Trochim 외(1994)는 최종 Stress .31을 보고했으나 정의와 허용 기준은 서술하지 않음`,
+        sourceKeys: ["henderikx2023", "rosas2012", "trochim1994"],
+        location: "Henderikx & Stoffers (2023) 초록, §3.1, §4.1; Trochim et al. (1994) Results(MDS)",
       },
     ],
     verdicts: [
@@ -146,9 +148,42 @@ export function evaluateMetrics(a: ScopeAnalysis, recommendedK: number | null): 
     limitsKo: [
       "47개 문항·서열 MDS·동점이 많은 자료(서로 다른 비유사성 수준이 적음)에서의 Stress는 문항 수·동점 처리·분석 조건과 함께 해석해야 함.",
       "동점 처리(secondary: 같은 비유사성은 같은 디스패리티)는 primary보다 높은 Stress를 낼 수 있음 — 민감도 분석 참조.",
-      "이전 구현(v1)의 'Stress-1'은 분모만 Kruskal식이고 분자의 디스패리티는 명시적 정규화 값을 써서 두 정규화를 섞은 값이었음(본 분석의 정의와 다름).",
+      "이전 구현(v1)의 'Stress-1'은 분자에 명시적으로 정규화한 디스패리티(Σd̂²=n(n−1)/2), 분모에 Σd²를 쓰는 정의였으며 scikit-learn의 normalized_stress와 같은 정의임(외부 라이브러리와 5자리까지 일치 확인)(오류가 아니라 다른 정의이며, 같은 좌표에서 Kruskal 값 이상의 값을 냄; 아래 ‘Stress 계산 정의 구분’ 표 참조). 이전 표시값과 새 값의 차이에는 수렴 상태의 변화와 계산 정의의 정비가 함께 들어 있으며 감소분 전부가 수렴 개선 효과는 아님.",
     ],
   });
+
+  // 3b. definition audit ------------------------------------------------------------------------
+  {
+    const q = (a.statementCount * (a.statementCount - 1)) / 2;
+    const num = p.kruskalNumerator;
+    const den = p.sumDistSq;
+    const raw = p.rawStress;
+    out.push({
+      id: "stress_definitions",
+      group: "fit",
+      nameKo: "Stress 계산 정의 구분 (같은 최종 좌표에서 네 값)",
+      definitionKo: "같은 최종 좌표·같은 거리 d에서 서로 다른 정의가 서로 다른 값을 낸다. raw stress와 √(σ_raw/q)는 명시적으로 정규화한 디스패리티 d̂(Σd̂²=q)를, Kruskal Stress-1은 크기 제약 없이 단조 회귀한 디스패리티 d̂*를 쓴다. 국소 최소에서는 Kruskal Stress-1 = √(σ_raw/q)이고(Mair et al., 2022, 식 4), 이전 구현과 scikit-learn의 normalized_stress(분자 σ_raw, 분모 Σd²)는 디스패리티의 크기를 최적화하지 않아 같은 좌표에서 더 크거나 같은 값을 낸다. 둘 다 유효한 정의이며, 이 분석은 Kruskal 원정의 및 smacof(R)의 보고값과 일치하는 Σ(d̂*−d)²/Σd²를 ‘Stress-1’로 쓰고 다른 정의의 값은 항상 함께 보고한다.",
+      formula: "σ_raw = Σ(d̂−d)²;  Stress-1 = √(Σ(d̂*−d)² / Σd²);  √(σ_raw/q);  이전 정의 = √(σ_raw / Σd²);  q = n(n−1)/2",
+      value: p.stress1,
+      valueDisplay: `raw ${f(raw, 5)} · Stress-1(Kruskal) ${f(p.stress1, 6)} · √(raw/q) ${f(p.stressNormalizedSqrt, 6)} · 이전 정의 ${f(p.stress1V1Definition, 6)}`,
+      criteria: [{ kind: "definitional_range", labelKo: "정의 출처", text: "σ_n 식(2), Kruskal Stress-1 식(3), 국소 최소에서 σ₁=√σ_n 식(4)", sourceKeys: ["mair2022", "mair2016"], location: "Mair et al. (2022) p. 4; Mair et al. (2016) 원고 pp. 5–6" }],
+      verdicts: [{ aspectKo: "판정", textKo: "정의 구분용 표 (적합도 판정 기준 아님)", tone: "unconfirmed" }],
+      sourceKeys: ["mair2022", "mair2016"],
+      limitsKo: [
+        "쌍 진단표·Shepard 다이어그램에는 두 가지 디스패리티(정규화 d̂, Kruskal d̂*)와 각각의 잔차를 모두 실었으며 Shepard 계단선은 Kruskal d̂*(Stress-1 정의)를 그린다. d̂ = c·d̂*, c = √(q/Σd̂*²).",
+        "독립 numpy 검증은 같은 알고리즘 정의를 다른 코드로 다시 구현한 것이며 외부 검증 라이브러리와의 비교와는 구분됨(검증 보고서 참조).",
+      ],
+      table: {
+        header: ["지표", "분자", "분모", "디스패리티", "정규화", "값"],
+        rows: [
+          ["raw stress σ_raw", "Σ(d̂−d)²", "1", "정규화 d̂", "명시적: Σd̂² = q", f(raw, 6)],
+          ["√(σ_raw / q)", `σ_raw = ${f(raw, 6)}`, `q = ${q} (= Σd̂² = ${f(p.sumDispSq, 6)})`, "정규화 d̂", "명시적", f(p.stressNormalizedSqrt, 6)],
+          ["Kruskal Stress-1 (이 분석의 Stress-1)", `Σ(d̂*−d)² = ${f(num, 6)}`, `Σd² = ${f(den, 6)}`, "단조 회귀 d̂* (크기 제약 없음)", "암묵적: 분모 Σd²", f(p.stress1, 6)],
+          ["이전 구현·scikit-learn 정의(normalized_stress)", `σ_raw = ${f(raw, 6)}`, `Σd² = ${f(den, 6)}`, "정규화 d̂", "분자는 명시적(Σd̂²=q), 분모는 Σd²", f(p.stress1V1Definition, 6)],
+        ],
+      },
+    });
+  }
 
   // 4. RSQ -----------------------------------------------------------------------------------
   out.push({
@@ -262,7 +297,8 @@ export function evaluateMetrics(a: ScopeAnalysis, recommendedK: number | null): 
     valueDisplay: sh.rawR && sh.spearmanBrown ? `원상관 평균 ${f(sh.rawR.mean, 3)} (중앙값 ${f(sh.rawR.median, 3)}, 최소–최대 ${f(sh.rawR.min, 3)}–${f(sh.rawR.max, 3)}); SB 평균 ${f(sh.spearmanBrown.mean, 3)} (중앙값 ${f(sh.spearmanBrown.median, 3)}); 계산 불능 ${sh.undefinedCount}회, 음수 ${sh.negativeRawCount}회` : "계산 불가",
     criteria: [
       { kind: "computation_setting", labelKo: "이번 계산의 설정값", text: `반복 ${sh.repetitions}회, seed ${sh.seed} 사전 고정. ${sh.design}`, sourceKeys: ["trochim1994"] },
-      { kind: "good_fit_criterion_unconfirmed", labelKo: "양호 기준", text: "분할 신뢰도의 양호 기준을 원문에서 확인하지 못함", sourceKeys: [] },
+      { kind: "empirical_comparison_range", labelKo: "개념도 사례의 값(비교 참고, 기준 아님)", text: "Trochim 외(1994)는 무작위 이분 후 Spearman–Brown 보정한 분할 신뢰도로 유사성 행렬 r = .79, MDS 배치 r = .56을 보고했으며 최소 허용값은 서술하지 않음(표본·문항 수가 달라 직접 비교 불가)", sourceKeys: ["trochim1994"], location: "Trochim et al. (1994) Results > Reliability and Consistency of Maps" },
+      { kind: "good_fit_criterion_unconfirmed", labelKo: "양호 기준", text: "분할 신뢰도의 양호 기준을 원문에서 확인하지 못함(Trochim 외(1994) 본문에도 최소 허용값 없음)", sourceKeys: ["trochim1994"] },
     ],
     verdicts: [{ aspectKo: "판정", textKo: "참고 지표 · 양호 기준 미확정", tone: "unconfirmed" }],
     sourceKeys: ["trochim1994"],
@@ -283,7 +319,7 @@ export function evaluateMetrics(a: ScopeAnalysis, recommendedK: number | null): 
     formula: "S_ij = Σ_참여자 1{i,j 같은 묶음};  P=S/N;  D=N−S;  δ=1−S/N (MDS 입력)",
     value: c.size,
     valueDisplay: `크기 ${c.size}×${c.size}, 대칭 ${c.symmetric ? "예" : "아니오"}, 범위 ${c.offDiagonalInRange ? "정상" : "이상"}, 대각선=N ${c.diagonalEqualsN ? "예" : "아니오"}; 비대각 최소 ${c.minOffDiagonal} · 최대 ${c.maxOffDiagonal}; 한 번도 함께 분류되지 않은 쌍 ${c.neverTogether}/${c.pairs}; 모두가 함께 분류한 쌍 ${c.alwaysTogether}; 서로 다른 비유사성 수준 ${c.distinctLevels}개`,
-    criteria: [{ kind: "definitional_range", labelKo: "정의상 조건", text: "대칭, 0≤S_ij≤N, S_ii=N", sourceKeys: ["trochim1989"] }],
+    criteria: [{ kind: "definitional_range", labelKo: "정의상 조건", text: "대칭, 0≤S_ij≤N, S_ii=N (집단 행렬은 개인 이진 행렬의 합, 대각선 = 분류자 수)", sourceKeys: ["trochim1989"], location: "Trochim (1989) Step 3: Structuring of Statements" }],
     verdicts: [{ aspectKo: "판정", textKo: c.symmetric && c.offDiagonalInRange && c.diagonalEqualsN ? "정의상 조건 충족" : "정의상 조건 위반", tone: c.symmetric && c.offDiagonalInRange && c.diagonalEqualsN ? "met" : "unfavorable" }],
     sourceKeys: ["trochim1989"],
     limitsKo: ["모든 참여자가 47개 문항을 중복·누락 없이 분류했음을 확인한 뒤에만 위 식을 적용함(불완전 자료는 결측을 0으로 바꾸지 않고 분모를 바꾸지 않음)."],

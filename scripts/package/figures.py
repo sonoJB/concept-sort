@@ -18,6 +18,7 @@ plt.rcParams.update(
         "font.family": ["Malgun Gothic", "Noto Sans KR", "DejaVu Sans"],
         "axes.unicode_minus": False,
         "svg.fonttype": "path",
+        "svg.hashsalt": "concept-sort-package-v2",
         "pdf.fonttype": 42,
         "figure.dpi": 100,
         "axes.titlesize": 12,
@@ -35,7 +36,8 @@ def save_all(fig, base, formats=("png", "svg", "pdf")):
     for fmt in formats:
         p = f"{base}.{fmt}"
         os.makedirs(os.path.dirname(p), exist_ok=True)
-        fig.savefig(p, dpi=DPI_OUT if fmt == "png" else None, bbox_inches="tight", facecolor="white")
+        meta = {"svg": {"Date": None}, "pdf": {"CreationDate": None, "ModDate": None, "Producer": "matplotlib"}, "png": {}}[fmt]
+        fig.savefig(p, dpi=DPI_OUT if fmt == "png" else None, bbox_inches="tight", facecolor="white", metadata=meta)
         out.append(p)
     plt.close(fig)
     return out
@@ -296,7 +298,7 @@ def fig_shepard(delta, distance, disparity, title):
     for d, v in zip(delta, disparity):
         levels[round(d, 12)] = v
     xs = sorted(levels)
-    ax.plot(xs, [levels[x] for x in xs], color="#D55E00", lw=2, label="디스패리티 d̂ (δ 수준별 단조 회귀값)")
+    ax.plot(xs, [levels[x] for x in xs], color="#D55E00", lw=2, label="디스패리티 d̂* (δ 수준별 단조 회귀값, Stress-1 정의)")
     ax.set_xlabel("입력 비유사성 δ = 1 − S/N")
     ax.set_ylabel("배치 거리 / 디스패리티")
     ax.set_title(title)

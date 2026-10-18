@@ -79,7 +79,7 @@ export const ShepardChart = forwardRef<SVGSVGElement, { delta: number[]; distanc
         <circle cx={box.l + 12} cy={box.t + 12} r={3} fill="#0072B2" />
         <text x={box.l + 20} y={box.t + 15} fill="#334155">배치 거리 d (문항 쌍 {delta.length}개)</text>
         <line x1={box.l + 6} y1={box.t + 28} x2={box.l + 18} y2={box.t + 28} stroke="#D55E00" strokeWidth={2} />
-        <text x={box.l + 20} y={box.t + 31} fill="#334155">디스패리티 d̂ (δ 수준별 단조 회귀값)</text>
+        <text x={box.l + 20} y={box.t + 31} fill="#334155">디스패리티 d̂* (δ 수준별 단조 회귀값, Stress-1 정의)</text>
       </g>
     </Svg>
   );

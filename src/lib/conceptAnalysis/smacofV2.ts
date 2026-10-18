@@ -50,13 +50,15 @@ export type Evaluation = {
   stress1: number;
   /** sqrt( rawStress / (n(n-1)/2) ): smacof's normalised stress (sigma_n)^(1/2); equals stress1 at a stationary point (Mair et al. 2022, eq. 4). */
   stressNormalizedSqrt: number;
-  /** v1's definition: sqrt( rawStress / sum w d^2 ) using the NORMALISED disparities. Kept only to quantify the v1 difference. */
+  /** sqrt( rawStress / sum w d^2 ) with the NORMALISED disparities: the previous implementation's value and scikit-learn's normalized_stress. A valid but different definition, always >= the Kruskal value at the same coordinates; reported alongside. */
   stress1V1Definition: number;
   /** Squared Pearson correlation between disparities and configuration distances (same active pairs). */
   rsq: number;
   pairCount: number;
   sumDistSq: number;
   sumDispSq: number;
+  /** numerator of Kruskal Stress-1: sum w (dhatStar - d)^2 with the UNNORMALISED monotone-regression disparities */
+  kruskalNumerator: number;
   /** smallest inter-point distance in the configuration (0 means two items coincide). */
   minPairDistance: number;
 };
@@ -275,6 +277,7 @@ export function evaluateConfiguration(points: Point[], dissimilarity: Matrix, we
     pairCount: ps.m,
     sumDistSq: sumD2,
     sumDispSq: sumH2,
+    kruskalNumerator: numK,
     minPairDistance: dist.reduce((a, b) => Math.min(a, b), Infinity),
   };
 }
@@ -285,11 +288,16 @@ export function shepardData(points: Point[], dissimilarity: Matrix, weight: Weig
   const { flat, dim } = configurationToFlat(points);
   const st = evaluateState(ps, flat, dim, tie);
   if (st.error) throw new Error(`shepardData: ${st.error}`);
+  const star = new Float64Array(ps.m);
+  fitDisparities(ps, st.dist, tie, star);
   return {
     pairs: ps.m,
     delta: Array.from(ps.delta),
     distance: Array.from(st.dist),
+    /** disparities normalised to sum d_hat^2 = n(n-1)/2 (the ones raw stress uses) */
     disparity: Array.from(st.disp),
+    /** monotone-regression disparities of the distances, NOT rescaled (the ones Kruskal Stress-1 uses) */
+    disparityKruskal: Array.from(star),
     i: Array.from(ps.i),
     j: Array.from(ps.j),
   };

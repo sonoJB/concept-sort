@@ -5,6 +5,7 @@ import type { ResultBundle } from "@/lib/conceptMap/bundle";
 import type { MetricRecord, Tone } from "@/lib/conceptMap/metrics";
 import type { Reference } from "@/lib/conceptMap/references";
 import { clusterStyle, markerPath } from "@/lib/conceptMap/mapModel";
+import { toCsvText } from "@/lib/conceptMap/csv";
 import { MapFigure } from "./MapFigure";
 import { Dendrogram, DiffHeatmap, DimensionChart, Histogram, IterationChart, ShepardChart } from "./Charts";
 
@@ -93,13 +94,8 @@ function downloadPng(el: SVGSVGElement | null, name: string, scale = 3) {
   img.src = url;
 }
 
-function csvCell(v: unknown): string {
-  const s = v === null || v === undefined ? "" : String(v);
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
 function downloadCsv(rows: unknown[][], name: string) {
-  const text = "﻿" + rows.map((r) => r.map(csvCell).join(",")).join("\r\n") + "\r\n";
-  saveBlob(new Blob([text], { type: "text/csv;charset=utf-8" }), `${name}.csv`);
+  saveBlob(new Blob([toCsvText(rows)], { type: "text/csv;charset=utf-8" }), `${name}.csv`);
 }
 
 const short = (h: string | undefined) => (h ? h.slice(0, 12) : "—");
@@ -306,7 +302,7 @@ export default function ConceptMapPanel({ slug, adminToken }: { slug: string; ad
                     <SmallBtn onClick={() => downloadCsv([["statement", "x_dim1", "y_dim2", "cluster", "cluster_name"], ...bundle.analysis.primary.coordinates!.map((c, i) => [bundle.statements[i].no, c[0], c[1], solution.labels[i], names?.find((n) => n.cluster === solution.labels[i])?.nameKo ?? ""])], `${scope}_coordinates_k${solution.k}`)}>좌표·소속 CSV</SmallBtn>
                   </div>
                   <p className="mt-2 text-[11px] leading-relaxed text-slate-500">
-                    각 점은 문항 1개이며 좌표는 변경되지 않았습니다. 같은 색·기호가 같은 군집이고, 볼록 껍질(convex hull) 외곽선과 옅은 채움은 군집 소속 표시일 뿐 인과·영향 경로가 아닙니다. 1~2개 점 군집은 원/굵은 선분, 일직선 군집은 양 끝점 선분으로 표시합니다. 번호가 겹치면 글자 위치만 옮기고 안내선으로 연결합니다. 사분면(Ⅰ~Ⅳ)은 x=0, y=0 기준선에 의한 시각적 구획이며 군집이 4개라는 뜻도, 축에 실질적 의미가 있다는 뜻도 아닙니다(축 의미 부여에는 별도 내용 근거와 연구자 검토 필요). 지도의 방향은 임의적이며 국가별 지도는 정렬 절차 없이 같은 사분면이라는 이유만으로 같은 의미로 해석할 수 없습니다. 중요도·실행가능성 평정은 수집되지 않아 Go-Zone은 없습니다.
+                    각 점은 문항 1개이며 좌표는 변경되지 않았습니다. 같은 색·기호가 같은 군집이고, 볼록 껍질(convex hull) 외곽선과 옅은 채움은 군집 소속 표시일 뿐 인과·영향 경로가 아닙니다. 1~2개 점 군집은 원/굵은 선분, 일직선 군집은 양 끝점 선분으로 표시합니다. 번호가 겹치면 글자 위치만 옮기고 안내선으로 연결합니다. 사분면(Ⅰ~Ⅳ)은 x=0, y=0 기준선에 의한 시각적 구획이며 군집이 4개라는 뜻도, 축에 실질적 의미가 있다는 뜻도 아닙니다(축 의미 부여에는 별도 내용 근거와 연구자 검토 필요). 지도의 방향은 임의적이고 군집의 크기·모양에는 의미 있는 해석이 없으며(Trochim et al., 1994), 국가별 지도는 정렬 절차 없이 같은 사분면이라는 이유만으로 같은 의미로 해석할 수 없습니다. 중요도·실행가능성 평정은 수집되지 않아 Go-Zone은 없습니다.
                   </p>
                   {solution.clusters.some((c) => c.foreignPointsInside.length > 0) && (
                     <p className="mt-1 text-[11px] text-amber-800">
@@ -554,11 +550,11 @@ function Diagnostics({ bundle, scope, label }: { bundle: ResultBundle; scope: Sc
       <h3 className="font-semibold">MDS 진단</h3>
       <div className="grid gap-4 lg:grid-cols-2">
         <div>
-          {pairs && <ShepardChart ref={shepRef} delta={pairs.map((x) => x.delta)} distance={pairs.map((x) => x.distance)} disparity={pairs.map((x) => x.disparity)} title={`${label} Shepard 다이어그램 (2차원)`} />}
+          {pairs && <ShepardChart ref={shepRef} delta={pairs.map((x) => x.delta)} distance={pairs.map((x) => x.distance)} disparity={pairs.map((x) => x.disparityKruskal)} title={`${label} Shepard 다이어그램 (2차원)`} />}
           <div className="mt-1 flex gap-2">
             <SmallBtn onClick={() => downloadSvg(shepRef.current, `${scope}_shepard`)}>SVG</SmallBtn>
             <SmallBtn onClick={() => downloadPng(shepRef.current, `${scope}_shepard`)}>PNG</SmallBtn>
-            {pairs && <SmallBtn onClick={() => downloadCsv([["i", "j", "S", "P", "D", "delta", "distance", "disparity", "residual(disparity-distance)"], ...pairs.map((x) => [`S${String(x.i + 1).padStart(2, "0")}`, `S${String(x.j + 1).padStart(2, "0")}`, x.S, x.P, x.D, x.delta, x.distance, x.disparity, x.residual])], `${scope}_pair_diagnostics`)}>1,081쌍 진단표 CSV</SmallBtn>}
+            {pairs && <SmallBtn onClick={() => downloadCsv([["i", "j", "S", "P", "D", "delta", "distance_d", "disparity_normalized(dhat; used by raw stress, sqrt(raw/q), RSQ)", "residual_normalized(dhat-d)", "disparity_kruskal(dhat*; used by Stress-1)", "residual_kruskal(dhat*-d)"], ...pairs.map((x) => [`S${String(x.i + 1).padStart(2, "0")}`, `S${String(x.j + 1).padStart(2, "0")}`, x.S, x.P, x.D, x.delta, x.distance, x.disparity, x.residual, x.disparityKruskal, x.residualKruskal])], `${scope}_pair_diagnostics`)}>1,081쌍 진단표 CSV</SmallBtn>}
           </div>
         </div>
         <div>
@@ -636,6 +632,11 @@ function MetricsSection({ metrics, references }: { metrics: MetricRecord[]; refe
             <div><b>기준</b><ul className="mt-1 space-y-1">{m.criteria.map((c, i) => (<li key={i} className="rounded border border-slate-200 p-2"><span className="rounded bg-slate-100 px-1.5 py-0.5 mr-1">{KIND_LABEL[c.kind]}</span><b>{c.labelKo}</b>: {c.text}{c.location ? <span className="text-slate-500"> [위치: {c.location}]</span> : null}</li>))}</ul></div>
             <div><b>판정</b><div className="mt-1 space-y-1">{m.verdicts.map((v, i) => (<div key={i} className={`rounded border px-2 py-1 ${TONE_STYLE[v.tone]}`}>{v.aspectKo} [{TONE_LABEL[v.tone]}] {v.textKo}</div>))}</div></div>
             <div><b>출처</b><ul className="mt-1 list-disc pl-5">{m.sourceKeys.map((k) => { const r = refByKey.get(k); return r ? (<li key={k}>{r.apa.replace(/\*/g, "")} <span className="text-slate-500">[열람 상태: {accessLabel(r.access)}]</span>{r.url ? <> <a className="text-indigo-600 underline" href={r.url} target="_blank" rel="noreferrer">링크</a></> : null}{r.locations.length > 0 && <ul className="list-[circle] pl-5 text-slate-600">{r.locations.map((l, j) => (<li key={j}>{l.where}: {l.claimKo}</li>))}</ul>}{r.locations.length === 0 && <div className="text-amber-700">{r.accessNoteKo}</div>}</li>) : null; })}</ul></div>
+            {m.table && (
+              <div className="overflow-x-auto">
+                <table className="w-full text-[11px] border border-slate-200"><thead className="bg-slate-50"><tr>{m.table.header.map((h) => <th key={h} className="p-1 text-left border-b">{h}</th>)}</tr></thead><tbody>{m.table.rows.map((r, i) => <tr key={i} className="border-t">{r.map((c, j) => <td key={j} className="p-1 align-top">{c}</td>)}</tr>)}</tbody></table>
+              </div>
+            )}
             <div><b>적용 한계</b><ul className="list-disc pl-5">{m.limitsKo.map((l, i) => (<li key={i}>{l}</li>))}</ul></div>
           </div>
         </details>

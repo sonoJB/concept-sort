@@ -36,6 +36,7 @@ const TOKEN = `token-${SLUG}`;
 const N_ST = 12;
 const REAL_NAME = "REAL-NAME-SHOULD-NEVER-LEAK";
 const REAL_PHONE = "010-9999-8888";
+const DIGIT_NAME = "7391";
 
 const req = (url: string, init?: RequestInit) => new NextRequest(`http://localhost${url}`, { ...init, headers: { Authorization: `Bearer ${TOKEN}`, ...(init?.headers ?? {}) } } as never);
 const ctx = (extra: Record<string, string> = {}) => ({ params: Promise.resolve({ slug: SLUG, ...extra }) });
@@ -58,14 +59,14 @@ async function seedData() {
   const statements = [];
   for (let i = 0; i < N_ST; i++) statements.push(await prisma.statement.create({ data: { projectId: project.id, text: `문항 ${i}`, textJa: `項目 ${i}`, jaStatus: "APPROVED", order: i } }));
   const ids = statements.map((s) => s.id);
-  const make = async (country: "KR" | "JP", role: "MAIN" | "PILOT") => {
+  const make = async (country: "KR" | "JP", role: "MAIN" | "PILOT", name = REAL_NAME) => {
     // three themes of four statements with 15 % random moves
     const pile = ids.map((_, s) => (rnd() < 0.15 ? Math.floor(rnd() * 3) : Math.floor(s / 4)));
     const groups = [0, 1, 2].map((g) => ids.filter((_, s) => pile[s] === g)).filter((g) => g.length > 0);
     await prisma.sortSession.create({
       data: {
         projectId: project.id,
-        participantName: REAL_NAME,
+        participantName: name,
         gender: "x",
         age: 20,
         schoolLevel: "x",
@@ -79,7 +80,7 @@ async function seedData() {
   };
   for (let i = 0; i < 7; i++) await make("KR", "MAIN");
   for (let i = 0; i < 9; i++) await make("JP", "MAIN");
-  await make("KR", "PILOT");
+  await make("KR", "PILOT", DIGIT_NAME); // a digit-only identifier (like the JP 4-digit codes)
   return { project, ids };
 }
 
@@ -235,37 +236,184 @@ describe("package upload / download and superseded-result cleanup", () => {
     expect(ov.scopes.JP.package).toBeNull();
   });
 
-  it("cleanup refuses without a current packaged result for every scope, then deletes ONLY superseded derived rows", async () => {
-    // a superseded (v1) run with children
-    const legacy = await prisma.analysisRun.create({
-      data: {
-        projectId: project.id, scope: "ALL", dataset: "MAIN", executionStatus: "COMPLETED", numericDataHash: "n", statementStructureHash: "s", statementContentHashKo: "k", statementContentHashJa: "j", parameterHash: "p", sourceSnapshotAt: new Date(), inputSnapshot: "{}", parametersSnapshot: "{}",
-        algorithmVersion: "1.0.0", engineSourceCommitSha: "e".repeat(40), primaryMapDimension: 2, wardSourceDimension: 2, linkageMethod: "ward", dimensionsEvaluated: "[2]", include3dSupplement: false,
-        statementCount: N_ST, nKr: 1, nJp: 1, nTotal: 2, includedParticipantCount: 2, excludedNullCountry: 0, excludedIncomplete: 0, excludedInvalid: 0, wardStatus: "COMPLETED",
-        dimensions: { create: [{ dimension: 2, dimensionStatus: "COMPLETED", converged: false }] },
-        interpretations: { create: [{ status: "DRAFT", version: 1, selectedClusterCount: 3 }] },
-      },
-    });
-    const post0 = (body: unknown) => cleanupRoute.POST(req(`/api/projects/${SLUG}/analysis/cleanup-superseded`, { method: "POST", body: JSON.stringify(body), headers: { "Content-Type": "application/json" } }), ctx());
-    expect((await post0({})).status).toBe(422); // confirmation required
-    const confirm = { confirm: "DELETE_SUPERSEDED_DERIVED_RESULTS" };
-    expect((await post0(confirm)).status).toBe(409); // JP/ALL have no package yet
-    for (const scope of ["JP", "ALL"]) {
-      const run = await official(scope);
-      expect((await put(run.id, buildZip(run))).status).toBe(200);
+  it("rejects an upload that contains personal data (name, phone, real session id, admin token) without echoing it", async () => {
+    const run = await official("JP");
+    const sess = await prisma.sortSession.findFirstOrThrow();
+    const f = JSON.parse(run.resultBundle!).meta.fingerprints;
+    for (const [label, secret] of [["name", REAL_NAME], ["phone", REAL_PHONE], ["sessionId", sess.id], ["adminToken", TOKEN]] as const) {
+      const files: Record<string, Uint8Array> = { "pkg/README.txt": strToU8("hello"), "pkg/data.csv": strToU8(`a,b\n${secret},2\n`) };
+      const manifest = {
+        manifestVersion: 1,
+        runId: run.id,
+        scope: run.scope,
+        zipFilename: "x.zip",
+        fingerprints: { participantsHash: f.participantsHash, numericDataHash: f.numericDataHash, parameterHash: f.parameterHash },
+        files: Object.entries(files).map(([p2, b]) => ({ path: p2.replace(/^pkg\//, ""), sha256: sha(b), bytes: b.byteLength })),
+      };
+      const bytes = zipSync({ ...files, "pkg/manifest.json": strToU8(JSON.stringify(manifest)) });
+      const res = await put(run.id, bytes);
+      const j = await res.json();
+      expect(res.status, label).toBe(422);
+      expect(j.errorCode).toBe("PACKAGE_CONTAINS_PERSONAL_DATA");
+      expect(JSON.stringify(j)).not.toContain(secret);
     }
-    const rawBefore = await rawHashes();
-    const counts = { sessions: await prisma.sortSession.count(), groups: await prisma.sortGroup.count(), items: await prisma.sortGroupItem.count() };
-    const res = await post0(confirm);
-    expect(res.status).toBe(200);
-    const j = await res.json();
-    expect(j.deleted.map((d: { id: string }) => d.id)).toEqual([legacy.id]);
-    expect(await prisma.analysisRun.findUnique({ where: { id: legacy.id } })).toBeNull();
-    expect(await prisma.analysisRunDimension.count({ where: { analysisRunId: legacy.id } })).toBe(0);
-    expect(await prisma.analysisInterpretation.count({ where: { analysisRunId: legacy.id } })).toBe(0);
-    // current-version runs and their packages survive; raw data identical row by row
-    expect(await prisma.analysisPackage.count()).toBe(3);
-    expect(await rawHashes()).toEqual(rawBefore);
-    expect({ sessions: await prisma.sortSession.count(), groups: await prisma.sortGroup.count(), items: await prisma.sortGroupItem.count() }).toEqual(counts);
+    expect(await prisma.analysisPackage.count({ where: { analysisRunId: run.id } })).toBe(0);
+  });
+
+  it("digit-only identifiers are rejected inside the participant response folder but ordinary numbers elsewhere are accepted", async () => {
+    const run = await official("JP");
+    const f = JSON.parse(run.resultBundle!).meta.fingerprints;
+    const build = (files: Record<string, Uint8Array>) => {
+      const manifest = { manifestVersion: 1, runId: run.id, scope: run.scope, zipFilename: "x.zip", fingerprints: { participantsHash: f.participantsHash, numericDataHash: f.numericDataHash, parameterHash: f.parameterHash }, files: Object.entries(files).map(([p2, b]) => ({ path: p2.replace(/^pkg\//, ""), sha256: sha(b), bytes: b.byteLength })) };
+      return zipSync({ ...files, "pkg/manifest.json": strToU8(JSON.stringify(manifest)) });
+    };
+    const bad = await put(run.id, build({ "pkg/02_원자료_가명/응답.csv": strToU8(`id,label
+JP-001,${DIGIT_NAME}
+`) }));
+    expect(bad.status).toBe(422);
+    expect((await bad.json()).findings.digitOnlyIdentifierCell).toBe(1);
+    const fine = await put(run.id, build({ "pkg/05_MDS/초기화별.csv": strToU8(`iterations
+${DIGIT_NAME}
+`) }));
+    expect(fine.status).toBe(200);
+    await prisma.analysisPackage.deleteMany({ where: { analysisRunId: run.id } });
+  });
+
+  describe("restricted replacement of erroneous MAIN results", () => {
+    const post0 = (body: unknown) => cleanupRoute.POST(req(`/api/projects/${SLUG}/analysis/cleanup-superseded`, { method: "POST", body: JSON.stringify(body), headers: { "Content-Type": "application/json" } }), ctx());
+    const get0 = async () => (await cleanupRoute.GET(req(`/api/projects/${SLUG}/analysis/cleanup-superseded`), ctx())).json();
+    const base = (scope: string, dataset: string, version: string) => ({
+      projectId: project.id,
+      scope,
+      dataset,
+      executionStatus: "COMPLETED",
+      numericDataHash: "n",
+      statementStructureHash: "s",
+      statementContentHashKo: "k",
+      statementContentHashJa: "j",
+      parameterHash: "p",
+      sourceSnapshotAt: new Date(),
+      inputSnapshot: "{}",
+      parametersSnapshot: "{}",
+      algorithmVersion: version,
+      engineSourceCommitSha: "e".repeat(40),
+      primaryMapDimension: 2,
+      wardSourceDimension: 2,
+      linkageMethod: "ward",
+      dimensionsEvaluated: "[2]",
+      include3dSupplement: false,
+      statementCount: N_ST,
+      nKr: 1,
+      nJp: 1,
+      nTotal: 2,
+      includedParticipantCount: 2,
+      excludedNullCountry: 0,
+      excludedIncomplete: 0,
+      excludedInvalid: 0,
+      wardStatus: "COMPLETED",
+      dimensions: { create: [{ dimension: 2, dimensionStatus: "COMPLETED", converged: false }] },
+      interpretations: { create: [{ status: "DRAFT", version: 1, selectedClusterCount: 3 }] },
+    });
+    const ids: Record<string, string> = {};
+    let confirm = { confirm: "DELETE_SUPERSEDED_DERIVED_RESULTS", algorithmVersions: ["1.0.0"] as string[] | undefined, runIds: [] as string[] };
+
+    it("dry run lists ONLY erroneous-version MAIN KR/JP/ALL runs; pilot, check-up, legacy, other-version and current runs are not eligible", async () => {
+      ids.mainAll = (await prisma.analysisRun.create({ data: base("ALL", "MAIN", "1.0.0") })).id;
+      ids.mainKr = (await prisma.analysisRun.create({ data: base("KR", "MAIN", "1.0.0") })).id;
+      ids.pilot = (await prisma.analysisRun.create({ data: base("ALL", "PILOT", "1.0.0") })).id;
+      ids.checkup = (await prisma.analysisRun.create({ data: base("ALL", "ALL_WITH_PILOT", "1.0.0") })).id;
+      ids.legacy = (await prisma.analysisRun.create({ data: base("KR", "LEGACY_PRE_SEGREGATION", "1.0.0") })).id;
+      ids.otherVersion = (await prisma.analysisRun.create({ data: base("JP", "MAIN", "1.5.0") })).id;
+      const j = await get0();
+      expect(j.dryRun).toBe(true);
+      expect(j.targets.map((t: { id: string }) => t.id).sort()).toEqual([ids.mainAll, ids.mainKr].sort());
+      expect(j.targets.every((t: { dataset: string; algorithmVersion: string }) => t.dataset === "MAIN" && t.algorithmVersion === "1.0.0")).toBe(true);
+      expect(j.targetCount).toBe(2);
+      expect(j.preconditions.ok).toBe(false); // JP / ALL have no packaged result yet
+      confirm = { confirm: "DELETE_SUPERSEDED_DERIVED_RESULTS", algorithmVersions: ["1.0.0"], runIds: j.targets.map((t: { id: string }) => t.id) };
+    });
+
+    it("refuses without confirmation, without the explicit version, with a wrong run id list, and while preconditions fail — deleting nothing", async () => {
+      const before = await prisma.analysisRun.count();
+      expect((await post0({})).status).toBe(422);
+      expect((await post0({ ...confirm, algorithmVersions: ["2.0.0"] })).status).toBe(422);
+      expect((await post0({ ...confirm, algorithmVersions: undefined })).status).toBe(422);
+      const wrong = await post0({ ...confirm, runIds: [confirm.runIds[0]] });
+      expect(wrong.status).toBe(409);
+      expect((await wrong.json()).errorCode).toBe("RUN_IDS_DO_NOT_MATCH_ELIGIBLE_TARGETS");
+      const pre = await post0(confirm);
+      expect(pre.status).toBe(409);
+      expect((await pre.json()).errorCode).toBe("PRECONDITIONS_NOT_MET");
+      expect(await prisma.analysisRun.count()).toBe(before);
+    });
+
+    it("checks the package file on disk (existence, SHA-256, manifest) and cross-scope consistency before allowing deletion", async () => {
+      for (const scope of ["JP", "ALL"]) {
+        const run = await official(scope);
+        expect((await put(run.id, buildZip(run))).status).toBe(200);
+      }
+      expect((await get0()).preconditions.ok).toBe(true);
+      // 1) package file corrupted on disk (same name, different bytes)
+      const pkg = await prisma.analysisPackage.findFirstOrThrow({ where: { scope: "KR" } });
+      const { packageStorageDir } = await import("@/lib/analysis/packageStore");
+      const file = path.join(packageStorageDir(), pkg.storedFile);
+      const original = fs.readFileSync(file);
+      fs.chmodSync(file, 0o666); // the store makes files read-only; the test simulates damage by an operator
+      fs.writeFileSync(file, Buffer.from("corrupted"));
+      let pre = await (await post0(confirm)).json();
+      expect(pre.errorCode).toBe("PRECONDITIONS_NOT_MET");
+      expect(JSON.stringify(pre.preconditions.problems)).toContain("SHA-256 mismatch");
+      // 2) package file missing
+      fs.rmSync(file);
+      pre = await (await post0(confirm)).json();
+      expect(JSON.stringify(pre.preconditions.problems)).toContain("KR: package file missing");
+      fs.writeFileSync(file, original);
+      // 3) ALL no longer equals KR + JP
+      const all = await official("ALL");
+      const bundle = JSON.parse(all.resultBundle!);
+      bundle.analysis.S[0][1] += 1;
+      await prisma.analysisRun.update({ where: { id: all.id }, data: { resultBundle: JSON.stringify(bundle) } });
+      pre = await (await post0(confirm)).json();
+      expect(JSON.stringify(pre.preconditions.problems)).toContain("S(ALL) != S(KR) + S(JP)");
+      bundle.analysis.S[0][1] -= 1;
+      await prisma.analysisRun.update({ where: { id: all.id }, data: { resultBundle: JSON.stringify(bundle) } });
+      // 4) a non-converged current result
+      const jp = await official("JP");
+      const jb = JSON.parse(jp.resultBundle!);
+      jb.analysis.primary.numericallyConverged = false;
+      await prisma.analysisRun.update({ where: { id: jp.id }, data: { resultBundle: JSON.stringify(jb) } });
+      pre = await (await post0(confirm)).json();
+      expect(JSON.stringify(pre.preconditions.problems)).toContain("JP: primary 2D solution did not converge");
+      jb.analysis.primary.numericallyConverged = true;
+      await prisma.analysisRun.update({ where: { id: jp.id }, data: { resultBundle: JSON.stringify(jb) } });
+      expect((await get0()).preconditions.ok).toBe(true);
+    });
+
+    it("deletes exactly the listed erroneous MAIN runs and their children; everything else — including raw data row by row — is untouched", async () => {
+      const rawBefore = await rawHashes();
+      const counts = { sessions: await prisma.sortSession.count(), groups: await prisma.sortGroup.count(), items: await prisma.sortGroupItem.count() };
+      const keep = [ids.pilot, ids.checkup, ids.legacy, ids.otherVersion];
+      const currentBefore = await prisma.analysisRun.findMany({ where: { algorithmVersion: "2.0.0" }, select: { id: true } });
+      const packagesBefore = await prisma.analysisPackage.count();
+      const res = await post0(confirm);
+      expect(res.status).toBe(200);
+      const j = await res.json();
+      expect(j.deletedRuns).toBe(2);
+      expect(j.deleted.map((d: { id: string }) => d.id).sort()).toEqual([ids.mainAll, ids.mainKr].sort());
+      for (const id of [ids.mainAll, ids.mainKr]) {
+        expect(await prisma.analysisRun.findUnique({ where: { id } })).toBeNull();
+        expect(await prisma.analysisRunDimension.count({ where: { analysisRunId: id } })).toBe(0);
+        expect(await prisma.analysisInterpretation.count({ where: { analysisRunId: id } })).toBe(0);
+      }
+      for (const id of keep) {
+        expect(await prisma.analysisRun.findUnique({ where: { id } })).not.toBeNull();
+        expect(await prisma.analysisRunDimension.count({ where: { analysisRunId: id } })).toBe(1);
+      }
+      expect((await prisma.analysisRun.findMany({ where: { algorithmVersion: "2.0.0" }, select: { id: true } })).map((r) => r.id).sort()).toEqual(currentBefore.map((r) => r.id).sort());
+      expect(await prisma.analysisPackage.count()).toBe(packagesBefore);
+      expect(await rawHashes()).toEqual(rawBefore);
+      expect({ sessions: await prisma.sortSession.count(), groups: await prisma.sortGroup.count(), items: await prisma.sortGroupItem.count() }).toEqual(counts);
+      expect((await get0()).targetCount).toBe(0); // idempotent
+    });
   });
 });

@@ -39,6 +39,10 @@ export type DimensionAnalysis = {
   stress1V1Definition: number | null;
   rsq: number | null;
   minPairDistance: number | null;
+  /** definition audit: numerator and denominator of Kruskal Stress-1, and sum of squared normalised disparities (= q) */
+  kruskalNumerator: number | null;
+  sumDistSq: number | null;
+  sumDispSq: number | null;
   rawStressSpreadAmongConverged: SmacofV2Result["rawStressSpreadAmongConverged"];
   startsWithinRelTol1e6OfBest: number;
   starts: SmacofV2Result["starts"];
@@ -48,7 +52,23 @@ export type DimensionAnalysis = {
   errorMessage: string | null;
 };
 
-export type PairDiagnostic = { i: number; j: number; S: number; P: number; D: number; delta: number; distance: number; disparity: number; residual: number };
+export type PairDiagnostic = {
+  i: number;
+  j: number;
+  S: number;
+  P: number;
+  D: number;
+  delta: number;
+  distance: number;
+  /** normalised disparity (sum d_hat^2 = n(n-1)/2) — used by raw stress, sqrt(raw/q), RSQ and the v1-style value */
+  disparity: number;
+  /** disparity - distance with the normalised disparity */
+  residual: number;
+  /** unnormalised monotone-regression disparity — used by Kruskal Stress-1 */
+  disparityKruskal: number;
+  /** disparityKruskal - distance */
+  residualKruskal: number;
+};
 
 export type ScopeAnalysis = {
   scope: ScopeName;
@@ -111,6 +131,9 @@ export function analyzeScope(scope: ScopeName, participants: Participant[], stat
       stress1V1Definition: ev?.stress1V1Definition ?? null,
       rsq: ev?.rsq ?? null,
       minPairDistance: ev?.minPairDistance ?? null,
+      kruskalNumerator: ev?.kruskalNumerator ?? null,
+      sumDistSq: ev?.sumDistSq ?? null,
+      sumDispSq: ev?.sumDispSq ?? null,
       rawStressSpreadAmongConverged: r.rawStressSpreadAmongConverged,
       startsWithinRelTol1e6OfBest: conv.filter((x) => x <= best * (1 + 1e-6)).length,
       starts: r.starts,
@@ -128,7 +151,7 @@ export function analyzeScope(scope: ScopeName, participants: Participant[], stat
   const solutions: ClusterSolution[] = [];
   if (primary.coordinates && primary.numericallyConverged) {
     const sh = shepardData(primary.coordinates, m.delta, weight, settings.mds.tieHandling);
-    pairDiagnostics = sh.delta.map((d, k) => ({ i: sh.i[k], j: sh.j[k], S: S[sh.i[k]][sh.j[k]], P: S[sh.i[k]][sh.j[k]] / N, D: N - S[sh.i[k]][sh.j[k]], delta: d, distance: sh.distance[k], disparity: sh.disparity[k], residual: sh.disparity[k] - sh.distance[k] }));
+    pairDiagnostics = sh.delta.map((d, k) => ({ i: sh.i[k], j: sh.j[k], S: S[sh.i[k]][sh.j[k]], P: S[sh.i[k]][sh.j[k]] / N, D: N - S[sh.i[k]][sh.j[k]], delta: d, distance: sh.distance[k], disparity: sh.disparity[k], residual: sh.disparity[k] - sh.distance[k], disparityKruskal: sh.disparityKruskal[k], residualKruskal: sh.disparityKruskal[k] - sh.distance[k] }));
     const w = wardHierarchicalClustering(primary.coordinates);
     ward = { linkage: w.linkage, merges: mergeHistory(w.linkage, statementCount), sourceDimension: settings.mds.primaryDimension };
     for (let k = settings.ward.kMin; k <= Math.min(settings.ward.kMax, statementCount - 1); k++) solutions.push(buildSolution(primary.coordinates, m.delta, w.linkage, k));
