@@ -273,6 +273,10 @@ describe("package upload / download and superseded-result cleanup", () => {
     const dup = buildPackageZip(run, { files: { [`pkg/${RESPONSE_PATH_FOR_TEST}`]: responseCsvFor(run, (rows) => { rows.splice(6, 1, [...rows[5]]); }) } });
     j = await (await put(run.id, dup)).json();
     expect(j.errorCode, "duplicate row").toBe("PACKAGE_RESPONSES_MISMATCH");
+    // a bare CR hides a foreign row from this parser but not from other CSV readers
+    const hidden = buildPackageZip(run, { files: { [`pkg/${RESPONSE_PATH_FOR_TEST}`]: responseCsvFor(run, (rows) => { rows[2][6] = "x\rJP-999,JP,2026-01-01 00:00:00,S01,1,1,"; }) } });
+    j = await (await put(run.id, hidden)).json();
+    expect(j.errorCode, "bare CR").toBe("PACKAGE_RESPONSES_MISMATCH");
     // (g) the other participant-level files are compared with the run too
     const jpPid = (JSON.parse(other.inputSnapshot).participants[0] as { pid: string }).pid;
     const variants: [string, Record<string, Uint8Array>][] = [

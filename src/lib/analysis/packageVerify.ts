@@ -111,6 +111,8 @@ function checkResponses(entries: Record<string, Uint8Array>, root: string, scope
   if (canonicalHash(snap.participants) !== snap.participantsHash || snap.participantsHash !== expectedHash) return "stored participant records do not reproduce the participants fingerprint";
   const dec = new TextDecoder();
   const need = (rel: string) => entries[root + rel];
+  // parseCsv drops a bare CR outside quotes, which other CSV readers treat as a row break: reject it so every reader sees the same rows
+  for (const rel of [RESPONSE_FILE, WIDE_FILE, SUMMARY_FILE, S_FILE]) if (entries[root + rel] && /\r(?!\n)/.test(dec.decode(entries[root + rel]))) return "a participant-level table contains a bare carriage return";
   const expected = new Map(snap.participants.map((p) => [p.pid, p]));
   const allowed = allowedCountries(scope);
   const nStatements = snap.participants[0]?.assignment.length ?? 0;
@@ -125,7 +127,7 @@ function checkResponses(entries: Record<string, Uint8Array>, root: string, scope
   const got = new Map<string, { country: string; a: (number | undefined)[]; count: number }>();
   for (const r of rows.slice(1)) {
     if (r.length === 0 || (r.length === 1 && r[0] === "")) continue;
-    if (r.length < h.length) return "response table has an incomplete row";
+    if (r.length !== h.length) return "response table has a row with an unexpected number of cells";
     const e = got.get(r[ix.pid]) ?? { country: r[ix.country], a: new Array<number | undefined>(nStatements).fill(undefined), count: 0 };
     if (e.country !== r[ix.country]) return "a participant appears with two countries";
     const st = Number(r[ix.st]) - 1;
