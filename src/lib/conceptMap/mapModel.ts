@@ -83,7 +83,7 @@ const circleHitsBox = (cx: number, cy: number, r: number, b: LabelBox) => {
  * had to leave the marker's immediate neighbourhood gets a leader line. If nothing is free the least-overlapping
  * candidate is used and `overlapsCount` reports the residue honestly.
  */
-export function placeLabels(points: XY[], texts: string[], opts: { markerRadius?: number; charWidth?: number; height?: number; frame?: LabelBox } = {}): PlacedLabel[] {
+export function placeLabels(points: XY[], texts: string[], opts: { markerRadius?: number; charWidth?: number; height?: number; frame?: LabelBox; obstacles?: LabelBox[] } = {}): PlacedLabel[] {
   const mr = opts.markerRadius ?? 6;
   const cw = opts.charWidth ?? 6.4;
   const h = opts.height ?? 13;
@@ -108,6 +108,7 @@ export function placeLabels(points: XY[], texts: string[], opts: { markerRadius?
         let ov = 0;
         if (box.x < frame.x || box.y < frame.y || box.x + box.w > frame.x + frame.w || box.y + box.h > frame.y + frame.h) ov += 5;
         for (const l of byIndex.values()) if (intersects(box, l.box)) ov += 1;
+        for (const ob of opts.obstacles ?? []) if (intersects(box, ob)) ov += 1;
         points.forEach((q, j) => {
           if (circleHitsBox(q.x, q.y, mr + 1, box)) ov += j === i ? 1 : 1;
         });
@@ -129,4 +130,45 @@ export function placeLabels(points: XY[], texts: string[], opts: { markerRadius?
 /** Path for a rounded-outline polygon is intentionally NOT used: boundaries are plain straight-edge convex hulls. */
 export function polygonPath(hull: number[][], toPx: View["toPx"]): string {
   return hull.map(([x, y], k) => `${k === 0 ? "M" : "L"}${toPx(x, y).x.toFixed(2)},${toPx(x, y).y.toFixed(2)}`).join(" ") + " Z";
+}
+
+export type Badge = { cluster: number; box: LabelBox; text: string };
+
+/**
+ * Small numbered cluster badges placed OUTSIDE the cluster outline (above its top-most point, else below / left /
+ * right) so they never sit on top of statement numbers. Candidate positions that would cover a point marker or
+ * another badge, or leave the frame, are skipped; if none is free the least-bad candidate is used.
+ */
+export function placeBadges(clusters: { cluster: number; pts: XY[] }[], allPoints: XY[], frame: LabelBox, markerRadius = 6): Badge[] {
+  const W = 20;
+  const H = 17;
+  const out: Badge[] = [];
+  for (const c of clusters) {
+    const top = c.pts.reduce((a, b) => (b.y < a.y ? b : a));
+    const bottom = c.pts.reduce((a, b) => (b.y > a.y ? b : a));
+    const left = c.pts.reduce((a, b) => (b.x < a.x ? b : a));
+    const right = c.pts.reduce((a, b) => (b.x > a.x ? b : a));
+    const cands: LabelBox[] = [
+      { x: top.x - W / 2, y: top.y - H - 12, w: W, h: H },
+      { x: bottom.x - W / 2, y: bottom.y + 12, w: W, h: H },
+      { x: left.x - W - 14, y: left.y - H / 2, w: W, h: H },
+      { x: right.x + 14, y: right.y - H / 2, w: W, h: H },
+      { x: top.x + 10, y: top.y - H - 8, w: W, h: H },
+      { x: top.x - W - 10, y: top.y - H - 8, w: W, h: H },
+    ];
+    let best: { box: LabelBox; ov: number } | null = null;
+    for (const box of cands) {
+      let ov = 0;
+      if (box.x < frame.x || box.y < frame.y || box.x + box.w > frame.x + frame.w || box.y + box.h > frame.y + frame.h) ov += 5;
+      for (const q of allPoints) if (circleHitsBox(q.x, q.y, markerRadius + 3, box)) ov += 1;
+      for (const b of out) if (intersects(box, b.box, 2)) ov += 1;
+      if (ov === 0) {
+        best = { box, ov };
+        break;
+      }
+      if (!best || ov < best.ov) best = { box, ov };
+    }
+    out.push({ cluster: c.cluster, box: best!.box, text: String(c.cluster) });
+  }
+  return out;
 }

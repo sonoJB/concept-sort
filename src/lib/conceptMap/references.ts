@@ -138,7 +138,10 @@ export const REFERENCES: Record<ReferenceKey, Reference> = {
     url: "https://scikit-learn.org/1.8/modules/generated/sklearn.manifold.smacof.html",
     access: "DOCUMENTATION_READ",
     accessNoteKo: "공식 문서를 직접 열람함(구현 확인용 보조 근거이며 학술지 논문을 대체하지 않음).",
-    locations: [{ claimKo: "eps 정의(Stress의 상대적 감소), 정규화 서술, Kruskal 구술 척도 표기(0.025/0.05/0.1/0.2)", where: "Parameters 및 Notes" }],
+    locations: [
+      { claimKo: "eps 정의(Stress의 상대적 감소), 정규화 서술, Kruskal 구술 척도 표기(0.025/0.05/0.1/0.2)", where: "공식 문서 Parameters 및 Notes" },
+      { claimKo: "비계량 모드에서 대각선 밖 비유사성 0은 등위회귀에서 제외(결측 취급)되고, 수렴 판정은 정규화 전 raw stress로 하며, 비계량의 기본 반환값은 정규화(Stress-1) 값(normalized_stress='auto' = not metric)", where: "소스 sklearn/manifold/_mds.py (1.8.X 브랜치) _smacof_single·smacof 함수(소스 코드 직접 열람)" },
+    ],
   },
   multbiplotr: {
     key: "multbiplotr",

@@ -113,6 +113,17 @@ describe("smacofV2", () => {
     expect(raw).toBeCloseTo(r.evaluation!.rawStress, 8);
   });
 
+  it("keeps an off-diagonal dissimilarity of exactly 0 as a real observation (not missing)", () => {
+    const { d: d0, w: w0 } = synthetic(12, 11);
+    d0[0][1] = d0[1][0] = 0; // a pair every participant placed together
+    const r = runSmacofV2(d0, w0, { ...SET, nInit: 4 });
+    const sh = shepardData(r.coordinates!, d0, w0);
+    expect(sh.pairs).toBe((12 * 11) / 2); // the delta = 0 pair is part of the fit
+    const k = sh.i.findIndex((v, idx) => v === 0 && sh.j[idx] === 1);
+    expect(sh.delta[k]).toBe(0);
+    expect(Number.isFinite(sh.disparity[k])).toBe(true);
+  });
+
   it("rejects impossible inputs without a result", () => {
     expect(runSmacofV2([[0]], [[0]], SET).errorCode).toBe("INSUFFICIENT_ITEMS");
     const z: Matrix = [[0, 0.5, 0.5], [0.5, 0, 0.5], [0.5, 0.5, 0]];

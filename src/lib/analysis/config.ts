@@ -62,7 +62,7 @@ export const VALIDATION_BASELINE_SHA = "d2e41f5cd9d7ebd2799e4dfed938a12a96a7ca7a
  * Gate 7 with real production timing, not a statistically derived cutoff.
  * Injectable via config so tests can use a short value.
  */
-export const DEFAULT_ANALYSIS_ORPHAN_TIMEOUT_MS = 5 * 60 * 1000;
+export const DEFAULT_ANALYSIS_ORPHAN_TIMEOUT_MS = 15 * 60 * 1000;
 
 /**
  * The build/deploy commit SHA of the application instance actually

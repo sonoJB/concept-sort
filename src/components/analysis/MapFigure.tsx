@@ -3,7 +3,7 @@
 import { forwardRef, useMemo } from "react";
 import type { ClusterSolution } from "@/lib/conceptMap/clusters";
 import type { ClusterProposal } from "@/lib/conceptMap/proposals/types";
-import { clusterStyle, makeView, markerPath, placeLabels, polygonPath } from "@/lib/conceptMap/mapModel";
+import { clusterStyle, makeView, markerPath, placeBadges, placeLabels, polygonPath } from "@/lib/conceptMap/mapModel";
 
 export type MapFigureProps = {
   coordinates: number[][];
@@ -28,10 +28,18 @@ export const MapFigure = forwardRef<SVGSVGElement, MapFigureProps>(function MapF
   const size = props.size ?? 640;
   const view = useMemo(() => makeView(coordinates, size, 52), [coordinates, size]);
   const px = useMemo(() => coordinates.map(([x, y]) => view.toPx(x, y)), [coordinates, view]);
-  const labels = useMemo(
-    () => placeLabels(px, coordinates.map((_, i) => String(i + 1)), { frame: { x: 4, y: 4, w: size - 8, h: size - 8 } }),
-    [px, coordinates, size]
+  const frame = useMemo(() => ({ x: view.margin + 2, y: view.margin + 2, w: size - 2 * view.margin - 4, h: size - 2 * view.margin - 4 }), [view.margin, size]);
+  const badges = useMemo(
+    () => placeBadges(solution.clusters.map((c) => ({ cluster: c.cluster, pts: c.members.map((i) => px[i]) })), px, frame),
+    [solution, px, frame]
   );
+  const labels = useMemo(
+    () => placeLabels(px, coordinates.map((_, i) => String(i + 1)), { frame, obstacles: badges.map((b) => b.box) }),
+    [px, coordinates, frame, badges]
+  );
+  const legendRow = 18;
+  const legendH = 12 + solution.clusters.length * legendRow;
+  const totalH = size + legendH;
   const dim = (c: number) => (highlightCluster !== null && highlightCluster !== c ? 0.2 : 1);
   const o = view.toPx(0, 0);
   const ticks = useMemo(() => {
@@ -42,7 +50,7 @@ export const MapFigure = forwardRef<SVGSVGElement, MapFigureProps>(function MapF
   }, [view.half]);
 
   return (
-    <svg ref={ref} xmlns="http://www.w3.org/2000/svg" viewBox={`0 0 ${size} ${size}`} width="100%" role="img" aria-label={title} style={{ background: "#fff", maxWidth: size }}>
+    <svg ref={ref} xmlns="http://www.w3.org/2000/svg" viewBox={`0 0 ${size} ${totalH}`} width="100%" role="img" aria-label={title} style={{ background: "#fff", maxWidth: size }}>
       <title>{title}</title>
       <rect x={view.margin} y={view.margin} width={size - 2 * view.margin} height={size - 2 * view.margin} fill="#fff" stroke="#cbd5e1" strokeWidth={1} />
       {ticks.values.flatMap((v) => [v, -v]).map((v) => (
@@ -119,22 +127,35 @@ export const MapFigure = forwardRef<SVGSVGElement, MapFigureProps>(function MapF
         ))}
 
       {showBoundaries &&
-        solution.clusters.map((c) => {
-          const nm = names?.find((n) => n.cluster === c.cluster)?.nameKo;
-          const tag = `${c.cluster}${nm ? ` · ${nm}` : ""} (${c.size})`;
-          const pos = view.toPx(c.centroid[0], c.centroid[1]);
-          const w = tag.length * 7.2 + 8;
-          const x = Math.min(Math.max(pos.x - w / 2, 6), size - w - 6);
-          const st = clusterStyle(c.cluster);
+        badges.map((bd) => {
+          const st = clusterStyle(bd.cluster);
           return (
-            <g key={`tag${c.cluster}`} opacity={dim(c.cluster)}>
-              <rect x={x} y={pos.y - 9} width={w} height={17} rx={3} fill="#fff" fillOpacity={0.82} stroke={st.color} strokeWidth={1} />
-              <text x={x + 4} y={pos.y + 3.5} fontSize={11} fontWeight={600} fill={st.color} fontFamily="sans-serif">
-                {tag}
+            <g key={`badge${bd.cluster}`} opacity={dim(bd.cluster)}>
+              <rect x={bd.box.x} y={bd.box.y} width={bd.box.w} height={bd.box.h} rx={4} fill={st.color} />
+              <text x={bd.box.x + bd.box.w / 2} y={bd.box.y + bd.box.h - 4.5} textAnchor="middle" fontSize={12} fontWeight={700} fill="#fff" fontFamily="sans-serif">
+                {bd.text}
               </text>
             </g>
           );
         })}
+
+      {/* legend: cluster number, marker, name, size */}
+      <g fontFamily="sans-serif">
+        <text x={view.margin} y={size + 6} fontSize={11} fill="#475569">군집 (색·기호가 같은 점 = 같은 군집)</text>
+        {solution.clusters.map((c, idx) => {
+          const st = clusterStyle(c.cluster);
+          const nm = names?.find((n) => n.cluster === c.cluster)?.nameKo;
+          const y = size + 22 + idx * legendRow;
+          return (
+            <g key={`lg${c.cluster}`} opacity={dim(c.cluster)}>
+              <rect x={view.margin} y={y - 11} width={18} height={15} rx={3} fill={st.color} />
+              <text x={view.margin + 9} y={y + 0.5} textAnchor="middle" fontSize={11} fontWeight={700} fill="#fff">{c.cluster}</text>
+              <path transform={`translate(${view.margin + 32},${y - 3.5})`} d={markerPath(st.marker, 4.6)} fill={st.marker === "ring" ? "#fff" : st.color} stroke={st.color} strokeWidth={st.marker === "ring" ? 2 : 1} />
+              <text x={view.margin + 44} y={y} fontSize={12} fill="#0f172a">{nm ?? "(명칭 없음)"} · {c.size}문항</text>
+            </g>
+          );
+        })}
+      </g>
     </svg>
   );
 });
