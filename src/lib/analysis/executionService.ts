@@ -12,9 +12,13 @@ import {
   computeParameterHash,
   type AnalysisParameters,
 } from "./hashes";
-import { buildInputSnapshot, buildParametersSnapshot, serializeSnapshot } from "./snapshot";
+import { buildInputSnapshot, buildParametersSnapshot, serializeSnapshot, type InputSnapshot } from "./snapshot";
 import { checkEligibility } from "./readiness";
-import { runDimension, runOfficialWard } from "./engineAdapter";
+import { toConceptMapSettings, toDimensionRow } from "./engineAdapter";
+import { buildParticipants } from "./participants";
+import { analyzeScope } from "@/lib/conceptMap/analyze";
+import { buildCountMatrix, matricesEqual } from "@/lib/conceptMap/matrices";
+import { buildResultBundle } from "@/lib/conceptMap/bundle";
 import { isUniqueConstraintError, RunAlreadyRunningError } from "./lock";
 
 /**
@@ -132,6 +136,17 @@ export async function createAnalysisRun(deps: CreateAnalysisRunDeps): Promise<Cr
       const mainCount = scopeResult.validSessions.filter((s) => dataRoleBySessionId.get(s.sessionId) === "MAIN").length;
 
       const aggregate = buildNumericAggregate(fixtureProject, scopeResult.validSessions);
+      const participants = buildParticipants(
+        fixtureProject.statementIds,
+        scopeResult.validSessions,
+        new Map(sessions.map((s) => [s.id, s.createdAt.getTime()]))
+      );
+      // The pseudonymous participant records must reproduce the application's own count matrix exactly.
+      const recount = buildCountMatrix(participants, fixtureProject.statementIds.length);
+      const offDiagonalOnly = (m: number[][]) => m.map((row, i) => row.map((v, j) => (i === j ? 0 : v)));
+      if (!matricesEqual(offDiagonalOnly(recount), offDiagonalOnly(aggregate.similarityCountMatrix))) {
+        throw new Error("PARTICIPANT_RECOUNT_MISMATCH: participant-level records do not reproduce the aggregate count matrix");
+      }
 
       const numericDataHash = computeNumericDataHash(deps.scope, deps.dataset, aggregate);
       const statementStructureHash = computeStatementStructureHash(rawStatements);
@@ -152,7 +167,8 @@ export async function createAnalysisRun(deps: CreateAnalysisRunDeps): Promise<Cr
         scopeResult.nKr,
         scopeResult.nJp,
         pilotCount,
-        mainCount
+        mainCount,
+        participants
       );
 
       const dimensionsEvaluated = deps.analysisParameters.dimensionsEvaluated;
@@ -210,28 +226,26 @@ export async function createAnalysisRun(deps: CreateAnalysisRunDeps): Promise<Cr
 }
 
 /**
- * Phase 2 (outside any DB transaction): runs the verified SMACOF/Ward
- * engine against the run's already-persisted inputSnapshot only — never
- * re-reads Project/Statement/SortSession. Saves per-dimension results,
- * official Ward result, and transitions the run to its terminal state, then
- * releases the lock. Official success = primary (2D) dimension COMPLETED
- * AND Ward COMPLETED; other requested dimensions failing never fails the run.
+ * Phase 2 (outside any DB transaction): analyses the run's already-persisted inputSnapshot only — never
+ * re-reads Project/Statement/SortSession. Persists one row per dimension, the complete result bundle and the
+ * official Ward result, then transitions the run to its terminal state and releases the lock.
+ *
+ * Official success = the primary (2D) solution NUMERICALLY CONVERGED and Ward ran on it. A primary solution
+ * that did not converge fails the run with MDS_NOT_CONVERGED; it is never clustered or presented as a result.
+ * Other dimensions are auxiliary comparison analyses: they are stored with their own converged flag and never
+ * stand in for the 2D result.
  */
 export async function executeAnalysisRun(prisma: PrismaClient, runId: string): Promise<void> {
   const run = await prisma.analysisRun.findUniqueOrThrow({ where: { id: runId } });
-  const inputSnapshot = JSON.parse(run.inputSnapshot) as {
-    numeric: { dissimilarityMatrix: number[][]; weightMatrix: number[][] };
-  };
+  const inputSnapshot = JSON.parse(run.inputSnapshot) as InputSnapshot;
   const parametersSnapshot = JSON.parse(run.parametersSnapshot) as { analysisParameters: AnalysisParameters };
   const params = parametersSnapshot.analysisParameters;
-  const dissimilarity = inputSnapshot.numeric.dissimilarityMatrix;
-  const weight = inputSnapshot.numeric.weightMatrix;
+  const startedCompute = Date.now();
 
-  const dimensionsToRun = Array.from(new Set([run.primaryMapDimension, ...params.dimensionsEvaluated]));
+  const analysis = analyzeScope(run.scope as "KR" | "JP" | "ALL", inputSnapshot.participants, inputSnapshot.statements.length, toConceptMapSettings(params));
+  const rows = analysis.dimensions.map(toDimensionRow);
 
-  const results = dimensionsToRun.map((dim) => runDimension(dim, dissimilarity, weight, params));
-
-  for (const result of results) {
+  for (const result of rows) {
     await prisma.analysisRunDimension.create({
       data: {
         analysisRunId: run.id,
@@ -253,35 +267,48 @@ export async function executeAnalysisRun(prisma: PrismaClient, runId: string): P
     });
   }
 
-  const primaryResult = results.find((r) => r.dimension === run.primaryMapDimension)!;
+  const primary = analysis.primary;
   const now = new Date();
+  const bundle = buildResultBundle({
+    run: { id: run.id, scope: run.scope, algorithmVersion: run.algorithmVersion, engineSourceCommitSha: run.engineSourceCommitSha, sourceSnapshotAt: run.sourceSnapshotAt, numericDataHash: run.numericDataHash, parameterHash: run.parameterHash, statementStructureHash: run.statementStructureHash, statementContentHashKo: run.statementContentHashKo, statementContentHashJa: run.statementContentHashJa },
+    inputSnapshot,
+    analysis,
+    computeMs: Date.now() - startedCompute,
+    finishedAt: now,
+  });
 
-  if (primaryResult.dimensionStatus !== "COMPLETED") {
+  if (!primary.coordinates || !primary.numericallyConverged || !analysis.ward) {
+    const reasons = Object.entries(primary.terminationReasonTally).map(([k, v]) => `${k}=${v}`).join(", ");
     await prisma.$transaction(async (tx) => {
       await tx.analysisRun.update({
         where: { id: run.id },
-        data: { executionStatus: "FAILED", errorCode: primaryResult.errorCode, errorMessageSafe: primaryResult.errorMessageSafe, finishedAt: now, wardStatus: "NOT_RUN" },
+        data: {
+          executionStatus: "FAILED",
+          errorCode: primary.coordinates ? "MDS_NOT_CONVERGED" : primary.errorCode ?? "MDS_NO_RESULT",
+          errorMessageSafe: `Primary ${params.primaryMapDimension}D solution did not numerically converge (start outcomes: ${reasons || "none"}). No clustering was performed.`,
+          finishedAt: now,
+          wardStatus: "NOT_RUN",
+          resultBundle: JSON.stringify(bundle),
+        },
       });
       await tx.analysisExecutionLock.delete({ where: { analysisRunId: run.id } }).catch(() => {});
     });
     return;
   }
 
-  const ward = runOfficialWard(primaryResult);
-
-  const finalStatus = ward.wardStatus === "COMPLETED" ? "COMPLETED" : "FAILED";
   await prisma.$transaction(async (tx) => {
     await tx.analysisRun.update({
       where: { id: run.id },
       data: {
-        executionStatus: finalStatus,
-        errorCode: finalStatus === "FAILED" ? ward.wardErrorCode : null,
-        errorMessageSafe: finalStatus === "FAILED" ? ward.wardErrorMessageSafe : null,
+        executionStatus: "COMPLETED",
+        errorCode: null,
+        errorMessageSafe: null,
         finishedAt: now,
-        wardStatus: ward.wardStatus,
-        wardLinkageSnapshot: ward.wardLinkageSnapshot ? JSON.stringify(ward.wardLinkageSnapshot) : null,
-        wardErrorCode: ward.wardErrorCode,
-        wardErrorMessageSafe: ward.wardErrorMessageSafe,
+        wardStatus: "COMPLETED",
+        wardLinkageSnapshot: JSON.stringify({ linkage: analysis.ward!.linkage, originalCount: inputSnapshot.statements.length }),
+        wardErrorCode: null,
+        wardErrorMessageSafe: null,
+        resultBundle: JSON.stringify(bundle),
       },
     });
     await tx.analysisExecutionLock.delete({ where: { analysisRunId: run.id } }).catch(() => {});

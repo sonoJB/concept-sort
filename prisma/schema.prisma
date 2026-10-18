@@ -226,9 +226,14 @@ model AnalysisRun {
   wardErrorCode        String?
   wardErrorMessageSafe String?
 
+  // v2: complete scope analysis (matrices, MDS per dimension incl. every start, Ward history, cluster
+  // solutions, split-half reliability, pair diagnostics) as one JSON document. Immutable like every other column.
+  resultBundle String?
+
   dimensions      AnalysisRunDimension[]
   interpretations AnalysisInterpretation[]
   executionLock   AnalysisExecutionLock?
+  packages        AnalysisPackage[]
 
   @@index([projectId, scope, startedAt])
   @@index([projectId, executionStatus])
@@ -322,4 +327,26 @@ model AnalysisExecutionLock {
   acquiredAt    DateTime    @default(now())
 
   @@unique([projectId, scope])
+}
+
+// Downloadable per-scope analysis package (ZIP). Built from this run's stored results by the reproducible
+// packaging script and verified against them before upload; the manifest records run id, data fingerprint and
+// per-file SHA-256. Derived data only — never raw participant tables. Metadata here, bytes on the volume.
+model AnalysisPackage {
+  id            String      @id @default(cuid())
+  projectId     String
+  analysisRunId String
+  analysisRun   AnalysisRun @relation(fields: [analysisRunId], references: [id], onDelete: Cascade)
+  scope         String
+  filename      String
+  sha256        String
+  byteSize      Int
+  manifest      String
+  // file name inside the package directory next to the database file (see analysis/packageStore.ts); the bytes are
+  // not stored in the database so database backups and fingerprints stay small
+  storedFile    String
+  createdAt     DateTime    @default(now())
+
+  @@unique([analysisRunId])
+  @@index([projectId, scope])
 }
