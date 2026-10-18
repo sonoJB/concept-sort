@@ -45,3 +45,7 @@ next-env.d.ts
 # local sqlite database (production uses a Railway volume instead)
 /prisma/dev.db
 /prisma/dev.db-journal
+
+# python bytecode
+__pycache__/
+*.pyc

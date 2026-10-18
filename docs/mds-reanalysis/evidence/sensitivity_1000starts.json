@@ -1,0 +1,52 @@
+{
+ "description": "multi-start sensitivity: same method, more reproducible starts (seed 42); official analysis uses 64",
+ "nInit": 1000,
+ "KR": {
+  "nInit": 1000,
+  "converged": 1000,
+  "best": 98.92881019915275,
+  "official64Best": 98.92881019928453,
+  "rawDiff": -1.3177725577406818e-10,
+  "startsWithin1e6OfBest": 53,
+  "distinctLocalMinimaApprox": 145,
+  "lowestFive": [
+   98.92881078274658,
+   98.92881080980634,
+   98.92881087488647,
+   98.92881089692348,
+   98.92881089984355
+  ]
+ },
+ "JP": {
+  "nInit": 1000,
+  "converged": 1000,
+  "best": 65.06577957728705,
+  "official64Best": 65.06577957735136,
+  "rawDiff": -6.431832844100427e-11,
+  "startsWithin1e6OfBest": 857,
+  "distinctLocalMinimaApprox": 69,
+  "lowestFive": [
+   65.0657797867437,
+   65.06577982366987,
+   65.06577984864664,
+   65.06577986597883,
+   65.06577989176381
+  ]
+ },
+ "ALL": {
+  "nInit": 1000,
+  "converged": 1000,
+  "best": 76.21920862423895,
+  "official64Best": 76.21920862429607,
+  "rawDiff": -5.7127635955112055e-11,
+  "startsWithin1e6OfBest": 230,
+  "distinctLocalMinimaApprox": 89,
+  "lowestFive": [
+   76.21920890313666,
+   76.21920890847562,
+   76.21920891412053,
+   76.2192089199737,
+   76.21920892033901
+  ]
+ }
+}

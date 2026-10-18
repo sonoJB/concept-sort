@@ -47,7 +47,14 @@ export function restoreFromJson(opts: { jsonDir: string; out: string }) {
   try {
     for (const table of RESTORE_ORDER) {
       const file = path.join(jsonDir, `${table}.json`);
-      if (!fs.existsSync(file)) throw new Error("missing export file: " + file);
+      if (!fs.existsSync(file)) {
+        // bundles made before AnalysisPackage existed have no export for it: that table was simply empty then
+        if (table === "AnalysisPackage") {
+          inserted[table] = 0;
+          continue;
+        }
+        throw new Error("missing export file: " + file);
+      }
       const rows = JSON.parse(fs.readFileSync(file, "utf8")) as Row[];
       const cols = (db.prepare(`pragma table_info("${table}")`).all() as { name: string }[]).map((c) => c.name);
       const stmt = db.prepare(

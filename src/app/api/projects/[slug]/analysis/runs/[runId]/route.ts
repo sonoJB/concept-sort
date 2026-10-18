@@ -3,7 +3,7 @@ import { prisma } from "@/lib/db";
 import { requireAdminProjectFromRequest } from "@/lib/analysis/auth";
 import { serializeRunMetadata, isResultBodyExposable } from "@/lib/analysis/runSerializer";
 import { fromStoredSeed } from "@/lib/analysis/executionService";
-import { computeRSQForDimension, deriveConvergenceReason } from "@/lib/analysis/rsq";
+import { computeRSQForDimension } from "@/lib/analysis/rsq";
 import type { InputSnapshot } from "@/lib/analysis/snapshot";
 import type { ParametersSnapshot } from "@/lib/analysis/hashes";
 
@@ -30,7 +30,6 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
   const inputSnapshot = JSON.parse(run.inputSnapshot) as InputSnapshot;
   const parametersSnapshot = JSON.parse(run.parametersSnapshot) as ParametersSnapshot;
-  const maxIter = parametersSnapshot.analysisParameters.maxIter;
 
   const dimensions = run.dimensions.map((d) => {
     const coordinates = d.coordinates ? (JSON.parse(d.coordinates) as number[][]) : null;
@@ -57,13 +56,15 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       // R² is DEFINED as RSQ — same value in both fields, never two independently-derived numbers.
       rSquared: rsqResult?.rsq ?? null,
       rsq: rsqResult?.rsq ?? null,
-      convergenceReason: deriveConvergenceReason(d.dimensionStatus, d.converged, d.iterations, maxIter),
+      // Termination reasons are stored with the solution (main run + strict continuation), never inferred.
+      termination: d.normalizationMeta ? (JSON.parse(d.normalizationMeta) as Record<string, unknown>) : null,
     };
   });
 
   return NextResponse.json({
     ...metadata,
     resultBodyBlocked: false,
+    analysisParameters: parametersSnapshot.analysisParameters,
     dimensions,
     wardLinkageSnapshot: run.wardLinkageSnapshot ? JSON.parse(run.wardLinkageSnapshot) : null,
   });

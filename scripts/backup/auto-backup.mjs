@@ -76,6 +76,53 @@ export function sha256File(file) {
   return crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 }
 
+/** Directory next to the database that holds the content-addressed analysis package ZIPs (see src/lib/analysis/packageStore.ts). */
+export function packagesDirFor(dbPath) {
+  return path.join(path.dirname(dbPath), "analysis-packages");
+}
+
+const PACKAGE_FILE = /^[0-9a-f]{64}\.zip$/;
+
+/**
+ * Keeps every analysis package ZIP together with the database backup it belongs to. Package files are write-once and
+ * named by their own SHA-256, so a hard link (same volume, no extra space) is safe; a later removal of the live file
+ * (e.g. when a superseded result is replaced) leaves the backup's link intact. Falls back to a verified copy.
+ * Returns the list recorded in the manifest.
+ */
+export function captureAnalysisPackages(dbPath, finalDir) {
+  const src = packagesDirFor(dbPath);
+  const packages = [];
+  const problems = [];
+  if (!fs.existsSync(src)) return { packages, problems };
+  const dst = path.join(finalDir, "analysis-packages");
+  for (const name of fs.readdirSync(src).sort()) {
+    if (!PACKAGE_FILE.test(name)) continue;
+    const from = path.join(src, name);
+    try {
+      const sha = sha256File(from);
+      if (sha + ".zip" !== name) {
+        // A damaged live file (e.g. an interrupted copy) must not stop the DATABASE backup — least of all the strict pre-deploy one.
+        // It is reported (log + manifest) and left untouched for a human to deal with; the package can be regenerated.
+        problems.push({ file: name, problem: "does not match its own SHA-256 — not backed up" });
+        continue;
+      }
+      fs.mkdirSync(dst, { recursive: true });
+      const to = path.join(dst, name);
+      try {
+        fs.linkSync(from, to);
+      } catch {
+        fs.copyFileSync(from, to, fs.constants.COPYFILE_EXCL);
+      }
+      if (sha256File(to) !== sha) throw new Error("copy failed verification");
+      packages.push({ file: name, bytes: fs.statSync(to).size, sha256: sha });
+    } catch (e) {
+      problems.push({ file: name, problem: "could not be backed up: " + (e instanceof Error ? e.message : String(e)) });
+    }
+  }
+  if (problems.length) log("error", "analysis package files with problems (database backup continues)", problems);
+  return { packages, problems };
+}
+
 function readJson(file) {
   try {
     return JSON.parse(fs.readFileSync(file, "utf8"));
@@ -122,6 +169,15 @@ export function verifyBackupDir(dir, { expectedMigrations } = {}) {
     if (sha256File(dbFile) !== manifest.sha256) problems.push("SHA-256 does not match the recorded value");
   } catch (e) {
     problems.push("cannot read backup file: " + e.message);
+  }
+  for (const pk of manifest.analysisPackages ?? []) {
+    const f = path.join(dir, "analysis-packages", pk.file);
+    try {
+      if (!fs.existsSync(f)) problems.push(`analysis package ${pk.file} is missing from the backup`);
+      else if (sha256File(f) !== pk.sha256) problems.push(`analysis package ${pk.file} does not match its recorded SHA-256`);
+    } catch (e) {
+      problems.push(`cannot read analysis package ${pk.file}: ` + e.message);
+    }
   }
   try {
     const db = new DatabaseSync(dbFile, { readOnly: true });
@@ -207,6 +263,7 @@ export function createBackup({ reason, databaseUrl = process.env.DATABASE_URL, n
     fs.renameSync(tmpDb, finalDb);
     fs.rmSync(tmpDir, { recursive: true, force: true });
 
+    const { packages: analysisPackages, problems: analysisPackageProblems } = captureAnalysisPackages(dbPath, finalDir);
     const manifest = {
       createdAtUtc: now.toISOString(),
       reason,
@@ -219,6 +276,8 @@ export function createBackup({ reason, databaseUrl = process.env.DATABASE_URL, n
       lastMigration,
       appliedMigrations: liveMigrations,
       sourceDb: path.basename(dbPath),
+      analysisPackages,
+      analysisPackageProblems,
     };
     fs.writeFileSync(path.join(finalDir, "manifest.json"), JSON.stringify(manifest, null, 2));
     fs.chmodSync(finalDb, 0o444);

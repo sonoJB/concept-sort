@@ -1,0 +1,48 @@
+{
+ "KR": {
+  "ward_max_abs_height_diff": 4.440892098500626e-16,
+  "ward_merge_pairs_equal": true,
+  "partitions_equal_all_k": true,
+  "silhouette_map_max_abs_diff": 3.608224830031759e-16,
+  "silhouette_delta_max_abs_diff": 8.326672684688674e-17,
+  "hull_vertices_equal": true,
+  "withinSS_max_abs_diff": 1.7763568394002505e-15,
+  "split_half_max_abs_diff_raw": 1.1213252548714081e-14,
+  "split_half_max_abs_diff_SB": 9.103828801926284e-15,
+  "S_equal_recount_from_raw_participants": true
+ },
+ "JP": {
+  "ward_max_abs_height_diff": 2.220446049250313e-16,
+  "ward_merge_pairs_equal": true,
+  "partitions_equal_all_k": true,
+  "silhouette_map_max_abs_diff": 3.885780586188048e-16,
+  "silhouette_delta_max_abs_diff": 5.551115123125783e-17,
+  "hull_vertices_equal": true,
+  "withinSS_max_abs_diff": 3.552713678800501e-15,
+  "split_half_max_abs_diff_raw": 1.942890293094024e-14,
+  "split_half_max_abs_diff_SB": 1.3433698597964394e-14,
+  "S_equal_recount_from_raw_participants": true
+ },
+ "ALL": {
+  "ward_max_abs_height_diff": 8.881784197001252e-16,
+  "ward_merge_pairs_equal": true,
+  "partitions_equal_all_k": true,
+  "silhouette_map_max_abs_diff": 3.0531133177191805e-16,
+  "silhouette_delta_max_abs_diff": 5.551115123125783e-17,
+  "hull_vertices_equal": true,
+  "withinSS_max_abs_diff": 1.7763568394002505e-15,
+  "split_half_max_abs_diff_raw": 1.1546319456101628e-14,
+  "split_half_max_abs_diff_SB": 7.327471962526033e-15,
+  "S_equal_recount_from_raw_participants": true
+ },
+ "comparison": {
+  "pearson": 0.6134735244664465,
+  "spearman": 0.4871658863244379,
+  "all_equals_KR_plus_JP": true
+ },
+ "procrustes": {
+  "orthogonal_rel_resid_unscaled": 1.0924362649438728,
+  "det_R": -1.0000000000000007,
+  "disparity_unit_norm": 0.7855329079775655
+ }
+}

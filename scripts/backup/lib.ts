@@ -34,6 +34,7 @@ export const RESTORE_ORDER = [
   "SortGroupItem",
   "AnalysisRun",
   "AnalysisRunDimension",
+  "AnalysisPackage",
   "AnalysisInterpretation",
   "AnalysisClusterLabel",
   "AnalysisExecutionLock",

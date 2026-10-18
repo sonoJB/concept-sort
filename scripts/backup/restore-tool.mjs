@@ -7,6 +7,8 @@
  *   node scripts/backup/restore-tool.mjs inspect  --candidate <file.db>
  *   node scripts/backup/restore-tool.mjs replace  --candidate <file.db>
  *   node scripts/backup/restore-tool.mjs rollback --replaced <dir>
+ *   node scripts/backup/restore-tool.mjs restore-packages --from <backup dir> [--dry-run]
+ *   node scripts/backup/restore-tool.mjs check-packages
  *
  * The database path comes from DATABASE_URL (file:...) or --db.
  *
@@ -27,7 +29,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { appliedMigrationNames, backupRootFor, contentFingerprint, createBackup, resolveDbPath, sha256File } from "./auto-backup.mjs";
+import { appliedMigrationNames, backupRootFor, contentFingerprint, createBackup, packagesDirFor, resolveDbPath, sha256File } from "./auto-backup.mjs";
 
 const SIDECARS = ["-journal", "-wal", "-shm"];
 const stamp = (d) => d.toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
@@ -212,6 +214,77 @@ export function rollbackDatabase({ dbPath, replacedDir, now = new Date() }) {
   return { action: "rollback", restoredFrom: path.basename(replacedDir), setAsideTo: path.basename(awayDir), notes, restartRequired: true };
 }
 
+/**
+ * Analysis package ZIPs live next to the database (analysis-packages/<sha256>.zip) and are copied into every backup
+ * directory that was made after they existed. After a database replacement, copy them back with
+ * `restore-packages --from <backup dir>` (write-once: an identical existing file is left alone, a file with the same
+ * name but different content aborts), then `check-packages` verifies EVERY AnalysisPackage row against the files on
+ * disk and lists rows whose file is missing — those packages must be regenerated from the stored analysis snapshot
+ * (see docs/mds-reanalysis/README.md, "복구").
+ */
+export function restorePackages({ dbPath, from, dryRun = false }) {
+  const srcDir = path.join(from, "analysis-packages");
+  const dstDir = packagesDirFor(dbPath);
+  const restored = [];
+  const identical = [];
+  if (fs.existsSync(srcDir)) {
+    for (const name of fs.readdirSync(srcDir).sort()) {
+      if (!/^[0-9a-f]{64}\.zip$/.test(name)) continue;
+      const src = path.join(srcDir, name);
+      if (sha256File(src) + ".zip" !== name) throw new Error(`backup file ${name} does not match its own SHA-256`);
+      const dst = path.join(dstDir, name);
+      if (fs.existsSync(dst)) {
+        if (sha256File(dst) !== sha256File(src)) throw new Error(`${name} already exists with different content — refusing to overwrite`);
+        identical.push(name);
+        continue;
+      }
+      if (!dryRun) {
+        fs.mkdirSync(dstDir, { recursive: true });
+        // temp file + rename: an interrupted copy can never leave a partial file under the final (hash) name
+        const tmp = path.join(dstDir, `.tmp-${process.pid}-${Date.now()}-${name}`);
+        try {
+          fs.copyFileSync(src, tmp, fs.constants.COPYFILE_EXCL);
+          if (sha256File(tmp) !== sha256File(src)) throw new Error(`copy of ${name} failed verification`);
+          fs.renameSync(tmp, dst);
+        } catch (e) {
+          fs.rmSync(tmp, { force: true });
+          throw e;
+        }
+      }
+      restored.push(name);
+    }
+  }
+  return { from: path.basename(from), dryRun, restored, identical, check: checkPackages({ dbPath }) };
+}
+
+/** Verifies every AnalysisPackage row against the file on disk (existence + SHA-256). Read-only. */
+export function checkPackages({ dbPath }) {
+  const db = new DatabaseSync(dbPath, { readOnly: true });
+  try {
+    let rows = [];
+    try {
+      rows = db.prepare("select scope, filename, sha256, byteSize, storedFile, analysisRunId from AnalysisPackage order by scope").all();
+    } catch {
+      return { packageRows: 0, ok: true, note: "database has no AnalysisPackage table (older schema)", problems: [] };
+    }
+    const dir = packagesDirFor(dbPath);
+    const problems = [];
+    for (const r of rows) {
+      if (!/^[0-9a-f]{64}\.zip$/.test(String(r.storedFile))) {
+        problems.push({ scope: r.scope, filename: r.filename, problem: "stored file name is not a SHA-256 name" });
+        continue;
+      }
+      const f = path.join(dir, r.storedFile);
+      if (!fs.existsSync(f)) problems.push({ scope: r.scope, filename: r.filename, problem: "file missing — regenerate this package" });
+      else if (sha256File(f) !== r.sha256) problems.push({ scope: r.scope, filename: r.filename, problem: "SHA-256 does not match the database row" });
+      else if (fs.statSync(f).size !== r.byteSize) problems.push({ scope: r.scope, filename: r.filename, problem: "size does not match the database row" });
+    }
+    return { packageRows: rows.length, ok: problems.length === 0, problems };
+  } finally {
+    db.close();
+  }
+}
+
 function main() {
   const [cmd, ...rest] = process.argv.slice(2);
   const o = {};
@@ -228,10 +301,18 @@ function main() {
       process.exit(r.ok ? 0 : 1);
     } else if (cmd === "replace") {
       console.log(JSON.stringify(replaceDatabase({ dbPath, candidate: path.resolve(String(o.candidate)) }), null, 2));
+    } else if (cmd === "restore-packages") {
+      const r = restorePackages({ dbPath, from: path.resolve(String(o.from)), dryRun: Boolean(o["dry-run"]) });
+      console.log(JSON.stringify(r, null, 2));
+      process.exit(r.check.ok ? 0 : 1);
+    } else if (cmd === "check-packages") {
+      const r = checkPackages({ dbPath });
+      console.log(JSON.stringify(r, null, 2));
+      process.exit(r.ok ? 0 : 1);
     } else if (cmd === "rollback") {
       console.log(JSON.stringify(rollbackDatabase({ dbPath, replacedDir: path.resolve(String(o.replaced)) }), null, 2));
     } else {
-      console.error("usage: restore-tool.mjs inspect|replace|rollback ...");
+      console.error("usage: restore-tool.mjs inspect|replace|rollback|restore-packages|check-packages ...");
       process.exit(2);
     }
   } catch (e) {

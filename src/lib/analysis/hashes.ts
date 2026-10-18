@@ -59,9 +59,15 @@ export type AnalysisParameters = {
   algorithmVersion: string;
   dimensionsEvaluated: number[];
   primaryMapDimension: number;
+  /** number of reproducible random starts per dimension */
   nInit: number;
+  /** iteration cap per start */
   maxIter: number;
+  /** relative raw-stress decrease at/below which a start counts as converged */
   eps: number;
+  /** tolerance for the follow-up optimisation of the selected solution */
+  strictEps: number;
+  strictMaxIter: number;
   tieHandling: "secondary";
   metric: false;
   normalizedStress: true;
@@ -70,7 +76,13 @@ export type AnalysisParameters = {
   randomSeed: number;
   wardSourceDimension: number;
   linkageMethod: "ward";
+  wardKMin: number;
+  wardKMax: number;
+  splitHalfRepetitions: number;
+  splitHalfSeed: number;
   stressDefinition: string;
+  convergenceDefinition: string;
+  selectionRule: string;
 };
 
 export type Provenance = {

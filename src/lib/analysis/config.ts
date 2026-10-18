@@ -18,21 +18,32 @@ import type { AnalysisParameters } from "./hashes";
  * behavior, not a special case.
  */
 export const DEFAULT_ANALYSIS_PARAMETERS: AnalysisParameters = {
-  algorithmVersion: "1.0.0",
+  algorithmVersion: "2.0.0",
   dimensionsEvaluated: [1, 2, 3, 4, 5],
   primaryMapDimension: 2,
-  nInit: 8,
-  maxIter: 300,
+  nInit: 64,
+  maxIter: 10000,
   eps: 1e-9,
+  strictEps: 1e-12,
+  strictMaxIter: 20000,
   tieHandling: "secondary",
   metric: false,
   normalizedStress: true,
-  disparityNormalizationConvention: "target-norm-scaled (attempt 6)",
+  disparityNormalizationConvention: "sum over pairs of disparity^2 = n(n-1)/2 (smacof explicit normalisation)",
   normalizationTargetConvention: "n*(n-1)/2",
   randomSeed: 42,
   wardSourceDimension: 2,
   linkageMethod: "ward",
-  stressDefinition: "commonStressDistance = sqrt(rssPair / sumSquaredConfigurationDistances) (Kruskal Stress-1)",
+  wardKMin: 2,
+  wardKMax: 10,
+  splitHalfRepetitions: 1000,
+  splitHalfSeed: 20261018,
+  stressDefinition:
+    "raw stress = sum_{i<j} (disparity - distance)^2 with normalised disparities; Stress-1 = sqrt(sum (isotonic fit of distances - distance)^2 / sum distance^2) (Kruskal); both recomputed from the final coordinates",
+  convergenceDefinition:
+    "converged when (rawStress[k-1] - rawStress[k]) / rawStress[k-1] <= eps; a raw-stress increase beyond 1e-9 relative is OBJECTIVE_INCREASED; reaching maxIter is MAX_ITER (not converged)",
+  selectionRule:
+    "among starts that CONVERGED at eps, the smallest raw stress; the selected solution is then continued until the relative decrease is <= strictEps",
 };
 
 /**
@@ -51,7 +62,7 @@ export const VALIDATION_BASELINE_SHA = "d2e41f5cd9d7ebd2799e4dfed938a12a96a7ca7a
  * Gate 7 with real production timing, not a statistically derived cutoff.
  * Injectable via config so tests can use a short value.
  */
-export const DEFAULT_ANALYSIS_ORPHAN_TIMEOUT_MS = 5 * 60 * 1000;
+export const DEFAULT_ANALYSIS_ORPHAN_TIMEOUT_MS = 15 * 60 * 1000;
 
 /**
  * The build/deploy commit SHA of the application instance actually
@@ -65,6 +76,11 @@ export const DEFAULT_ANALYSIS_ORPHAN_TIMEOUT_MS = 5 * 60 * 1000;
  * environment provides.
  */
 export function getEngineSourceCommitSha(): string | null {
-  const value = process.env.ANALYSIS_ENGINE_SOURCE_COMMIT_SHA;
-  return value && value.trim().length > 0 ? value.trim() : null;
+  // The deployed build's own commit comes first (same source as the official-matrix workbook metadata);
+  // ANALYSIS_ENGINE_SOURCE_COMMIT_SHA is only a manual override/fallback and can go stale, so it is last.
+  for (const key of ["APP_BUILD_COMMIT", "RAILWAY_GIT_COMMIT_SHA", "ANALYSIS_ENGINE_SOURCE_COMMIT_SHA"]) {
+    const value = process.env[key];
+    if (value && value.trim().length > 0) return value.trim();
+  }
+  return null;
 }

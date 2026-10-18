@@ -3,9 +3,10 @@ import type { NumericAggregate } from "./aggregates";
 import type { RawStatementRow } from "./dbAdapter";
 import type { AnalysisParameters, Provenance } from "./hashes";
 import type { DatasetMode } from "./dataset";
-import { canonicalize } from "./canonicalJson";
+import { canonicalize, canonicalHash } from "./canonicalJson";
+import type { Participant } from "@/lib/conceptMap/matrices";
 
-export const INPUT_SNAPSHOT_VERSION = 1;
+export const INPUT_SNAPSHOT_VERSION = 2;
 
 export type InputSnapshotSummary = {
   statementCount: number;
@@ -29,6 +30,10 @@ export type InputSnapshot = {
   dataset: DatasetMode;
   summary: InputSnapshotSummary;
   statements: { id: string; order: number; textKo: string; textJa: string | null; jaStatus: string }[];
+  /** pseudonymous per-participant sorting (pile index per statement in analysis order); no names, phones or session ids */
+  participants: Participant[];
+  /** sha256 over the canonical participants array — the raw-response fingerprint */
+  participantsHash: string;
   numeric: {
     similarityCountMatrix: number[][];
     similarityProportionMatrix: number[][];
@@ -52,7 +57,8 @@ export function buildInputSnapshot(
   nKr: number,
   nJp: number,
   pilotCount: number,
-  mainCount: number
+  mainCount: number,
+  participants: Participant[]
 ): InputSnapshot {
   const ordered = [...statements].sort((a, b) => a.order - b.order);
   return {
@@ -72,6 +78,8 @@ export function buildInputSnapshot(
       mainCount,
     },
     statements: ordered.map((s) => ({ id: s.id, order: s.order, textKo: s.text, textJa: s.textJa, jaStatus: s.jaStatus })),
+    participants,
+    participantsHash: canonicalHash(participants),
     numeric: {
       similarityCountMatrix: aggregate.similarityCountMatrix,
       similarityProportionMatrix: aggregate.similarityProportionMatrix,

@@ -121,6 +121,22 @@ export const DATA_DICTIONARY: Record<string, TableDoc> = {
       wardLinkageSnapshot: "Ward 연결(JSON)",
       wardErrorCode: "Ward 오류 코드",
       wardErrorMessageSafe: "Ward 오류 메시지",
+      resultBundle: "v2 분석 결과 묶음(JSON; 행렬·차원별 MDS·초기화별 결과·Ward 병합 이력·군집안·신뢰도·지표 정의, 개인정보 없음)",
+    },
+  },
+  AnalysisPackage: {
+    description: "관리자 화면에서 내려받는 국가별 분석자료 ZIP의 메타데이터(파일 본문은 DB가 아니라 같은 볼륨의 analysis-packages 폴더에 SHA-256 이름으로 저장).",
+    columns: {
+      id: "패키지 ID",
+      projectId: "프로젝트 ID",
+      analysisRunId: "연결된 분석 실행 ID",
+      scope: "국가 범위(KR/JP/ALL)",
+      filename: "내려받기 파일명",
+      sha256: "ZIP 파일 SHA-256",
+      byteSize: "ZIP 크기(바이트)",
+      manifest: "패키지 목록(JSON; 실행 ID·자료 지문·파일별 SHA-256)",
+      storedFile: "볼륨 안 저장 파일명(<sha256>.zip)",
+      createdAt: "등록 시각",
     },
   },
   AnalysisRunDimension: {

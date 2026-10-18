@@ -1,4 +1,8 @@
-import { describe, it, expect, afterAll } from "vitest";
+import { describe, it, expect, afterAll, vi } from "vitest";
+
+// These tests POST the real route with the production defaults (64 starts x 5 dimensions + tie sensitivity + split-half);
+// under a parallel full-suite run that can exceed the 20 s default.
+vi.setConfig({ testTimeout: 120000 });
 import { NextRequest } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
@@ -21,6 +25,7 @@ const MIGRATION_ORDER = [
   "20260813011500_add_guide_template_fields",
   "20260813062600_add_data_role_and_analysis_dataset",
   "20260813082418_add_main_study_schedule_and_guide_video",
+  "20261018100000_add_analysis_result_bundle_and_package",
 ];
 {
   const db = new DatabaseSync(dbFile);

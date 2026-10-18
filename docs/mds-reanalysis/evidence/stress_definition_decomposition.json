@@ -1,0 +1,42 @@
+{
+ "explanation": "old displayed value = old definition at an UNCONVERGED iteration-2 configuration; new value = Kruskal definition at the converged solution. total change = convergence effect + definition effect (they are not both 'convergence improvement').",
+ "KR": {
+  "previously_displayed_stress1_old_engine_unconverged_2_iterations": 0.44626751909242246,
+  "old_engine_raw_stress_at_that_point": 179.20042841873024,
+  "old_definition_at_converged_solution": 0.31738756513329286,
+  "kruskal_stress1_at_converged_solution": 0.3025161369833413,
+  "converged_raw_stress": 98.92881019928453,
+  "total_change": -0.14375138210908117,
+  "effect_of_convergence (old definition: unconverged -> converged)": -0.1288799539591296,
+  "effect_of_definition (old definition -> Kruskal, same converged coordinates)": -0.014871428149951571,
+  "share_of_total_from_convergence": 0.896547581444004,
+  "share_of_total_from_definition": 0.10345241855599593,
+  "note": "For JP and ALL the 'previously displayed' value is the old engine re-run on the MAIN data with the deployed budget (no stored MAIN run existed for those scopes); for KR it equals the stored production run (0.44627)."
+ },
+ "JP": {
+  "previously_displayed_stress1_old_engine_unconverged_2_iterations": 0.4459986493346137,
+  "old_engine_raw_stress_at_that_point": 179.01912007271807,
+  "old_definition_at_converged_solution": 0.25307166605035786,
+  "kruskal_stress1_at_converged_solution": 0.24533723807461288,
+  "converged_raw_stress": 65.06577957735136,
+  "total_change": -0.2006614112600008,
+  "effect_of_convergence (old definition: unconverged -> converged)": -0.19292698328425584,
+  "effect_of_definition (old definition -> Kruskal, same converged coordinates)": -0.007734427975744973,
+  "share_of_total_from_convergence": 0.9614553295166287,
+  "share_of_total_from_definition": 0.03854467048337125,
+  "note": "For JP and ALL the 'previously displayed' value is the old engine re-run on the MAIN data with the deployed budget (no stored MAIN run existed for those scopes); for KR it equals the stored production run (0.44627)."
+ },
+ "ALL": {
+  "previously_displayed_stress1_old_engine_unconverged_2_iterations": 0.4446679325163932,
+  "old_engine_raw_stress_at_that_point": 178.11894797087845,
+  "old_definition_at_converged_solution": 0.2754206859767135,
+  "kruskal_stress1_at_converged_solution": 0.26553353099313065,
+  "converged_raw_stress": 76.21920862429607,
+  "total_change": -0.17913440152326254,
+  "effect_of_convergence (old definition: unconverged -> converged)": -0.1692472465396797,
+  "effect_of_definition (old definition -> Kruskal, same converged coordinates)": -0.009887154983582835,
+  "share_of_total_from_convergence": 0.9448059395654448,
+  "share_of_total_from_definition": 0.05519406043455523,
+  "note": "For JP and ALL the 'previously displayed' value is the old engine re-run on the MAIN data with the deployed budget (no stored MAIN run existed for those scopes); for KR it equals the stored production run (0.44627)."
+ }
+}

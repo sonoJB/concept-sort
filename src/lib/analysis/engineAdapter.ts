@@ -1,10 +1,29 @@
-import { runSmacof, wardHierarchicalClustering, type Matrix, type WeightMatrix, type Point } from "@/lib/conceptAnalysis";
+import type { DimensionAnalysis, ConceptMapSettings } from "@/lib/conceptMap/analyze";
 import type { AnalysisParameters } from "./hashes";
 
-export type DimensionResult = {
+/** Maps the stored analysis parameters onto the analysis library's settings (the library has no defaults of its own here). */
+export function toConceptMapSettings(p: AnalysisParameters): ConceptMapSettings {
+  return {
+    mds: {
+      dimensions: Array.from(new Set([p.primaryMapDimension, ...p.dimensionsEvaluated])).sort((a, b) => a - b),
+      primaryDimension: p.primaryMapDimension,
+      nInit: p.nInit,
+      maxIter: p.maxIter,
+      eps: p.eps,
+      strictEps: p.strictEps,
+      strictMaxIter: p.strictMaxIter,
+      randomSeed: p.randomSeed,
+      tieHandling: p.tieHandling,
+    },
+    ward: { kMin: p.wardKMin, kMax: p.wardKMax },
+    splitHalf: { repetitions: p.splitHalfRepetitions, seed: p.splitHalfSeed },
+  };
+}
+
+export type DimensionRowData = {
   dimension: number;
   dimensionStatus: "COMPLETED" | "FAILED";
-  coordinates: Point[] | null;
+  coordinates: number[][] | null;
   rawStress: number | null;
   commonStressDistance: number | null;
   commonStressQ: number | null;
@@ -19,24 +38,15 @@ export type DimensionResult = {
 };
 
 /**
- * Runs SMACOF for one dimension via the verified engine (runSmacof), then
- * derives commonStressQ from the same rawStress the engine already
- * returned — q = n(n-1)/2 is the ONLY additional input, no second stress
- * recomputation against the fit's disparity matrix (that's not exposed by
- * the engine's public API and isn't needed: both common-stress metrics
- * share the same numerator, see Gate 3 report §"Ward source/result design").
- * converged=false is never treated as a failure — only a returned
- * errorCode is.
+ * One AnalysisRunDimension row from a dimension analysis. `converged` is the strict statement "the selected
+ * solution converged at eps AND its continuation converged at strictEps"; the individual termination reasons are
+ * kept in normalizationMeta so nothing is reduced to a bare COMPLETED/converged flag. A dimension without any
+ * usable solution is FAILED with the engine's own error code.
  */
-export function runDimension(
-  dimension: number,
-  dissimilarity: Matrix,
-  weight: WeightMatrix,
-  params: AnalysisParameters
-): DimensionResult {
-  if (dimension < 1 || dimension > 6 || !Number.isInteger(dimension)) {
+export function toDimensionRow(d: DimensionAnalysis): DimensionRowData {
+  if (!d.coordinates || !d.selected) {
     return {
-      dimension,
+      dimension: d.dimension,
       dimensionStatus: "FAILED",
       coordinates: null,
       rawStress: null,
@@ -48,105 +58,39 @@ export function runDimension(
       bestSeed: null,
       stressHistory: null,
       normalizationMeta: null,
-      errorCode: "INVALID_DIMENSION",
-      errorMessageSafe: "Requested dimension must be an integer between 1 and 6.",
+      errorCode: d.errorCode ?? "MDS_NO_RESULT",
+      errorMessageSafe: d.errorMessage ?? "The MDS engine did not produce a usable solution for this dimension.",
     };
   }
-
-  const result = runSmacof(dissimilarity, weight, {
-    algorithm: "SMACOF",
-    metric: false,
-    dimension: dimension as 1 | 2 | 3 | 4 | 5 | 6,
-    normalizedStress: true,
-    randomSeed: params.randomSeed,
-    nInit: params.nInit,
-    maxIter: params.maxIter,
-    eps: params.eps,
-    tieHandling: params.tieHandling,
-  });
-
-  if (result.errorCode || result.coordinates === null || result.bestInitIndex === null) {
-    return {
-      dimension,
-      dimensionStatus: "FAILED",
-      coordinates: null,
-      rawStress: null,
-      commonStressDistance: null,
-      commonStressQ: null,
-      converged: null,
-      iterations: null,
-      bestInitIndex: null,
-      bestSeed: null,
-      stressHistory: null,
-      normalizationMeta: null,
-      errorCode: result.errorCode ?? "SMACOF_NO_RESULT",
-      errorMessageSafe: result.errorMessage ?? "SMACOF did not produce a usable result for this dimension.",
-    };
-  }
-
-  const bestInit = result.inits[result.bestInitIndex];
-  const n = dissimilarity.length;
-  const q = (n * (n - 1)) / 2;
-  const commonStressDistance = result.normalizedStress1;
-  const commonStressQ =
-    result.rawStress !== null && Number.isFinite(result.rawStress) && q > 0
-      ? Math.sqrt(result.rawStress / q)
-      : null;
-
   return {
-    dimension,
+    dimension: d.dimension,
     dimensionStatus: "COMPLETED",
-    coordinates: result.coordinates,
-    rawStress: result.rawStress,
-    commonStressDistance,
-    commonStressQ,
-    converged: result.converged,
-    iterations: bestInit?.iterations ?? null,
-    bestInitIndex: result.bestInitIndex,
-    bestSeed: result.bestSeed,
-    stressHistory: bestInit?.stressHistory ?? null,
-    normalizationMeta: bestInit
-      ? {
-          disparityNormalizationFactor: bestInit.disparityNormalizationFactor ?? null,
-          disparityNormBefore: bestInit.disparityNormBefore ?? null,
-          disparityNormAfter: bestInit.disparityNormAfter ?? null,
-          normalizationTarget: bestInit.normalizationTarget ?? null,
-        }
-      : null,
+    coordinates: d.coordinates,
+    rawStress: d.rawStress,
+    commonStressDistance: d.stress1,
+    commonStressQ: d.stressNormalizedSqrt,
+    converged: d.numericallyConverged,
+    iterations: d.selected.main.iterations + d.selected.strict.iterations,
+    bestInitIndex: d.selected.initIndex,
+    bestSeed: d.selected.seed,
+    stressHistory: d.trace?.rawStress ?? null,
+    normalizationMeta: {
+      historyKind: "rawStress",
+      selectionStatus: d.selectionStatus,
+      mainRun: d.selected.main,
+      strictRun: d.selected.strict,
+      convergedStarts: d.convergedStarts,
+      startCount: d.startCount,
+      terminationReasonTally: d.terminationReasonTally,
+      stress1: d.stress1,
+      stressNormalizedSqrt: d.stressNormalizedSqrt,
+      stress1V1Definition: d.stress1V1Definition,
+      rsq: d.rsq,
+      minPairDistance: d.minPairDistance,
+      rawStressSpreadAmongConverged: d.rawStressSpreadAmongConverged,
+      startsWithinRelTol1e6OfBest: d.startsWithinRelTol1e6OfBest,
+    },
     errorCode: null,
     errorMessageSafe: null,
   };
-}
-
-export type WardResultSummary = {
-  wardStatus: "NOT_RUN" | "COMPLETED" | "FAILED";
-  wardLinkageSnapshot: Record<string, unknown> | null;
-  wardErrorCode: string | null;
-  wardErrorMessageSafe: string | null;
-};
-
-/**
- * Official Ward result: input is the primary (2D) MDS coordinates, never a
- * separate coordinate space. Ward itself never produces coordinates.
- */
-export function runOfficialWard(primaryDimensionResult: DimensionResult): WardResultSummary {
-  if (primaryDimensionResult.dimensionStatus !== "COMPLETED" || !primaryDimensionResult.coordinates) {
-    return { wardStatus: "NOT_RUN", wardLinkageSnapshot: null, wardErrorCode: null, wardErrorMessageSafe: null };
-  }
-  try {
-    const result = wardHierarchicalClustering(primaryDimensionResult.coordinates);
-    return {
-      wardStatus: "COMPLETED",
-      wardLinkageSnapshot: { linkage: result.linkage, originalCount: result.originalCount },
-      wardErrorCode: null,
-      wardErrorMessageSafe: null,
-    };
-  } catch {
-    return {
-      wardStatus: "FAILED",
-      wardLinkageSnapshot: null,
-      wardErrorCode: "WARD_EXECUTION_ERROR",
-      wardErrorMessageSafe: "Ward clustering failed to produce a result for the primary configuration.",
-    };
-  }
 }

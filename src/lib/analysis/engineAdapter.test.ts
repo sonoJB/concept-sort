@@ -1,112 +1,80 @@
-import { describe, it, expect } from "vitest";
-import { runDimension, runOfficialWard, type DimensionResult } from "./engineAdapter";
+import { describe, expect, it } from "vitest";
+import { analyzeScope, DEFAULT_CONCEPT_MAP_SETTINGS } from "@/lib/conceptMap/analyze";
+import type { Participant } from "@/lib/conceptMap/matrices";
 import { DEFAULT_ANALYSIS_PARAMETERS } from "./config";
-import { buildDissimilarityMatrix, buildSimilarityProportionMatrix, buildSimilarityCountMatrix, buildWeightMatrix } from "@/lib/conceptAnalysis";
+import { toConceptMapSettings, toDimensionRow } from "./engineAdapter";
 
-function fixture(n: number) {
-  // A small, well-behaved synthetic co-occurrence pattern (no PII, no DB).
-  const statementIds = Array.from({ length: n }, (_, i) => `s${i}`);
-  const sessions = [
-    { sessionId: "a", countryCode: "KR" as const, groups: [statementIds.slice(0, Math.ceil(n / 2)), statementIds.slice(Math.ceil(n / 2))] },
-    { sessionId: "b", countryCode: "KR" as const, groups: [statementIds.slice(0, Math.floor(n / 2)), statementIds.slice(Math.floor(n / 2))] },
-    { sessionId: "c", countryCode: "KR" as const, groups: [[...statementIds]] },
-  ];
-  const count = buildSimilarityCountMatrix(statementIds, sessions);
-  const proportion = buildSimilarityProportionMatrix(count, sessions.length);
-  const dissimilarity = buildDissimilarityMatrix(proportion);
-  const weight = buildWeightMatrix(n);
-  return { dissimilarity, weight };
-}
-
-describe("runDimension", () => {
-  it("returns COMPLETED with populated results for a well-formed dimension < n", () => {
-    const { dissimilarity, weight } = fixture(6);
-    const result = runDimension(2, dissimilarity, weight, DEFAULT_ANALYSIS_PARAMETERS);
-    expect(result.dimensionStatus).toBe("COMPLETED");
-    expect(result.coordinates).not.toBeNull();
-    expect(result.errorCode).toBeNull();
-    expect(typeof result.commonStressDistance).toBe("number");
-    expect(typeof result.commonStressQ).toBe("number");
+const N_ST = 8;
+const people = (n: number, noise: number): Participant[] =>
+  Array.from({ length: n }, (_, i) => {
+    let s = 100 + i;
+    const rnd = () => ((s = (s * 1664525 + 1013904223) % 4294967296) / 4294967296);
+    const raw = Array.from({ length: N_ST }, (_, st) => (rnd() < noise ? Math.floor(rnd() * 2) : Math.floor(st / 4)));
+    const m = new Map<number, number>();
+    return { pid: `KR-${String(i + 1).padStart(3, "0")}`, country: "KR" as const, assignment: raw.map((g) => (m.has(g) ? m.get(g)! : (m.set(g, m.size), m.size - 1))) };
   });
 
-  it("returns FAILED with errorCode when dimension >= n (hard engine failure, not a data problem)", () => {
-    const { dissimilarity, weight } = fixture(2); // n=2, dimension 2 >= n
-    const result = runDimension(2, dissimilarity, weight, DEFAULT_ANALYSIS_PARAMETERS);
-    expect(result.dimensionStatus).toBe("FAILED");
-    expect(result.errorCode).toBe("DIMENSION_TOO_HIGH");
-    expect(result.coordinates).toBeNull();
-  });
+const FAST = { ...DEFAULT_CONCEPT_MAP_SETTINGS, mds: { ...DEFAULT_CONCEPT_MAP_SETTINGS.mds, dimensions: [1, 2, 3, 9], nInit: 4, maxIter: 2000 }, splitHalf: { repetitions: 5, seed: 1 } };
 
-  it("rejects an out-of-range requested dimension before calling the engine", () => {
-    const { dissimilarity, weight } = fixture(6);
-    const result = runDimension(7, dissimilarity, weight, DEFAULT_ANALYSIS_PARAMETERS);
-    expect(result.dimensionStatus).toBe("FAILED");
-    expect(result.errorCode).toBe("INVALID_DIMENSION");
-  });
-
-  it("converged=false is reported as COMPLETED, never as FAILED", () => {
-    // maxIter=1 makes convergence within tolerance unlikely for a non-trivial
-    // fixture, while still producing a finite, valid result.
-    const { dissimilarity, weight } = fixture(6);
-    const result = runDimension(2, dissimilarity, weight, { ...DEFAULT_ANALYSIS_PARAMETERS, maxIter: 1 });
-    expect(result.dimensionStatus).toBe("COMPLETED");
-    expect(result.errorCode).toBeNull();
-    // converged may be true or false depending on the fixture, but either
-    // way dimensionStatus must stay COMPLETED — that's the actual assertion.
+describe("toConceptMapSettings", () => {
+  it("maps the stored parameters one to one and always includes the primary dimension", () => {
+    const s = toConceptMapSettings({ ...DEFAULT_ANALYSIS_PARAMETERS, dimensionsEvaluated: [3, 1], primaryMapDimension: 2 });
+    expect(s.mds.dimensions).toEqual([1, 2, 3]);
+    expect(s.mds.primaryDimension).toBe(2);
+    expect(s.mds).toMatchObject({ nInit: 64, maxIter: 10000, eps: 1e-9, strictEps: 1e-12, randomSeed: 42, tieHandling: "secondary" });
+    expect(s.splitHalf).toEqual({ repetitions: 1000, seed: 20261018 });
+    expect(s.ward).toEqual({ kMin: 2, kMax: 10 });
   });
 });
 
-describe("runOfficialWard", () => {
-  it("is NOT_RUN when the primary dimension failed", () => {
-    const failed: DimensionResult = {
-      dimension: 2,
-      dimensionStatus: "FAILED",
-      coordinates: null,
-      rawStress: null,
-      commonStressDistance: null,
-      commonStressQ: null,
-      converged: null,
-      iterations: null,
-      bestInitIndex: null,
-      bestSeed: null,
-      stressHistory: null,
-      normalizationMeta: null,
-      errorCode: "DIMENSION_TOO_HIGH",
-      errorMessageSafe: "x",
-    };
-    const ward = runOfficialWard(failed);
-    expect(ward.wardStatus).toBe("NOT_RUN");
+describe("toDimensionRow", () => {
+  const a = analyzeScope("KR", people(12, 0.1), N_ST, FAST);
+  const by = (d: number) => a.dimensions.find((x) => x.dimension === d)!;
+
+  it("a solved dimension is COMPLETED and keeps the termination reasons, start tally and recomputed metrics", () => {
+    const row = toDimensionRow(by(2));
+    expect(row.dimensionStatus).toBe("COMPLETED");
+    expect(row.errorCode).toBeNull();
+    expect(row.coordinates).toHaveLength(N_ST);
+    expect(row.commonStressDistance).toBe(by(2).stress1);
+    expect(row.commonStressQ).toBe(by(2).stressNormalizedSqrt);
+    const meta = row.normalizationMeta as { mainRun: { reason: string }; strictRun: { reason: string }; terminationReasonTally: Record<string, number>; historyKind: string };
+    expect(meta.mainRun.reason).toBe(by(2).selected!.main.reason);
+    expect(meta.strictRun.reason).toBe(by(2).selected!.strict.reason);
+    expect(Object.values(meta.terminationReasonTally).reduce((x, y) => x + y, 0)).toBe(4);
+    expect(meta.historyKind).toBe("rawStress");
   });
 
-  it("is COMPLETED for a valid primary configuration", () => {
-    const { dissimilarity, weight } = fixture(6);
-    const primary = runDimension(2, dissimilarity, weight, DEFAULT_ANALYSIS_PARAMETERS);
-    const ward = runOfficialWard(primary);
-    expect(ward.wardStatus).toBe("COMPLETED");
-    expect(ward.wardLinkageSnapshot).not.toBeNull();
+  it("converged is the strict conjunction of both phases, and an unconverged-but-solved dimension is still COMPLETED (reported, not hidden)", () => {
+    const hard = analyzeScope("KR", people(12, 0.1), N_ST, { ...FAST, mds: { ...FAST.mds, dimensions: [2], maxIter: 2, strictMaxIter: 2 } });
+    const row = toDimensionRow(hard.dimensions[0]);
+    expect(row.dimensionStatus).toBe("COMPLETED");
+    expect(row.converged).toBe(false);
+    expect((row.normalizationMeta as { mainRun: { reason: string } }).mainRun.reason).toBe("MAX_ITER");
   });
 
-  it("is FAILED (hard engine failure, not NOT_RUN) when Ward itself cannot process the primary coordinates", () => {
-    // Tested at the engine boundary per Gate 3 spec §29: fewer than 2 points
-    // is the one documented hard-failure condition of wardHierarchicalClustering.
-    const degenerate: DimensionResult = {
-      dimension: 2,
-      dimensionStatus: "COMPLETED",
-      coordinates: [[0, 0]], // only 1 point
-      rawStress: 0,
-      commonStressDistance: 0,
-      commonStressQ: 0,
-      converged: true,
-      iterations: 1,
-      bestInitIndex: 0,
-      bestSeed: 1,
-      stressHistory: [0],
-      normalizationMeta: null,
-      errorCode: null,
-      errorMessageSafe: null,
-    };
-    const ward = runOfficialWard(degenerate);
-    expect(ward.wardStatus).toBe("FAILED");
-    expect(ward.wardErrorCode).toBe("WARD_EXECUTION_ERROR");
+  it("a dimension the engine cannot solve (>= number of statements) is FAILED with the engine's error code and no coordinates", () => {
+    const row = toDimensionRow(by(9));
+    expect(row.dimensionStatus).toBe("FAILED");
+    expect(row.errorCode).toBe("DIMENSION_TOO_HIGH");
+    expect(row.coordinates).toBeNull();
+    expect(row.converged).toBeNull();
+  });
+});
+
+describe("official Ward result needs a converged primary solution", () => {
+  it("no Ward result, pair diagnostics or cluster solutions exist when the primary 2D solution did not converge", () => {
+    const hard = analyzeScope("KR", people(12, 0.1), N_ST, { ...FAST, mds: { ...FAST.mds, dimensions: [2], maxIter: 2, strictMaxIter: 2 } });
+    expect(hard.primary.numericallyConverged).toBe(false);
+    expect(hard.ward).toBeNull();
+    expect(hard.pairDiagnostics).toBeNull();
+    expect(hard.solutions).toEqual([]);
+  });
+
+  it("with a converged primary solution Ward uses exactly the stored 2D coordinates (n-1 merges)", () => {
+    const ok = analyzeScope("KR", people(12, 0.1), N_ST, { ...FAST, mds: { ...FAST.mds, dimensions: [2] } });
+    expect(ok.primary.numericallyConverged).toBe(true);
+    expect(ok.ward!.linkage).toHaveLength(N_ST - 1);
+    expect(ok.ward!.sourceDimension).toBe(2);
   });
 });

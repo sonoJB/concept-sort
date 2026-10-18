@@ -35,6 +35,7 @@
     "**/*.test.ts",
     "**/*.integration.test.ts",
     "src/lib/analysis/testSupport/**",
-    "scripts/backup/**"
+    "scripts/backup/**",
+    "scripts/mds/**"
   ]
 }

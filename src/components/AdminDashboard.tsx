@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { DeleteConfirmModal } from "@/components/DeleteConfirmModal";
-import { AnalysisPanel } from "@/components/analysis/AnalysisPanel";
+import ConceptMapPanel from "@/components/analysis/ConceptMapPanel";
 import { toCsv, downloadCsv } from "@/lib/csv";
 import { filterByDataRole, type DataRoleFilter } from "@/lib/participantFilter";
 import OfficialMatrixDownloads from "@/components/OfficialMatrixDownloads";
@@ -2062,7 +2062,7 @@ export function AdminDashboard({
             </p>
           )}
 
-          <AnalysisPanel slug={slug} adminToken={adminToken} />
+          <ConceptMapPanel slug={slug} adminToken={adminToken} />
         </section>
       )}
 
