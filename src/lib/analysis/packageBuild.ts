@@ -160,7 +160,7 @@ export async function buildPackageBytes(
     if (zips.length !== 1) throw new PackageBuildError("BUILD_FAILED", `expected one zip, found ${zips.length}`);
     // the builder prints a JSON summary; its own checks (zip test, every file hash, independent reproduction) must all hold
     try {
-      const summary = JSON.parse(result.stdout.slice(result.stdout.indexOf("{"))) as Record<string, { testzip: unknown; all_hashes_ok: boolean; independent_reproduction: boolean | null }>;
+      const summary = JSON.parse(result.stdout.slice(Math.max(0, result.stdout.search(/^\{/m)))) as Record<string, { testzip: unknown; all_hashes_ok: boolean; independent_reproduction: boolean | null }>;
       const s = summary[run.scope];
       if (!s || s.testzip !== null || !s.all_hashes_ok || s.independent_reproduction !== true) throw new Error("builder self-check failed");
     } catch (e) {
