@@ -13,6 +13,10 @@ export type Manifest = {
   zipFilename: string;
   fingerprints: { participantsHash: string; numericDataHash: string; parameterHash: string };
   files: { path: string; sha256: string; bytes: number }[];
+  /** added with package-format-3 (absent in the first-release packages): version of the package of this run, layout version, wording version */
+  packageVersion?: number;
+  packageFormatVersion?: string;
+  interpretationTextVersion?: string | null;
 };
 
 export type RunSnapshotForPackage = { participants: { pid: string; country: string; assignment: number[] }[]; participantsHash: string };

@@ -20,6 +20,7 @@ import { analyzeScope } from "@/lib/conceptMap/analyze";
 import { buildCountMatrix, matricesEqual } from "@/lib/conceptMap/matrices";
 import { buildResultBundle } from "@/lib/conceptMap/bundle";
 import { isUniqueConstraintError, RunAlreadyRunningError } from "./lock";
+import { enqueuePackageJob } from "./packageJobs";
 
 /**
  * The verified engine's PRNG (mulberry32/deriveSeed) uses the full unsigned
@@ -326,4 +327,11 @@ async function executeAnalysisRunUnguarded(prisma: PrismaClient, runId: string):
     });
     await tx.analysisExecutionLock.delete({ where: { analysisRunId: run.id } }).catch(() => {});
   });
+  // Analysis -> ZIP: the package of this result is built, verified and registered by the background worker. The analysis
+  // state is already final here; a problem with the package job never changes it (and the MDS is never recomputed).
+  try {
+    await enqueuePackageJob(prisma, run.id, "AUTO");
+  } catch (e) {
+    console.error("[analysis] could not queue the package job for run", run.id, e instanceof Error ? e.message : e);
+  }
 }

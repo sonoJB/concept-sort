@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireAdminProjectFromRequest } from "@/lib/analysis/auth";
 import { serializeRunMetadata, isResultBodyExposable } from "@/lib/analysis/runSerializer";
+import { withCurrentInterpretation } from "@/lib/conceptMap/bundleView";
+import type { ResultBundle } from "@/lib/conceptMap/bundle";
 
 /**
  * The complete stored result bundle of one run (matrices, MDS per dimension with every start, Ward history,
@@ -20,5 +22,5 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   if (run.executionStatus === "COMPLETED" && !official) return NextResponse.json({ ...metadata, resultBodyBlocked: true });
   if (run.executionStatus !== "COMPLETED" && run.executionStatus !== "FAILED") return NextResponse.json({ ...metadata, resultBodyBlocked: true });
   if (!run.resultBundle) return NextResponse.json({ ...metadata, resultBodyBlocked: true, errorCode: "BUNDLE_MISSING" });
-  return NextResponse.json({ ...metadata, officialResult: official, resultBodyBlocked: false, bundle: JSON.parse(run.resultBundle) });
+  return NextResponse.json({ ...metadata, officialResult: official, resultBodyBlocked: false, bundle: withCurrentInterpretation(JSON.parse(run.resultBundle) as ResultBundle) });
 }

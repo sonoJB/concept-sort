@@ -29,9 +29,15 @@ type RunMeta = {
   errorCode: string | null;
 };
 type HistoryRow = { id: string; startedAt: string; executionStatus: string; algorithmVersion: string; errorCode: string | null; current: boolean; hasPackage: boolean };
+type PkgInfo = { version: number; filename: string; sha256: string; byteSize: number; createdAt: string; packageFormatVersion: string | null; interpretationTextVersion: string | null };
+type JobStatus = "QUEUED" | "BUILDING" | "VERIFYING" | "REGISTERING" | "READY" | "FAILED";
+type JobInfo = { id: string; status: JobStatus; active: boolean; attempt: number; trigger: string; targetVersion: number; errorCode: string | null; errorMessageSafe: string | null; createdAt: string; startedAt: string | null; finishedAt: string | null };
+type PreviousResult = { runId: string; startedAt: string; algorithmVersion: string; current: boolean; packages: PkgInfo[] };
 type Overview = {
   currentAlgorithmVersion: string;
-  scopes: Record<Scope, { official: RunMeta | null; package: { filename: string; sha256: string; byteSize: number; createdAt: string } | null; history: HistoryRow[]; noOfficialResult: boolean }>;
+  interpretationTextVersion?: string;
+  packageFormatVersion?: string;
+  scopes: Record<Scope, { official: RunMeta | null; package: PkgInfo | null; packageVersions: PkgInfo[]; packageJob: JobInfo | null; previousResults: PreviousResult[]; history: HistoryRow[]; noOfficialResult: boolean }>;
 };
 type BundleResponse = { officialResult?: boolean; resultBodyBlocked: boolean; errorCode?: string | null; errorMessageSafe?: string | null; executionStatus: string; bundle?: ResultBundle };
 
@@ -45,9 +51,10 @@ const TONE_LABEL: Record<Tone, string> = { met: "충족", unfavorable: "불리",
 const KIND_LABEL: Record<string, string> = {
   computation_setting: "계산 설정값",
   definitional_range: "정의상 범위",
-  general_rule_of_thumb: "일반 MDS 참고 구분",
-  empirical_comparison_range: "개념도 연구 비교 범위",
+  general_rule_of_thumb: "일반 MDS 구술 척도(참고 정보 · 판정 아님)",
+  empirical_comparison_range: "선행 개념도 연구 분포(비교 참고)",
   good_fit_criterion_unconfirmed: "양호 기준(미확정)",
+  interpretation_principle: "해석 원칙",
 };
 
 function saveBlob(blob: Blob, name: string) {
@@ -146,6 +153,15 @@ export default function ConceptMapPanel({ slug, adminToken }: { slug: string; ad
     };
   }, [api, reloadTick]);
 
+  // While the ZIP of the displayed result is being prepared (queued / building / verifying / registering) the status refreshes by itself.
+  const jobActive = overview?.scopes[scope].packageJob?.active ?? false;
+  const pollNoJobYet = !!overview && !!overview.scopes[scope].official && !overview.scopes[scope].package && !overview.scopes[scope].packageJob;
+  useEffect(() => {
+    if (!jobActive && !pollNoJobYet) return;
+    const t = setTimeout(() => setReloadTick((n) => n + 1), jobActive ? 5000 : 8000);
+    return () => clearTimeout(t);
+  }, [jobActive, pollNoJobYet, reloadTick]);
+
   const runId = overview?.scopes[scope].official?.id ?? null;
   useEffect(() => {
     if (!runId) return;
@@ -194,12 +210,26 @@ export default function ConceptMapPanel({ slug, adminToken }: { slug: string; ad
     }
   }
 
-  async function downloadZip() {
+  async function packageAction(action: "retry" | "rebuild") {
     if (!runId) return;
+    if (action === "rebuild" && !window.confirm("저장된 분석 결과로 새 ZIP 버전을 만듭니다. 분석은 다시 계산하지 않으며 이전 ZIP·해시는 그대로 보존됩니다. 계속할까요?")) return;
+    setError(null);
+    try {
+      const res = await api(`runs/${runId}/package-job`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action }) });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) setError(`ZIP 작업을 시작하지 못했습니다: ${j.errorCode ?? res.status}`);
+      setReloadTick((t) => t + 1);
+    } catch {
+      setError("ZIP 작업 요청 중 네트워크 오류가 발생했습니다.");
+    }
+  }
+
+  async function downloadZip(targetRunId: string | null = runId, version?: number) {
+    if (!targetRunId) return;
     setDlBusy(true);
     setError(null);
     try {
-      const res = await api(`runs/${runId}/package`);
+      const res = await api(`runs/${targetRunId}/package${version ? `?version=${version}` : ""}`);
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
         setError(`ZIP을 내려받지 못했습니다: ${j.errorCode ?? res.status}`);
@@ -237,17 +267,13 @@ export default function ConceptMapPanel({ slug, adminToken }: { slug: string; ad
             <button onClick={startRun} disabled={running} className="rounded-lg border border-slate-300 px-3 py-2 text-sm hover:bg-slate-100 disabled:opacity-50">
               {running ? "분석 실행 중…" : `${label} 새 분석 실행`}
             </button>
-            <button onClick={downloadZip} disabled={dlBusy || !info?.package} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50" title={info?.package ? info.package.filename : "이 결과에 연결된 ZIP이 아직 없습니다"}>
+            <button onClick={() => void downloadZip()} disabled={dlBusy || !info?.package} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50" title={info?.package ? info.package.filename : "이 결과의 ZIP이 아직 준비되지 않았습니다"}>
               {dlBusy ? "내려받는 중…" : `${label} 전체 분석자료 다운로드 (ZIP)`}
             </button>
           </div>
         </div>
-        {info?.package && (
-          <p className="text-xs text-slate-500">
-            {info.package.filename} · {(info.package.byteSize / 1024 / 1024).toFixed(1)} MB · SHA-256 {short(info.package.sha256)}… · 등록 {dt(info.package.createdAt)}
-          </p>
-        )}
-        {!info?.package && info?.official && <p className="text-xs text-amber-700">이 분석 결과에 연결된 ZIP 패키지가 아직 없습니다 (화면의 개별 그림·CSV 내려받기는 사용할 수 있습니다).</p>}
+        {info?.official && <PackageStatus info={info} runId={info.official.id} currentTextVersion={overview?.interpretationTextVersion} onAction={packageAction} onDownload={(v) => void downloadZip(runId, v)} dlBusy={dlBusy} />}
+        {info && info.previousResults.length > 0 && <PreviousResults items={info.previousResults} onDownload={(rid, v) => void downloadZip(rid, v)} dlBusy={dlBusy} />}
         {error && <p className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">{error}</p>}
       </div>
 
@@ -362,6 +388,97 @@ export default function ConceptMapPanel({ slug, adminToken }: { slug: string; ad
   );
 }
 
+const STEPS = ["분석 완료", "ZIP 생성", "무결성·내용 검증", "등록", "다운로드 준비 완료"];
+const STAGE: Record<JobStatus, number> = { QUEUED: 1, BUILDING: 1, VERIFYING: 2, REGISTERING: 3, READY: 5, FAILED: -1 };
+const STATUS_LABEL: Record<JobStatus, string> = { QUEUED: "대기 중", BUILDING: "ZIP 생성 중", VERIFYING: "무결성·내용 검증 중", REGISTERING: "등록 중", READY: "준비 완료", FAILED: "실패" };
+
+/** The ZIP of the DISPLAYED result: its own state (separate from the analysis state), progress, failure and retry. */
+function PackageStatus({ info, runId, currentTextVersion, onAction, onDownload, dlBusy }: { info: Overview["scopes"][Scope]; runId: string; currentTextVersion?: string; onAction: (a: "retry" | "rebuild") => void; onDownload: (v?: number) => void; dlBusy: boolean }) {
+  const job = info.packageJob;
+  const pkg = info.package;
+  const stage = job ? STAGE[job.status] : pkg ? 5 : 1;
+  const outdatedText = !!pkg && !!currentTextVersion && pkg.interpretationTextVersion !== currentTextVersion;
+  return (
+    <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <b>분석 상태</b> <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-emerald-800">완료 · 실행 {short(runId)}</span>
+        <b>ZIP 상태</b>{" "}
+        <span className={`rounded px-1.5 py-0.5 ${job?.status === "FAILED" ? "bg-rose-100 text-rose-800" : pkg && !job?.active ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>
+          {job?.active ? STATUS_LABEL[job.status] : job?.status === "FAILED" ? (pkg ? "새 버전 작업 실패(기존 ZIP은 이용 가능)" : "실패") : pkg ? "준비 완료" : "아직 만들어지지 않음"}
+        </span>
+      </div>
+      <ol className="flex flex-wrap gap-1.5" aria-label="분석에서 ZIP까지의 진행">
+        {STEPS.map((t, i) => {
+          const done = stage === 5 || i < stage;
+          const current = job?.active && i === stage;
+          return (
+            <li key={t} className={`rounded border px-2 py-0.5 ${done ? "border-emerald-300 bg-emerald-50 text-emerald-800" : current ? "border-amber-300 bg-amber-50 text-amber-800" : "border-slate-200 bg-white text-slate-500"}`}>
+              {done ? "✓ " : current ? "… " : ""}{t}
+            </li>
+          );
+        })}
+      </ol>
+      {job?.active && <p>ZIP을 준비하는 중입니다(시도 {job.attempt}회). 분석은 이미 끝났고 다시 계산하지 않습니다. 화면은 자동으로 새로고침됩니다. 준비되는 동안 아래 &lsquo;이전 검증 결과·ZIP&rsquo;을 이용할 수 있습니다.</p>}
+      {job?.status === "FAILED" && (
+        <div className="space-y-1">
+          <p className="text-rose-700">{job.errorMessageSafe ?? "ZIP 준비에 실패했습니다."} <span className="text-slate-500">(코드 {job.errorCode}{job.targetVersion > 1 ? `, 만들던 버전 ${job.targetVersion}` : ""})</span></p>
+          {pkg && <p className="text-slate-600">이미 등록된 ZIP(버전 {pkg.version})은 그대로 내려받을 수 있습니다.</p>}
+          <button onClick={() => onAction("retry")} className="rounded border border-rose-300 bg-white px-2.5 py-1 text-rose-800 hover:bg-rose-50">ZIP만 다시 시도 (분석 재계산 없음)</button>
+        </div>
+      )}
+      {!job && !pkg && (
+        <div className="space-y-1">
+          <p className="text-amber-800">이 분석 결과에 연결된 ZIP이 아직 없습니다. 저장된 결과로 ZIP을 만들 수 있습니다(분석은 다시 계산하지 않음).</p>
+          <button onClick={() => onAction("rebuild")} className="rounded border border-slate-300 bg-white px-2.5 py-1 hover:bg-slate-100">ZIP 만들기</button>
+        </div>
+      )}
+      {pkg && (
+        <div className="space-y-1">
+          <p>
+            {pkg.filename} · {(pkg.byteSize / 1024 / 1024).toFixed(1)} MB · SHA-256 {short(pkg.sha256)}… · 등록 {dt(pkg.createdAt)} · 패키지 버전 {pkg.version} · 형식 {pkg.packageFormatVersion ?? "첫 배포본"} · 해석 문구 {pkg.interpretationTextVersion ?? "interpretation-1(첫 배포본)"} · 실행 {short(runId)}
+          </p>
+          {outdatedText && <p className="text-amber-800">이 ZIP의 해석 문구가 현재 버전({currentTextVersion})보다 이전입니다. 저장된 결과로 새 버전을 만들 수 있으며 이전 버전·해시는 보존됩니다.</p>}
+          <div className="flex flex-wrap items-center gap-2">
+            {info.packageVersions.length > 1 && (
+              <select aria-label="ZIP 버전" defaultValue="" onChange={(e) => e.target.value && onDownload(Number(e.target.value))} disabled={dlBusy} className="rounded border border-slate-300 bg-white px-2 py-1">
+                <option value="">이전 버전 내려받기…</option>
+                {info.packageVersions.slice(1).map((v) => <option key={v.version} value={v.version}>버전 {v.version} · {dt(v.createdAt)} · {short(v.sha256)}…</option>)}
+              </select>
+            )}
+            {!job?.active && <button onClick={() => onAction("rebuild")} className="rounded border border-slate-300 bg-white px-2.5 py-1 hover:bg-slate-100">저장된 결과로 새 ZIP 버전 만들기</button>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** ZIPs of OTHER runs of this scope, each labelled with its own run, time and freshness — never offered as the ZIP of the displayed result. */
+function PreviousResults({ items, onDownload, dlBusy }: { items: PreviousResult[]; onDownload: (runId: string, version?: number) => void; dlBusy: boolean }) {
+  return (
+    <details className="rounded-lg border border-slate-200 p-3 text-xs">
+      <summary className="cursor-pointer font-medium">이전 검증 결과·ZIP ({items.length}건 — 현재 표시 중인 결과가 아님)</summary>
+      <ul className="mt-2 space-y-2">
+        {items.map((r) => (
+          <li key={r.runId} className="rounded border border-slate-200 p-2">
+            <div>
+              이전 실행 <b>{short(r.runId)}</b> · {dt(r.startedAt)} · 엔진 v{r.algorithmVersion} · {r.current ? "현재 자료·설정과 일치(최신 실행이 아님)" : "최신 자료·설정과 일치하지 않음 — 내려받기 불가"}
+            </div>
+            <ul className="mt-1 space-y-1">
+              {r.packages.map((p) => (
+                <li key={p.version} className="flex flex-wrap items-center gap-2">
+                  <span>버전 {p.version} · {p.filename} · {(p.byteSize / 1024 / 1024).toFixed(1)} MB · SHA-256 {short(p.sha256)}… · 등록 {dt(p.createdAt)}</span>
+                  <button disabled={dlBusy || !r.current} onClick={() => onDownload(r.runId, p.version)} className="rounded border border-slate-300 px-2 py-0.5 hover:bg-slate-100 disabled:opacity-50">이전 실행의 ZIP 내려받기</button>
+                </li>
+              ))}
+            </ul>
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
+}
+
 function Toggle({ label, v, set }: { label: string; v: boolean; set: (b: boolean) => void }) {
   return (
     <label className="flex items-center gap-1.5 cursor-pointer">
@@ -399,6 +516,7 @@ function RunHeader({ bundle, runStatus }: { bundle: ResultBundle; runStatus: str
         <Item k="자료 지문(참여자 응답)" v={`${short(m.fingerprints.participantsHash)}…`} />
         <Item k="행렬 지문 / 설정 지문" v={`${short(m.fingerprints.numericDataHash)}… / ${short(m.fingerprints.parameterHash)}…`} />
         <Item k="실행 ID" v={short(m.runId)} />
+        <Item k="버전 구분" v={`분석 엔진 v${m.algorithmVersion} · 해석 문구 ${bundle.interpretation?.textVersion ?? "—"}${bundle.interpretation?.storedTextVersion && bundle.interpretation.storedTextVersion !== bundle.interpretation.textVersion ? ` (저장 시 ${bundle.interpretation.storedTextVersion})` : ""}`} />
       </dl>
       <p className="text-xs text-slate-600 leading-relaxed">
         <b>분석 설정</b>: 2차원 비계량(서열) SMACOF, 동점 처리 {s.mds.tieHandling}, 입력 비유사성 δ = 1 − S/N (대각선 0, 가중치 모두 1), 디스패리티 정규화 Σd̂² = n(n−1)/2, 시작 {s.mds.nInit}회(seed {s.mds.randomSeed}에서 파생) · 시작당 최대 {s.mds.maxIter}회 · 허용오차 {s.mds.eps} → 선택한 해를 {s.mds.strictEps}로 재검증. 여러 시작 중 최저 해를 고른 것이며 전역 최적을 증명하지 않습니다. 1~5차원은 보조 비교이며 3차원 이상 결과를 2차원 지도로 쓰지 않았습니다. 이 설정값은 이번 계산의 설정이며 문헌상의 적합도 합격선이 아닙니다.
@@ -418,6 +536,7 @@ function Item({ k, v }: { k: string; v: string }) {
 function ConvergenceVsFit({ bundle }: { bundle: ResultBundle }) {
   const conv = bundle.metrics.filter((m) => m.group === "convergence");
   const fit = bundle.metrics.filter((m) => m.group === "fit" && ["stress1", "rsq", "raw_stress"].includes(m.id));
+  const guide = bundle.metrics.find((m) => m.id === "fit_interpretation");
   const p = bundle.analysis.primary;
   return (
     <section className="grid gap-4 lg:grid-cols-2">
@@ -427,9 +546,19 @@ function ConvergenceVsFit({ bundle }: { bundle: ResultBundle }) {
         <p className="text-[11px] text-slate-500">종료 사유: 주 실행 {p.selected?.main.reason ?? "—"} · 엄격 계속 {p.selected?.strict.reason ?? "—"} · 최종 변화량 {p.selected ? `${p.selected.main.finalRelativeChange?.toExponential(2)} / ${p.selected.strict.finalRelativeChange?.toExponential(2)}` : "—"} (분모: 직전 반복의 raw stress)</p>
       </div>
       <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-2">
-        <h3 className="font-semibold">적합도 평가 <span className="text-xs font-normal text-slate-500">(자료와 2차원 모델의 관계 · 수렴과 별개)</span></h3>
+        <h3 className="font-semibold">2차원 표현의 적합도 해석 <span className="text-xs font-normal text-slate-500">(자료와 2차원 모델의 관계 · 수렴과 별개)</span></h3>
+        {guide && <p className="rounded border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs leading-relaxed text-slate-700">{guide.definitionKo}</p>}
+        {guide && (
+          <ul className="grid gap-1 text-[11px] text-slate-600 sm:grid-cols-2" aria-label="평가 대상 구분">
+            <li><b>수렴</b> — 알고리즘이 국소 최소에 도달했는가 (왼쪽 칸)</li>
+            <li><b>2차원 표현의 적합도</b> — Stress-1·RSQ·잔차 (아래)</li>
+            <li><b>분류 안정성</b> — 반복 분할 신뢰도 (아래 지표 참조)</li>
+            <li><b>내용 타당성</b> — 군집·명칭과 문항 내용의 대응 (연구자 검토)</li>
+          </ul>
+        )}
         {fit.map((m) => <VerdictBlock key={m.id} m={m} compact />)}
-        <p className="text-[11px] text-slate-500">미충족·미확정 항목을 하나의 &lsquo;양호&rsquo;로 묶지 않았습니다. 지표별 기준·출처·한계는 아래 &lsquo;지표별 기준·출처&rsquo;에 있습니다.</p>
+        {guide?.verdicts.filter((v) => v.aspectKo === "내용 타당성").map((v, i) => <p key={i} className="text-[11px] text-slate-500"><b>{v.aspectKo}</b> {v.textKo}</p>)}
+        <p className="text-[11px] text-slate-500">긍정적 해석은 근거가 뒷받침하는 범위에서만 제시하며 ‘매우 적합’·‘타당성 입증’ 같은 판정을 하지 않습니다. 지표별 기준·출처·한계는 아래 &lsquo;지표별 기준·출처&rsquo;에 있습니다.</p>
       </div>
     </section>
   );

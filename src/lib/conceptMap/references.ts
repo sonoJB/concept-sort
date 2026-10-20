@@ -8,6 +8,7 @@ export type ReferenceKey =
   | "mair2016"
   | "henderikx2023"
   | "rosas2012"
+  | "rocliffe2023"
   | "rousseeuw1987"
   | "trochim1989"
   | "trochim1994"
@@ -80,8 +81,18 @@ export const REFERENCES: Record<ReferenceKey, Reference> = {
     doi: "10.1016/j.evalprogplan.2011.10.003",
     url: "https://doi.org/10.1016/j.evalprogplan.2011.10.003",
     access: "ABSTRACT_ONLY",
-    accessNoteKo: "원문 접근이 차단되어 PubMed 초록만 확인함(초록에는 Stress 수치가 없음). 0.205–0.365 범위가 이 논문의 어느 표·쪽에 있는지는 원문에서 확인하지 못함.",
+    accessNoteKo: "원문 접근이 차단되어(출판사 403) 초록 수준만 확인함. 69개 연구의 Stress 평균 0.28·관찰 범위 0.17–0.34(§3.5)는 2차 문헌(Rocliffe et al., 2023)이 이 논문에 귀속한 내용이며 표준편차 0.04는 연구자가 제공한 값으로 2차 문헌에서도 확인하지 못함. 원문 대조 필요. 다른 2차 문헌(Henderikx & Stoffers, 2023)은 0.205–0.365를 이 논문의 범위로 제시해 서로 다름.",
     locations: [],
+  },
+  rocliffe2023: {
+    key: "rocliffe2023",
+    kind: "journal",
+    apa: "Rocliffe, P., O’Keeffe, B. T., Sherwin, I., Mannix-McNamara, P., & MacDonncha, C. (2023). School-based physical education, physical activity and sports provision: A concept mapping framework for evaluation. *PLOS ONE, 18*(6), Article e0287505. https://doi.org/10.1371/journal.pone.0287505",
+    doi: "10.1371/journal.pone.0287505",
+    url: "https://doi.org/10.1371/journal.pone.0287505",
+    access: "FULL_TEXT_READ",
+    accessNoteKo: "공개 전문을 직접 열람함. 2차 문헌으로만 사용: Rosas & Kane(2012)이 69개 연구에서 ‘평균 Stress 0.17–0.34’를 보고했다고 서술함(‘optimum’이라는 표현과 이 범위를 합격 기준처럼 쓴 해석은 채택하지 않음).",
+    locations: [{ claimKo: "Rosas & Kane(2012)의 Stress 범위 0.17–0.34 인용(자신의 Stress 0.266을 이 범위와 비교)", where: "Results > Sorting/cluster map" }],
   },
   rousseeuw1987: {
     key: "rousseeuw1987",

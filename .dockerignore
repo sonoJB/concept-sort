@@ -1,0 +1,14 @@
+node_modules
+.next
+.git
+.github
+.env
+.env.*
+*.db
+*.db-journal
+tsconfig.tsbuildinfo
+**/__pycache__
+coverage
+analysis-prototype
+docs/mds-reanalysis/evidence-local
+src/generated

@@ -35,6 +35,7 @@ export const RESTORE_ORDER = [
   "AnalysisRun",
   "AnalysisRunDimension",
   "AnalysisPackage",
+  "AnalysisPackageJob",
   "AnalysisInterpretation",
   "AnalysisClusterLabel",
   "AnalysisExecutionLock",

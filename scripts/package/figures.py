@@ -15,7 +15,7 @@ from common import CLUSTER_COLORS, CLUSTER_MARKERS, GRAY_LEVELS, HATCHES, RING_I
 
 plt.rcParams.update(
     {
-        "font.family": ["Malgun Gothic", "Noto Sans KR", "DejaVu Sans"],
+        "font.family": ["Malgun Gothic", "Noto Sans CJK KR", "Noto Sans CJK JP", "Noto Sans KR", "DejaVu Sans"],
         "axes.unicode_minus": False,
         "svg.fonttype": "path",
         "svg.hashsalt": "concept-sort-package-v2",

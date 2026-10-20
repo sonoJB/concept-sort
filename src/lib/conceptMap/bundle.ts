@@ -4,7 +4,7 @@ import { compareCountries, type CountryComparison } from "./compare";
 import type { ScopeAnalysis } from "./analyze";
 import { SCOPE_PROPOSALS } from "./proposals";
 import type { ScopeProposal } from "./proposals/types";
-import { evaluateMetrics, type MetricRecord } from "./metrics";
+import { INTERPRETATION_TEXT_VERSION, evaluateMetrics, type MetricRecord } from "./metrics";
 import { REFERENCES, type Reference } from "./references";
 
 export type BundleRunMeta = {
@@ -56,6 +56,8 @@ export type ResultBundle = {
   /** every metric with formula / value / reference kinds / verdict / sources / limits, evaluated at run time */
   metrics: MetricRecord[];
   references: Reference[];
+  /** wording of the interpretation layer (metric criteria / verdicts / references); see bundleView.ts */
+  interpretation?: { textVersion: string; storedTextVersion?: string };
 };
 
 export function attachNaming(scope: "KR" | "JP" | "ALL", analysis: ScopeAnalysis): NamingAttachment {
@@ -113,5 +115,6 @@ export function buildResultBundle(args: { run: BundleRunMeta; inputSnapshot: Inp
     comparison,
     metrics: evaluateMetrics(analysis, recommendedK),
     references: Object.values(REFERENCES),
+    interpretation: { textVersion: INTERPRETATION_TEXT_VERSION },
   };
 }

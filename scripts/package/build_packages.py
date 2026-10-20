@@ -29,6 +29,7 @@ from scopedata import ScopeData  # noqa: E402
 from tables import build_tables, kst, write_csvs, write_xlsx  # noqa: E402
 
 KST = timezone(timedelta(hours=9))
+PKG_INFO = {"packageVersion": 1, "packageFormatVersion": "package-format-3"}
 
 
 def adjusted_rand(a, b):
@@ -67,7 +68,10 @@ def main():
     ap.add_argument("--evidence", required=True)
     ap.add_argument("--scopes", nargs="*", default=["KR", "JP", "ALL"])
     ap.add_argument("--skip-repro", action="store_true")
+    ap.add_argument("--package-version", type=int, default=1, help="version of the package FOR THIS RUN (1 = first); versions > 1 get a _pkgN file name suffix")
+    ap.add_argument("--package-format", default="package-format-3", help="layout / document version of the package (distinct from the analysis engine version)")
     args = ap.parse_args()
+    PKG_INFO.update({"packageVersion": args.package_version, "packageFormatVersion": args.package_format})
 
     raw = load_json(args.raw)
     bundles = {s: load_json(os.path.join(args.bundles, f"bundle_{s}.json"))["bundle"] for s in ["KR", "JP", "ALL"] if os.path.exists(os.path.join(args.bundles, f"bundle_{s}.json"))}
@@ -84,7 +88,7 @@ def build_one(scope, bundles, raw, args):
     if not (vr["S_equals_recount_from_participant_records"] and vr["participants_hash_match"]):
         raise SystemExit(f"[{scope}] raw export does not reproduce the bundle's data fingerprint: {vr}")
     snap = datetime.fromisoformat(b["meta"]["dataSnapshotAt"].replace("Z", "+00:00")).astimezone(KST).strftime("%Y%m%d")
-    base = f"{SCOPE_NAME_KO[scope]}_개념도_전체분석자료_{snap}_v{b['meta']['algorithmVersion']}"
+    base = f"{SCOPE_NAME_KO[scope]}_개념도_전체분석자료_{snap}_v{b['meta']['algorithmVersion']}" + (f"_pkg{args.package_version}" if args.package_version > 1 else "")
     root = os.path.join(args.out, base)
     if os.path.exists(root):
         raise SystemExit(f"{root} exists — refusing to overwrite")
@@ -304,7 +308,7 @@ def build_one(scope, bundles, raw, args):
     for rel in sorted(files):
         full = os.path.join(root, rel)
         mf.append({"path": rel, "sha256": sha256_file(full), "bytes": os.path.getsize(full), "description": files[rel]})
-    manifest = {"manifestVersion": 1, "runId": b["meta"]["runId"], "scope": scope, "zipFilename": base + ".zip", "fingerprints": {"participantsHash": b["meta"]["fingerprints"]["participantsHash"], "numericDataHash": b["meta"]["fingerprints"]["numericDataHash"], "parameterHash": b["meta"]["fingerprints"]["parameterHash"]}, "algorithmVersion": b["meta"]["algorithmVersion"], "engineSourceCommitSha": b["meta"]["engineSourceCommitSha"], "files": mf}
+    manifest = {"manifestVersion": 1, "runId": b["meta"]["runId"], "scope": scope, "zipFilename": base + ".zip", "fingerprints": {"participantsHash": b["meta"]["fingerprints"]["participantsHash"], "numericDataHash": b["meta"]["fingerprints"]["numericDataHash"], "parameterHash": b["meta"]["fingerprints"]["parameterHash"]}, "algorithmVersion": b["meta"]["algorithmVersion"], "engineSourceCommitSha": b["meta"]["engineSourceCommitSha"], "packageVersion": args.package_version, "packageFormatVersion": args.package_format, "interpretationTextVersion": (b.get("interpretation") or {}).get("textVersion"), "storedInterpretationTextVersion": (b.get("interpretation") or {}).get("storedTextVersion"), "builder": {"script": "scripts/package/build_packages.py", "python": platform.python_version(), "numpy": np.__version__, "platform": platform.system()}, "files": mf}
     write_text(os.path.join(root, "manifest.json"), json.dumps(manifest, ensure_ascii=False, indent=1))
 
     zpath = os.path.join(args.out, base + ".zip")
@@ -379,7 +383,9 @@ def readme(d, base):
 ================================================
 범위: {SCOPE_LABEL_KO[d.scope]}   유효 N: {d.N} (한국 {m['nKr']} · 일본 {m['nJp']})   진술문: {d.n}개   조사 단계: 본조사(MAIN)만
 자료 기준 시점: {m['dataSnapshotAt']} (UTC)    분석 실행: {m['computedAt']} (UTC)
-분석 버전: {m['algorithmVersion']}   소스 커밋: {m['engineSourceCommitSha']}   실행 ID: {m['runId']}
+분석 엔진 버전: {m['algorithmVersion']}   소스 커밋: {m['engineSourceCommitSha']}   실행 ID: {m['runId']}
+패키지 버전: {PKG_INFO['packageVersion']}   패키지 형식: {PKG_INFO['packageFormatVersion']}   해석 문구 버전: {(d.b.get('interpretation') or {}).get('textVersion', '—')}
+(분석 엔진 버전은 계산 방법의 버전, 패키지 형식·해석 문구 버전은 문서·설명의 버전이며 서로 독립입니다. 같은 실행의 이전 패키지 버전은 지워지지 않고 남아 있습니다.)
 자료 지문(참여자 응답 sha256): {m['fingerprints']['participantsHash']}
 
 이 ZIP은 다른 두 범위의 ZIP 없이 단독으로 해당 범위의 결과를 이해하고 재현할 수 있도록 만들었습니다.

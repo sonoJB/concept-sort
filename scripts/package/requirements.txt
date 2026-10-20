@@ -1,0 +1,7 @@
+# Python dependencies of the package builder (scripts/package/build_packages.py), pinned to the versions the packages
+# were verified with. The server image installs them into a virtual environment (see Dockerfile).
+numpy==2.4.2
+matplotlib==3.10.8
+XlsxWriter==3.2.9
+python-docx==1.2.0
+PyMuPDF==1.28.2

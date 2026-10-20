@@ -48,8 +48,8 @@ export function restoreFromJson(opts: { jsonDir: string; out: string }) {
     for (const table of RESTORE_ORDER) {
       const file = path.join(jsonDir, `${table}.json`);
       if (!fs.existsSync(file)) {
-        // bundles made before AnalysisPackage existed have no export for it: that table was simply empty then
-        if (table === "AnalysisPackage") {
+        // bundles made before AnalysisPackage / AnalysisPackageJob existed have no export for them: that table was simply empty then
+        if (table === "AnalysisPackage" || table === "AnalysisPackageJob") {
           inserted[table] = 0;
           continue;
         }
