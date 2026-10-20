@@ -266,7 +266,7 @@ export function evaluateMetrics(a: ScopeAnalysis, recommendedK: number | null): 
     group: "fit",
     evaluates: "2차원 표현의 적합도",
     nameKo: "RSQ",
-    definitionKo: "정규화된 디스패리티 d̂와 2차원 배치 거리 d 사이 피어슨 상관의 제곱(MultBiplotR의 MDS RSQ 정의). 거리가 (순서 변환된) 비유사성을 선형으로 얼마나 재현하는지를 보는 값이며, 비유사성 δ와 거리의 회귀 R²나 ALSCAL·SPSS의 RSQ와는 정의가 다름.",
+    definitionKo: "정규화된 디스패리티 d̂와 2차원 배치 거리 d 사이 피어슨 상관의 제곱(MultBiplotR의 MDS RSQ 정의). 거리가 (순서 변환된) 비유사성을 선형으로 얼마나 재현하는지를 보는 값이다. 비유사성 δ와 거리의 회귀 R²가 아니며, 다른 소프트웨어(예: SPSS ALSCAL)의 RSQ와 같은 정의인지는 확인하지 않았다.",
     formula: "RSQ = [ corr(d̂_ij, d_ij) ]²  (모든 i<j 쌍)",
     value: p.rsq,
     valueDisplay: f(p.rsq, 4),
@@ -276,7 +276,7 @@ export function evaluateMetrics(a: ScopeAnalysis, recommendedK: number | null): 
     ],
     verdicts: [{ aspectKo: "판정", textKo: "참고 지표 · 양호 기준 미확정", tone: "unconfirmed" }],
     sourceKeys: ["multbiplotr"],
-    limitsKo: ["정의상 범위(0–1)를 양호 기준으로 사용하지 않음.", "다른 소프트웨어·정의(예: SPSS ALSCAL)의 RSQ 해석 기준(예: 0.60)은 이 정의와 같지 않아 적용하지 않음.", "d̂와 d 사이 상관의 제곱이며 참여자 응답 전체의 분산 설명 비율이 아님 — 그렇게 해석하지 않음.", "상관은 모든 쌍을 동등하게 취급한 값이며 일부 구조(예: 큰 군집 간 분리)에 지배될 수 있음."],
+    limitsKo: ["정의상 범위(0–1)를 양호 기준으로 사용하지 않음.", "참고 논문들이 인용한 RSQ ≥ .60 기준(Kruskal & Wish, 1978 인용)이 이 분석의 RSQ와 같은 정의에 대한 기준인지 확인되지 않아 적용하지 않음.", "d̂와 d 사이 상관의 제곱이며 참여자 응답 전체의 분산 설명 비율이 아님 — 그렇게 해석하지 않음.", "상관은 모든 쌍을 동등하게 취급한 값이며 일부 구조(예: 큰 군집 간 분리)에 지배될 수 있음."],
   });
 
   // 5. dimension scree -------------------------------------------------------------------------

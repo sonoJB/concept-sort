@@ -126,7 +126,7 @@ def bullets(doc, items, size=10):
         set_font(r, size)
 
 
-def table(doc, caption, header, rows, widths=None, size=8.5, note=None, align_first_left=True):
+def table(doc, caption, header, rows, widths=None, size=8.5, note=None, left_cols=(0,), keep=True):
     cp = doc.add_paragraph()
     cp.paragraph_format.keep_with_next = True
     cp.paragraph_format.space_before = Pt(8)
@@ -162,8 +162,14 @@ def table(doc, caption, header, rows, widths=None, size=8.5, note=None, align_fi
             para.paragraph_format.space_after = Pt(0)
             r = para.add_run(str(v))
             set_font(r, size)
-            if not (j == 0 and align_first_left) and len(str(v)) < 22:
+            if j not in left_cols and len(str(v)) < 22:
                 para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    if keep and len(rows) <= 14:
+        # a small table is never split across pages: every row is kept with the next one (the last row is not)
+        for row in t.rows[:-1]:
+            for cell in row.cells:
+                for para in cell.paragraphs:
+                    para.paragraph_format.keep_with_next = True
     if widths:
         t.autofit = False
         for row in t.rows:
@@ -301,7 +307,7 @@ def build(D, C, figs, limits, out_path, ids):
         "Stress는 문항 수와 자료 특성에 의존하고 Kruskal(1964)의 구술 척도(20% poor, 10% fair 등; Kruskal, 1964, as cited in Mair et al., 2022)가 기계적으로 적용되어 왔다는 점이 문제로 지적되므로(Mair et al., 2022, §3.2), "
         "고정 임계값만으로 개념도 분석의 적합 여부를 판정하지 않았다. 선행 개념도 연구 69편의 Stress가 평균 .28, 표준편차 .04, 관찰 범위 .17–.34로 보고되었다는 서술(Rosas & Kane, 2012, §3.5에 귀속)을 비교 참고로만 사용하였으며, "
         "이는 관찰된 분포일 뿐 합격 기준이 아니고 선행 연구와 본 분석의 Stress 산식·정규화·동점 처리의 동일성은 확인되지 않았다.⟦확인 필요 3: Rosas & Kane(2012) 원문 대조⟧ "
-        "참고 연구들에서 사용된 RSQ ≥ .60 기준은 다른 소프트웨어의 정의에 근거한 것으로 이 분석의 RSQ에 적용하지 않았다.",
+        "참고 연구들이 사용한 RSQ ≥ .60 기준(Kruskal & Wish, 1978 인용)이 이 분석의 RSQ와 같은 정의에 대한 기준인지 확인되지 않아 적용하지 않았다.",
     )
     P(
         doc,
@@ -332,7 +338,7 @@ def build(D, C, figs, limits, out_path, ids):
     P(
         doc,
         f"분류 안정성은 참여자를 무작위로 반분하여 각 반쪽의 S에서 문항 쌍 {S['KR']['matrix']['pairs']:,}개의 동시분류 빈도 사이의 상관을 구하는 반복 분할 방식으로 검토하였다(Trochim et al., 1994의 분할 신뢰도 절차를 참고한 이 연구의 설계). "
-        f"반복 {sp['reps']:,}회, 시드 {sp['seed']}를 사전에 고정하였고 한국·전체는 각 반쪽에 한국 15명·일본 19명을 배정하는 국가별 층화(전체) 또는 단순 무작위 반분(국가별)으로 구성하였다. "
+        f"반복 {sp['reps']:,}회, 시드 {sp['seed']}를 사전에 고정하였다. 한국과 일본은 각 범위 안에서 단순 무작위로 반분하고, 전체는 각 반쪽에 한국 15명·일본 19명을 배정하는 국가별 층화 반분으로 구성하였다. "
         "원상관과 Spearman–Brown 보정값 2r/(1+r)을 모두 보고하며, 이는 행렬 신뢰도이고 지도 신뢰도가 아니다. 이 지표의 양호 기준은 원문에서 확인하지 못해 판정하지 않았다(Trochim et al., 1994도 최소 허용값을 제시하지 않았다).",
     )
 
@@ -437,14 +443,26 @@ def build(D, C, figs, limits, out_path, ids):
             rows.append([f"{r['k']}{tag}", r["min_size"], r["small"], f_apa(r["sil_map"], 3), f_apa(r["sil_delta"], 3), f_apa(r["between"], 3), f"{r['height_to_k']:.3f}" if r["height_to_k"] is not None else "—"])
             C.rows.append({"key": f"table{tno}:k{r['k']}", "printed": " | ".join(str(x) for x in rows[-1][1:]), "value": r["sil_map"], "source": "analysis.solutions / ward.merges"})
         table(doc, f"<표 {tno}> {NAME[sc]}: 군집 수 비교 (k = 2–10)", ["군집 수 k", "최소 군집 크기", "2문항 이하 군집 수", "지도 실루엣 평균", "δ 실루엣 평균", "군집 간 제곱합 비율", "k+1→k 병합 높이"], rows, widths=[3.0, 2.2, 2.4, 2.3, 2.3, 2.4, 2.4], size=8, note="주. 실루엣과 군집 간 제곱합 비율은 참고 정보이며 양호 기준은 확인되지 않았다. 병합 높이 = √(2·n_a·n_b/(n_a+n_b))·‖중심 차이‖(Ward, 2차원 좌표).")
+    def hk(sc, k):
+        return next(r["height_to_k"] for r in S[sc]["k_table"] if r["k"] == k)
+
+    def merged_txt(sc):
+        out = []
+        for grp in S[sc]["merged_at_k_minus_1"]:
+            out.append(" 군집, ".join(f"‘{c['name']}’" for c in grp[:-1]) + (" 군집과 " if len(grp) == 2 else " 군집, ") + f"‘{grp[-1]['name']}’ 군집")
+        return "; ".join(out)
+
     kr_r = S["KR"]
+    krk = kr_r["rec_k"]
+    smin = min(r["sil_map"] for r in kr_r["k_table"] if r["k"] >= 4)
+    smax = max(r["sil_map"] for r in kr_r["k_table"] if r["k"] >= 4)
     P(
         doc,
-        f"한국은 k = {kr_r['rec_k']}를 추천안으로 하였다. 병합 높이는 k = 6에서 5로 합칠 때 {kr_r['k_table'][4]['height_to_k']:.3f}(직전 단계 {kr_r['k_table'][5]['height_to_k']:.3f})로, 하나의 뚜렷한 급증 지점은 없었고 지도 실루엣 평균은 k = 4–10에서 {f_apa(min(r['sil_map'] for r in kr_r['k_table'] if r['k'] >= 4), 3)}–{f_apa(max(r['sil_map'] for r in kr_r['k_table'] if r['k'] >= 4), 3)}로 거의 평평했다. "
-        "군집 수는 병합 변화만으로 정해지지 않아 군집별 문항 내용의 구별성을 주된 근거로 삼았고, 5군집 해에서 하나로 합쳐지는 두 주제(익명·비대면 환경 관련 문항과 허위·왜곡 정보 관련 문항)가 6군집에서는 서로 구별되는 문항 내용을 가졌다. "
-        "일본과 전체는 k = 5를 추천안으로 하였다. 두 범위 모두 5→4로 합칠 때 병합 높이가 크게 증가하였고(일본 "
-        f"{S['JP']['k_table'][3]['height_to_k']:.3f}에서 {S['JP']['k_table'][2]['height_to_k']:.3f}, 전체 {S['ALL']['k_table'][3]['height_to_k']:.3f}에서 {S['ALL']['k_table'][2]['height_to_k']:.3f}) 4군집에서는 내용상 구별되는 두 주제가 합쳐졌다. "
-        "각 범위에서 한국은 k = 4, 5, 7, 일본과 전체는 k = 4, 6, 7을 비교 대안으로 검토하였다. 이 근거는 분석자의 판단을 돕는 정보이며 수학적으로 유일한 군집 수를 의미하지 않는다.",
+        f"한국의 추천안은 k = {krk}이었다. {krk}→{krk - 1} 병합 높이는 {n('kr_h_rec', hk('KR', krk - 1), '.3f', 'ward.merges')}(직전 {krk + 1}→{krk} 단계 {hk('KR', krk):.3f})로 하나의 뚜렷한 급증 지점은 없었고, 지도 실루엣 평균도 k = 4–10에서 {f_apa(smin, 3)}–{f_apa(smax, 3)}로 거의 평평했다. "
+        f"따라서 군집 수는 병합 변화만으로 정해지지 않아 군집별 문항 내용의 구별성을 주된 근거로 삼았다. {krk - 1}군집 해에서는 추천 {krk}군집 중 {merged_txt('KR')}이 하나로 합쳐지는데, 두 군집의 대표 문항 주제가 서로 구별되어 {krk}군집을 추천안으로 하였다. "
+        f"일본과 전체의 추천안은 k = 5였다. 두 범위 모두 5→4 병합 높이가 직전 단계보다 크게 증가하였고(일본 {hk('JP', 5):.3f}에서 {hk('JP', 4):.3f}, +{(hk('JP', 4) / hk('JP', 5) - 1) * 100:.0f}%; 전체 {hk('ALL', 5):.3f}에서 {hk('ALL', 4):.3f}, +{(hk('ALL', 4) / hk('ALL', 5) - 1) * 100:.0f}%), "
+        f"4군집 해에서는 일본에서 {merged_txt('JP')}이, 전체에서 {merged_txt('ALL')}이 하나로 합쳐졌다. "
+        "비교 대안으로 한국은 k = 4, 5, 7, 일본과 전체는 k = 4, 6, 7을 검토하였다. 이 근거는 분석자의 판단을 돕는 정보이며 수학적으로 유일한 군집 수를 의미하지 않는다.",
     )
     bnd_cache = {}
     for tno, sc in zip((9, 10, 11), SCOPES):
@@ -456,7 +474,7 @@ def build(D, C, figs, limits, out_path, ids):
             bi = [f"S{it:02d}(→{bnd[it]['nearest_other']})" for it in c["members"] if it in bnd]
             rows.append([c["cluster"], c["name"], len(c["members"]), ", ".join(f"S{m:02d}" for m in c["members"]), ", ".join(bi) if bi else "—"])
             C.rows.append({"key": f"table{tno}:c{c['cluster']}", "printed": f"{c['name']} | {len(c['members'])} | {','.join(str(m) for m in c['members'])}", "value": len(c["members"]), "source": "naming.proposal.solution"})
-        table(doc, f"<표 {tno}> {NAME[sc]}: 추천 {b['rec_k']}군집(연구자 확정 전)과 포함 문항", ["군집", "추천 군집명(연구자 확정 전)", "문항 수", "포함 문항 번호", "경계 문항(→가장 가까운 다른 군집)"], rows, widths=[1.3, 5.2, 1.4, 5.6, 3.3], size=8, note="주. 경계 문항 = 지도 실루엣 < .1인 문항(이 연구의 탐색적 검토 규칙이며 문항 제외·재배정 기준이 아님). 문항 원문은 부록 <표 A1>에 있다. 군집명은 문항 내용에 근거한 제안이며 인과를 단정하는 표현으로 해석하지 않는다.")
+        table(doc, f"<표 {tno}> {NAME[sc]}: 추천 {b['rec_k']}군집(연구자 확정 전)과 포함 문항", ["군집", "추천 군집명(연구자 확정 전)", "문항 수", "포함 문항 번호", "경계 문항(→가장 가까운 다른 군집)"], rows, widths=[1.3, 5.2, 1.4, 5.6, 3.3], size=8, left_cols=(1, 3, 4), note="주. 경계 문항 = 지도 실루엣 < .1인 문항(이 연구의 탐색적 검토 규칙이며 문항 제외·재배정 기준이 아님). 문항 원문은 부록 <표 A1>에 있다. 군집명은 문항 내용에 근거한 제안이며 인과를 단정하는 표현으로 해석하지 않는다.")
     P(
         doc,
         f"세 범위 모두 47개 문항이 중복·누락 없이 하나의 군집에만 포함되었다(한국 {sum(len(c['members']) for c in S['KR']['clusters'])}, 일본 {sum(len(c['members']) for c in S['JP']['clusters'])}, 전체 {sum(len(c['members']) for c in S['ALL']['clusters'])}문항). "
@@ -489,18 +507,20 @@ def build(D, C, figs, limits, out_path, ids):
     # ---- references
     H(doc, "참고문헌", 1)
     refs = [
-        "MultBiplotR package authors. (n.d.). MDS: Multidimensional scaling [R package documentation]. https://search.r-project.org/CRAN/refmans/MultBiplotR/html/MDS.html",
-        "Mair, P., Borg, I., & Rusch, T. (2016). Goodness-of-fit assessment in multidimensional scaling and unfolding. Multivariate Behavioral Research, 51(6), 772–789. https://doi.org/10.1080/00273171.2016.1235966",
-        "Mair, P., Groenen, P. J. F., & de Leeuw, J. (2022). More on multidimensional scaling and unfolding in R: smacof version 2. Journal of Statistical Software, 102(10), 1–47. https://doi.org/10.18637/jss.v102.i10",
-        "Rosas, S. R., & Kane, M. (2012). Quality and rigor of the concept mapping methodology: A pooled study analysis. Evaluation and Program Planning, 35(2), 236–245. https://doi.org/10.1016/j.evalprogplan.2011.10.003",
-        "Trochim, W. M. K. (1989). An introduction to concept mapping for planning and evaluation. Evaluation and Program Planning, 12(1), 1–16. https://doi.org/10.1016/0149-7189(89)90016-5",
-        "Trochim, W. M. K., Cook, J. A., & Setze, R. J. (1994). Using concept mapping to develop a conceptual framework of staff’s views of a supported employment program for individuals with severe mental illness. Journal of Consulting and Clinical Psychology, 62(4), 766–775. https://doi.org/10.1037/0022-006X.62.4.766",
+        "MultBiplotR package authors. (n.d.). *MDS: Multidimensional scaling* [R package documentation]. https://search.r-project.org/CRAN/refmans/MultBiplotR/html/MDS.html",
+        "Mair, P., Borg, I., & Rusch, T. (2016). Goodness-of-fit assessment in multidimensional scaling and unfolding. *Multivariate Behavioral Research, 51*(6), 772–789. https://doi.org/10.1080/00273171.2016.1235966",
+        "Mair, P., Groenen, P. J. F., & de Leeuw, J. (2022). More on multidimensional scaling and unfolding in R: smacof version 2. *Journal of Statistical Software, 102*(10), 1–47. https://doi.org/10.18637/jss.v102.i10",
+        "Rosas, S. R., & Kane, M. (2012). Quality and rigor of the concept mapping methodology: A pooled study analysis. *Evaluation and Program Planning, 35*(2), 236–245. https://doi.org/10.1016/j.evalprogplan.2011.10.003",
+        "Trochim, W. M. K. (1989). An introduction to concept mapping for planning and evaluation. *Evaluation and Program Planning, 12*(1), 1–16. https://doi.org/10.1016/0149-7189(89)90016-5",
+        "Trochim, W. M. K., Cook, J. A., & Setze, R. J. (1994). Using concept mapping to develop a conceptual framework of staff’s views of a supported employment program for individuals with severe mental illness. *Journal of Consulting and Clinical Psychology, 62*(4), 766–775. https://doi.org/10.1037/0022-006X.62.4.766",
     ]
     for r in refs:
         p = doc.add_paragraph()
         p.paragraph_format.left_indent = Cm(0.8)
         p.paragraph_format.first_line_indent = Cm(-0.8)
-        set_font(p.add_run(r), 9)
+        for k, seg in enumerate(r.split("*")):
+            if seg:
+                set_font(p.add_run(seg), 9, italic=(k % 2 == 1))
     P(doc, "※ Rosas와 Kane(2012)은 원문을 직접 열람하지 못해 §3.5의 수치를 2차 문헌을 통해서만 확인하였다(검토표 참조). Kruskal(1964)은 Mair 등(2022)을 통한 재인용이다.", indent=False, size=8.5)
 
     # ---- appendix: statements
@@ -509,7 +529,7 @@ def build(D, C, figs, limits, out_path, ids):
     rows = [[no, txt] for no, txt in S["KR"]["statements_text"]]
     for no, txt in S["KR"]["statements_text"]:
         C.rows.append({"key": "tableA1:" + no, "printed": txt, "value": None, "source": "statements.textKo"})
-    table(doc, "<표 A1> 유사성 분류에 사용된 47개 진술문(한국어 원문)", ["번호", "진술문"], rows, widths=[1.6, 14.4], size=8.5, note="주. 일본어 참여자에게는 같은 번호의 일본어 대응문이 제시되었다.")
+    table(doc, "<표 A1> 유사성 분류에 사용된 47개 진술문(한국어 원문)", ["번호", "진술문"], rows, widths=[1.6, 14.4], size=8.5, left_cols=(0, 1), keep=False, note="주. 일본어 참여자에게는 같은 번호의 일본어 대응문이 제시되었다.")
     doc.save(out_path)
 
 

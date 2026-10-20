@@ -104,6 +104,14 @@ def scope_block(b):
     merges = a["ward"]["merges"]
     heights = {m["clustersAfter"]: m["height"] for m in merges}
     sig = [int(x) for x in prop["solution"]["signature"].split(",")]
+    lower = next((s for s in a["solutions"] if s["k"] == k - 1), None)
+    merged = []
+    if lower:
+        by_low = collections.defaultdict(set)
+        for g_hi, g_lo in zip(sig, lower["labels"]):
+            by_low[g_lo].add(g_hi)
+        merged = [sorted(v) for v in by_low.values() if len(v) > 1]
+    names_by_id = {c["cluster"]: c["nameKo"] for c in prop["solution"]["clusters"]}
     clusters = []
     for c in prop["solution"]["clusters"]:
         members = [i + 1 for i, g in enumerate(sig) if g == c["cluster"]]
@@ -144,6 +152,7 @@ def scope_block(b):
         "clusters": clusters,
         "alternatives": [x["k"] for x in prop["alternatives"]],
         "k_table": ksel,
+        "merged_at_k_minus_1": [[{"cluster": c, "name": names_by_id[c]} for c in grp] for grp in merged],
         "boundary": boundary_items(b),
         "cluster_sil": {c["cluster"]: c["meanSilhouette"] for c in sol["clusters"]},
         "split": {"design": sh["design"], "reps": sh["repetitions"], "seed": sh["seed"], "raw": sh["rawR"], "sb": sh["spearmanBrown"], "undefined": sh["undefinedCount"], "negative": sh["negativeRawCount"]},

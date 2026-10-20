@@ -13,9 +13,17 @@ from matplotlib.patches import Polygon
 
 from common import CLUSTER_COLORS, CLUSTER_MARKERS, GRAY_LEVELS, HATCHES, RING_INDEX, cluster_style, sid
 
+def _available_families():
+    """Korean-capable families that exist on this machine, in preference order (no 'font not found' noise for the others)."""
+    from matplotlib import font_manager
+
+    have = {f.name for f in font_manager.fontManager.ttflist}
+    return [f for f in ("Malgun Gothic", "Noto Sans CJK KR", "Noto Sans CJK JP", "Noto Sans KR") if f in have] + ["DejaVu Sans"]
+
+
 plt.rcParams.update(
     {
-        "font.family": ["Malgun Gothic", "Noto Sans CJK KR", "Noto Sans CJK JP", "Noto Sans KR", "DejaVu Sans"],
+        "font.family": _available_families(),
         "axes.unicode_minus": False,
         "svg.fonttype": "path",
         "svg.hashsalt": "concept-sort-package-v2",
