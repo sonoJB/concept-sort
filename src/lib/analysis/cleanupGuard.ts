@@ -50,7 +50,7 @@ export async function verifyCurrentResults(prisma: PrismaClient, projectId: stri
     const runs = await prisma.analysisRun.findMany({
       where: { projectId, scope, dataset: CLEANUP_DATASET, algorithmVersion: DEFAULT_ANALYSIS_PARAMETERS.algorithmVersion, executionStatus: "COMPLETED" },
       orderBy: { startedAt: "desc" },
-      include: { packages: true },
+      include: { packages: { orderBy: { packageVersion: "desc" } } }, // the CURRENT package version is the first
     });
     let chosen: (typeof runs)[number] | null = null;
     for (const r of runs) {

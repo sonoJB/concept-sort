@@ -15,7 +15,7 @@ CLAIM_SOURCE_ROWS = [
     ["임의 시작 여러 번과 국소 최소 문제", "mair2022", "p. 6, §3.1", "전문 열람"],
     ["Stress 경험칙(Kruskal 구술 척도)의 인용과 적용상 주의, 고정 기준값만으로 판단하지 말 것", "mair2016; mair2022; kruskal1964(2차 인용)", "Mair et al.(2016) 원고 pp. 3, 8–9; Mair et al.(2022) pp. 7–9", "전문 열람(Kruskal 원문은 미열람)"],
     ["동점이 많을수록·오차가 적을수록 서열 MDS Stress가 낮아짐", "mair2016", "원고 p. 9", "전문 열람"],
-    ["개념도 연구의 Stress 비교 범위 0.205–0.365", "henderikx2023 (Rosas & Kane, 2012 인용)", "Henderikx & Stoffers: 초록, §3.1, §4.1", "Rosas & Kane 원문의 위치는 미확인"],
+    ["선행 개념도 연구 69편의 Stress 분포: 평균 0.28, 표준편차 0.04, 관찰 범위 0.17–0.34 (비교 참고, 합격 기준 아님)", "rosas2012 (원문 미대조); rocliffe2023 (2차 문헌, 전문 열람)", "Rosas & Kane(2012) §3.5에 귀속; Rocliffe 외(2023) Results > Sorting/cluster map", "원문 접근 불가로 대조하지 못함. 평균·범위는 2차 문헌이 귀속, 표준편차 0.04는 연구자 제공값. Henderikx & Stoffers(2023)는 0.205–0.365를 같은 논문의 범위로 제시해 서로 다름 → 원문 확인 필요"],
     ["RSQ 정의(디스패리티와 거리의 제곱 상관)", "multbiplotr (공식 문서)", "MDS 도움말 Value절", "양호 기준은 확인되지 않음"],
     ["Ward 최소분산 군집", "ward1963 (원문 미열람)", "위치 미확인", "독립 구현(군집 내 제곱합 증가량 직접 계산)과의 일치로 검증"],
     ["실루엣", "rousseeuw1987 (초록·서지만 확인)", "위치 미확인", "정의는 독립 구현과의 일치로 검증; 해석 구간은 확인하지 못함"],
@@ -80,7 +80,12 @@ def blocks_for(d: ScopeData, figs, tables, verif):
     B.append(("table", ["차원", "Stress-1", "RSQ", "raw stress", "수렴 시작", "종료 사유(주/엄격)", "수치적 수렴"], [[f"{x['dimension']}D" + (" (지도)" if x["isPrimary"] else " (보조)"), fmt(x["stress1"], 4), fmt(x["rsq"], 3), fmt(x["rawStress"], 3), f"{x['convergedStarts']}/{x['startCount']}", f"{x['selected']['main']['reason']}/{x['selected']['strict']['reason']}" if x["selected"] else "", "예" if x["numericallyConverged"] else "아니오"] for x in a["dimensions"]]))
     B.append(("p", f"2차원 해: 주 실행 {sel['main']['reason']}({sel['main']['iterations']}회, 최종 변화량 {sel['main']['finalRelativeChange']:.2e}, ε={s['eps']}), 엄격 계속 {sel['strict']['reason']}({sel['strict']['iterations']}회, 최종 변화량 {sel['strict']['finalRelativeChange']:.2e}, ε={s['strictEps']}). 선택한 시작 #{sel['initIndex']}. {p['convergedStarts']}/{p['startCount']}개 시작이 수렴했고 최저 해의 1e-6 이내에 도달한 시작은 {p['startsWithinRelTol1e6OfBest']}개."))
     s1 = p["stress1"]
-    B.append(("p", f"적합도: Stress-1 = {s1:.4f}, RSQ = {p['rsq']:.3f}. Kruskal 구술 척도의 가장 낮은 구간(0.20, poor)보다 크며, 개념도 연구에서 보고된 비교 범위(0.205–0.365; Henderikx & Stoffers, 2023이 Rosas & Kane, 2012를 인용) 안에 있습니다. 범위 안에 있다는 사실이 타당성을 입증하지 않으며, 두 구분을 하나의 ‘양호’로 합치지 않았습니다. RSQ는 같은 정의의 양호 기준을 원문에서 확인하지 못해 ‘참고 지표·양호 기준 미확정’으로 둡니다. 3차원 Stress-1은 {fmt(next(x for x in a['dimensions'] if x['dimension'] == 3)['stress1'], 3)}로 2차원 표현에 상당한 왜곡이 있음을 시사합니다. 따라서 2차원 해석이 충분하다고 단정하지 않습니다."))
+    fi = next((x for x in d.b["metrics"] if x["id"] == "fit_interpretation"), None)
+    B.append(("h3", "2차원 표현의 적합도 해석 (3.2 계속)"))
+    if fi:
+        B.append(("p", fi["definitionKo"]))
+        B.append(("ul", ["수렴(알고리즘이 국소 최소에 도달했는가): " + next(v["textKo"] for v in fi["verdicts"] if v["aspectKo"] == "수렴"), "2차원 표현의 적합도(Stress-1·raw stress·RSQ·잔차): " + next(v["textKo"] for v in fi["verdicts"] if v["aspectKo"] == "2차원 표현의 적합도"), "분류 안정성(반복 분할 신뢰도): 3.5절과 지표표 참조 — 양호 기준 미확정", "내용 타당성(군집·명칭과 문항 내용의 대응): 이 보고서가 판정하지 않으며 연구자 검토 대상"]))
+    B.append(("p", f"Stress-1 = {s1:.4f}, RSQ = {p['rsq']:.3f}. Stress > 0.20이라는 사실만으로 개념도 분석을 실패·부적합으로 분류하지 않습니다(Kruskal 구술 척도의 기계적 적용 문제: Mair et al., 2022, §3.2). RSQ는 같은 정의의 양호 기준을 원문에서 확인하지 못해 ‘참고 지표·양호 기준 미확정’으로 둡니다. 3차원 Stress-1은 {fmt(next(x for x in a['dimensions'] if x['dimension'] == 3)['stress1'], 3)}이며, 차원이 늘면 Stress가 줄어드는 것은 일반 원칙이므로 이 감소만으로 2차원 표현의 부족을 결론짓지 않습니다."))
     if a["tieSensitivity"]:
         t = a["tieSensitivity"]
         B.append(("p", f"동점 처리 민감도(공식 결과 아님): primary(동점 분리 허용)로 같은 설정에서 계산하면 Stress-1 = {fmt(t['stress1'], 4)}, RSQ = {fmt(t['rsq'], 3)}. 동점이 많은 자료에서 동점 처리 선택이 Stress에 영향을 줍니다(Mair et al., 2016)."))
@@ -141,12 +146,12 @@ def blocks_for(d: ScopeData, figs, tables, verif):
     # ---------------------------------------------------------------------------------------- 5
     B.append(("h2", "5. 해석의 한계"))
     B.append(("ul", [
-        "수치적 수렴은 국소 최소에 도달했다는 사실이며 2차원 표현이 자료에 적합하다는 뜻이 아님. 2차원 Stress-1은 Kruskal 구술 척도의 poor 구간보다 크고 3차원 이상에서 크게 줄어듦.",
+        "수치적 수렴은 국소 최소에 도달했다는 사실이며 2차원 표현이 자료에 적합하다는 뜻이 아님. 적합도는 Stress-1·RSQ·잔차 진단·안정성·내용 해석을 함께 검토해야 하며 일반 MDS의 고정 임계값만으로 판정하지 않음.",
         "여러 시작 중 최저 해이며 전역 최적의 증명이 아님. 동점이 많아(서로 다른 비유사성 수준이 적음) 동점 처리 선택에 결과가 민감할 수 있음.",
         "지도의 방향(회전·반사)은 임의적이며 축에는 실질적 의미를 부여하지 않았음. 의미를 부여하려면 별도 내용 근거와 연구자 검토가 필요함.",
         "군집 수와 군집명은 문항 내용을 읽고 만든 자동 제안이며 참여자·전문가 합의, 표집·번역·내용 타당도 검토는 이 분석에 포함되지 않음. 방법론 근거가 있어도 이들이 자동으로 확보되지는 않음.",
         "실루엣·분할 신뢰도의 양호 기준은 원문에서 확인하지 못해 판정하지 않았음. RSQ의 양호 기준도 미확정.",
-        "Rosas & Kane(2012)의 0.205–0.365 범위는 2차 인용을 통해서만 확인했고 개념도 소프트웨어의 Stress 정의가 본 분석의 Stress-1과 같은지는 확인되지 않음.",
+        "Rosas & Kane(2012)의 Stress 분포(평균 0.28, 표준편차 0.04, 관찰 범위 0.17–0.34)는 원문을 직접 대조하지 못했고(2차 문헌 귀속, 표준편차는 연구자 제공값), 선행 연구의 Stress 산식·정규화·동점 처리가 본 분석의 Stress-1과 같은지도 확인되지 않음. 관찰 범위는 비교 참고이며 보편적 합격 기준이 아님.",
         "표본 크기(한국 30, 일본 38)는 작고, 한국·일본의 지도 비교는 정렬 절차 없이 해석할 수 없음.",
     ]))
     B.append(("h2", "6. 참고문헌 (APA 7판)과 열람 상태"))
@@ -238,10 +243,64 @@ def render_html(blocks):
     return "<html><body>" + "\n".join(H) + "</body></html>"
 
 
+def _strings(o):
+    if isinstance(o, str):
+        yield o
+    elif isinstance(o, dict):
+        for v in o.values():
+            yield from _strings(v)
+    elif isinstance(o, (list, tuple)):
+        for v in o:
+            yield from _strings(v)
+
+
+def _subset_font(src, dst, chars):
+    """Writes a font file containing only `chars` (plus ASCII): the report PDF then embeds ~100 KB instead of a whole CJK font."""
+    from fontTools import subset
+    from fontTools.ttLib import TTFont
+
+    font = TTFont(src, fontNumber=0, lazy=True)
+    opts = subset.Options()
+    opts.layout_features = ["*"]
+    opts.notdef_outline = True
+    opts.name_IDs = ["*"]
+    sub = subset.Subsetter(opts)
+    sub.populate(text="".join(sorted(set(chars) | set(chr(c) for c in range(32, 127)))))
+    sub.subset(font)
+    font.save(dst)
+
+
+def _font_archive(chars):
+    """CJK font files for the PDF (MuPDF Story), subsetted to the characters of the report. Windows: Malgun Gothic; Linux server
+    image: Noto Sans CJK (apt fonts-noto-cjk); override with PACKAGE_FONT_REGULAR / PACKAGE_FONT_BOLD. The files are written under
+    the names the CSS refers to."""
+    import shutil
+    import tempfile
+
+    import pymupdf
+
+    cands = [
+        (os.environ.get("PACKAGE_FONT_REGULAR"), os.environ.get("PACKAGE_FONT_BOLD")),
+        ("C:/Windows/Fonts/malgun.ttf", "C:/Windows/Fonts/malgunbd.ttf"),
+        ("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"),
+    ]
+    for reg, bold in cands:
+        if reg and bold and os.path.exists(reg) and os.path.exists(bold):
+            d = tempfile.mkdtemp(prefix="pkgfonts_")
+            try:
+                _subset_font(reg, os.path.join(d, "malgun.ttf"), chars)
+                _subset_font(bold, os.path.join(d, "malgunbd.ttf"), chars)
+            except Exception:  # fall back to the whole font files (larger PDF, same look)
+                shutil.copyfile(reg, os.path.join(d, "malgun.ttf"))
+                shutil.copyfile(bold, os.path.join(d, "malgunbd.ttf"))
+            return pymupdf.Archive(d), d
+    raise SystemExit("no CJK font found for the PDF report (set PACKAGE_FONT_REGULAR / PACKAGE_FONT_BOLD)")
+
+
 def render_pdf(blocks, figdir, out_pdf):
     import pymupdf
 
-    arch = pymupdf.Archive("C:/Windows/Fonts")
+    arch, fontdir = _font_archive(set("".join(_strings(blocks))))
     arch.add(figdir)
     story = pymupdf.Story(html=render_html(blocks), user_css=CSS, archive=arch)
     w = pymupdf.DocumentWriter(out_pdf)

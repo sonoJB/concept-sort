@@ -345,8 +345,40 @@ model AnalysisPackage {
   // file name inside the package directory next to the database file (see analysis/packageStore.ts); the bytes are
   // not stored in the database so database backups and fingerprints stay small
   storedFile    String
+  // Several package versions may exist for ONE run (e.g. the first package and a later one with corrected wording).
+  // Older versions are never deleted by registering a newer one; the highest version is the current package.
+  packageVersion Int        @default(1)
+  // layout / document version of the package ("package-format-N") and the wording of its interpretation text
+  // ("interpretation-N") — both are independent of the analysis engine version stored on the run
+  builderVersion String?
+  textVersion    String?
   createdAt     DateTime    @default(now())
 
-  @@unique([analysisRunId])
+  @@unique([analysisRunId, packageVersion])
   @@index([projectId, scope])
+}
+
+// One row per attempt to build the package of a COMPLETED run (analysis finished -> build -> verify -> register ->
+// ready). The analysis state and the package state are separate: a failed package job never changes the run, and a
+// retry builds from the stored input snapshot and result bundle without recomputing the MDS.
+model AnalysisPackageJob {
+  id            String   @id @default(cuid())
+  projectId     String
+  analysisRunId String
+  scope         String
+  // the AnalysisPackage.packageVersion this job produces
+  targetVersion Int
+  // QUEUED | BUILDING | VERIFYING | REGISTERING | READY | FAILED
+  status        String
+  trigger       String   @default("AUTO")
+  attempt       Int      @default(0)
+  errorCode     String?
+  errorMessageSafe String?
+  createdAt     DateTime @default(now())
+  startedAt     DateTime?
+  heartbeatAt   DateTime?
+  finishedAt    DateTime?
+
+  @@unique([analysisRunId, targetVersion])
+  @@index([projectId, scope, status])
 }

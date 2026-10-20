@@ -49,6 +49,33 @@ describe("similarity / dissimilarity matrices (Trochim, 1989)", () => {
     expect(d[0][2]).toBe(1);
   });
 
+  it("hand-calculated example: personal binary similarity (same pile = 1), S, P, D and delta come out exactly as computed on paper", () => {
+    // statements A,B,C,D = 0..3; three participants:
+    //   p1: {A,B} {C,D}      p2: {A,B,C} {D}      p3: {A} {B} {C,D}
+    const ps: Participant[] = [
+      { pid: "p1", country: "KR", assignment: [0, 0, 1, 1] },
+      { pid: "p2", country: "KR", assignment: [0, 0, 0, 1] },
+      { pid: "p3", country: "KR", assignment: [0, 1, 2, 2] },
+    ];
+    // personal binary similarity matrix of p1, by hand: AB = 1, CD = 1, everything else 0, diagonal 1
+    const B1 = ps[0].assignment.map((a) => ps[0].assignment.map((b) => (a === b ? 1 : 0)));
+    expect(B1).toEqual([[1, 1, 0, 0], [1, 1, 0, 0], [0, 0, 1, 1], [0, 0, 1, 1]]);
+    // pairs together: AB in p1,p2 (2) · AC in p2 (1) · AD never (0) · BC in p2 (1) · BD never (0) · CD in p1,p3 (2)
+    const S = buildCountMatrix(ps, 4);
+    expect(S).toEqual([[3, 2, 1, 0], [2, 3, 1, 0], [1, 1, 3, 2], [0, 0, 2, 3]]);
+    const { P, D, delta } = deriveMatrices(S, 3);
+    expect(P[0][1]).toBeCloseTo(2 / 3, 14);
+    expect(P.map((r, i) => r[i])).toEqual([1, 1, 1, 1]);
+    expect(D).toEqual([[0, 1, 2, 3], [1, 0, 2, 3], [2, 2, 0, 1], [3, 3, 1, 0]]);
+    expect(delta[0][1]).toBeCloseTo(1 / 3, 14); // most often together -> small dissimilarity
+    expect(delta[0][3]).toBe(1); // never together -> dissimilarity 1
+    expect(delta.map((r, i) => r[i])).toEqual([0, 0, 0, 0]);
+    // the direction must not flip: the more often together, the smaller delta and D, the larger S and P
+    expect(S[0][1] > S[0][2] && delta[0][1] < delta[0][2] && D[0][1] < D[0][2] && P[0][1] > P[0][2]).toBe(true);
+    // a diagonal-0 copy of S (the 'frequency sheet' of the official workbook) is NOT D: off-diagonal cells differ
+    expect(S[0][1]).not.toBe(D[0][1]);
+  });
+
   it("ALL = KR + JP for S and D; P(ALL) is the N-weighted mean of the country P, not their simple mean", () => {
     const kr = synthParticipants(7, 2, "KR");
     const jp = synthParticipants(11, 3, "JP", 0);

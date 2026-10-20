@@ -35,3 +35,9 @@
 - 운영 관리자 화면은 토큰이 주소에 들어가므로 작업자가 직접 열지 않는다 — 사용자가 확인하거나 미확인으로 기록. 같은 빌드·같은 데이터의 로컬 화면 확인과 구분해 보고.
 - 연구자 PC 새 결과 폴더(`concept-sort-research-backups\<시각>_mds-v2-reanalysis-results\`)에 최종 ZIP 3종, 근거 폴더, 번들 JSON, 검증 출력, 재현 코드(스냅샷 커밋)를 보존. 기존 v1·v2 백업, D: 패키지, 키는 건드리지 않는다.
 - 인수인계 문서(`인수인계_한페이지.md`)와 날짜별 기록에 실제 완료·미완료를 갱신.
+
+## 6. 2026-10-21 이후: ZIP 자동 연결 운영 메모
+1. **배포**: `railway.toml`이 `Dockerfile` 빌드를 지정합니다. 병합 후 자동 배포가 시작됐는지 `railway deployment list`로 확인합니다(이전 두 병합에서 시작되지 않은 사례가 있었음).
+2. **확인**: 배포 커밋(`RAILWAY_GIT_COMMIT_SHA`), 마이그레이션 10개 적용(`20261021000000_add_package_versions_and_jobs`), 배포 직전 서버 백업(`pre-migrate-guard`), `GET …/overview`의 `packageJob`.
+3. **ZIP 만들기**: 새 분석이 끝나면 자동. 이미 완료된 실행은 `POST …/runs/<id>/package-job {"action":"rebuild"}`(분석 재계산 없음). 실패 시 화면의 ‘ZIP만 다시 시도’ 또는 `retry`.
+4. **점검**: 다운로드한 ZIP의 SHA-256·내부 파일·실행 ID·국가 범위·지문을 `verify_package_zip.py`와 `scripts/package/check_zip_with_server_guard.ts`로 확인하고, 서버 백업 `manifest.json`의 `analysisPackages`(모든 버전)·`analysisPackageProblems`(비어 있어야 함)를 확인합니다.

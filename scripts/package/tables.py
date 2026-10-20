@@ -62,10 +62,10 @@ def build_tables(d: ScopeData, raw, cross=None):
     mrows = []
     for me in d.b["metrics"]:
         for ci, c in enumerate(me["criteria"]):
-            mrows.append([me["nameKo"] if ci == 0 else "", me["definitionKo"] if ci == 0 else "", me["formula"] if ci == 0 else "", me["valueDisplay"] if ci == 0 else "", c["kind"], c["labelKo"], c["text"], ", ".join(c["sourceKeys"]), c.get("location", "")])
-        mrows.append(["", "", "", "", "판정", "", " | ".join(f"{v['aspectKo']}[{v['tone']}] {v['textKo']}" for v in me["verdicts"]), ", ".join(me["sourceKeys"]), ""])
-        mrows.append(["", "", "", "", "적용 한계", "", " / ".join(me["limitsKo"]), "", ""])
-    T["metrics"] = ("지표·기준·출처", ["지표", "정의", "계산식", "실제 값", "기준 종류", "기준 이름", "기준 내용·판정·한계", "출처 키", "원문 위치"], mrows, "")
+            mrows.append([me["nameKo"] if ci == 0 else "", me.get("evaluates", "") if ci == 0 else "", me["definitionKo"] if ci == 0 else "", me["formula"] if ci == 0 else "", me["valueDisplay"] if ci == 0 else "", c["kind"], c["labelKo"], c["text"], ", ".join(c["sourceKeys"]), c.get("location", "")])
+        mrows.append(["", "", "", "", "", "판정", "", " | ".join(f"{v['aspectKo']}[{v['tone']}] {v['textKo']}" for v in me["verdicts"]), ", ".join(me["sourceKeys"]), ""])
+        mrows.append(["", "", "", "", "", "적용 한계", "", " / ".join(me["limitsKo"]), "", ""])
+    T["metrics"] = ("지표·기준·출처", ["지표", "평가 대상", "정의", "계산식", "실제 값", "기준 종류", "기준 이름", "기준 내용·판정·한계", "출처 키", "원문 위치"], mrows, "")
 
     # ------------------------------------------------------------------ recommended clusters
     rec_rows, items_rows = [], []

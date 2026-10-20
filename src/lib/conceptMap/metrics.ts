@@ -5,22 +5,36 @@
  * "good" verdict:
  *   computation_setting          a setting chosen for THIS computation (e.g. tolerance) — not a literature cutoff
  *   definitional_range           the range the quantity can take by definition — never a quality criterion
- *   general_rule_of_thumb        a general MDS verbal scale (Kruskal), quoted with the authors' own caveats
+ *   general_rule_of_thumb        a general MDS verbal scale (Kruskal), quoted with the authors' own caveats — shown as
+ *                               background information, NEVER used to classify a result as adequate / inadequate
  *   empirical_comparison_range   values reported by earlier concept-mapping studies — a comparison range only
  *   good_fit_criterion_unconfirmed  no cutoff could be verified at an original source -> no verdict is issued
+ *   interpretation_principle     how a group of metrics is to be read (what is evaluated, what is not claimed)
+ *
+ * Interpretation text is versioned separately from the analysis engine: the numbers in a stored result bundle never
+ * change, while this text can be improved. `INTERPRETATION_TEXT_VERSION` identifies the wording; the metric records
+ * of an old bundle are re-evaluated from its stored numbers (see bundleView.ts) so the screen, the report and the
+ * ZIP always carry the same, current wording.
  */
 import type { ScopeAnalysis, DimensionAnalysis } from "./analyze";
 import type { ReferenceKey } from "./references";
 
-export type CriterionKind = "computation_setting" | "definitional_range" | "general_rule_of_thumb" | "empirical_comparison_range" | "good_fit_criterion_unconfirmed";
+export const INTERPRETATION_TEXT_VERSION = "interpretation-2";
+
+export type CriterionKind = "computation_setting" | "definitional_range" | "general_rule_of_thumb" | "empirical_comparison_range" | "good_fit_criterion_unconfirmed" | "interpretation_principle";
 
 export type Criterion = { kind: CriterionKind; labelKo: string; text: string; sourceKeys: ReferenceKey[]; location?: string };
 
 export type Tone = "met" | "unfavorable" | "neutral" | "unconfirmed";
 
+/** What a metric evaluates. Convergence, fit, classification stability and content validity are separate questions. */
+export type EvaluationObject = "수렴" | "2차원 표현의 적합도" | "군집 구조" | "분류 안정성" | "자료 검증" | "해석 안내";
+
 export type MetricRecord = {
   id: string;
   group: "convergence" | "fit" | "cluster" | "reliability" | "data";
+  /** what this metric evaluates (added with interpretation-2; absent in text stored by the first release) */
+  evaluates?: EvaluationObject;
   nameKo: string;
   definitionKo: string;
   formula: string;
@@ -43,19 +57,27 @@ export const KRUSKAL_SCALE: { max: number; label: string }[] = [
   { max: 0.1, label: "fair" },
   { max: 0.2, label: "poor" },
 ];
-export const CONCEPT_MAPPING_STRESS_RANGE = { low: 0.205, high: 0.365 } as const;
 
-export function kruskalBand(s: number): string {
-  for (const b of KRUSKAL_SCALE) if (s <= b.max) return `Kruskal 구술 척도에서 ${b.max} 이하(${b.label})`;
-  return "Kruskal 구술 척도의 가장 낮은 구간(poor, 0.20)보다 큼";
+/**
+ * Stress values of earlier concept-mapping studies as attributed to Rosas & Kane (2012, §3.5): 69 studies, mean 0.28,
+ * SD 0.04, observed range 0.17–0.34. NOT verified against the original article (access was blocked): the mean and the
+ * range are attributed to it by two secondary papers that were read, the SD only by the researcher's instruction. It is
+ * a comparison reference, never a pass/fail criterion.
+ */
+export const CONCEPT_MAPPING_STRESS_REFERENCE = { studies: 69, mean: 0.28, sd: 0.04, low: 0.17, high: 0.34 } as const;
+
+/** Where a Stress value lies relative to that reference. Descriptive only — no tone, no adequacy verdict. */
+export function stressComparisonText(s: number): string {
+  const { low, high, mean } = CONCEPT_MAPPING_STRESS_REFERENCE;
+  const diff = s - mean;
+  const rel = `보고된 평균 ${mean.toFixed(2)}보다 ${diff >= 0 ? "높음" : "낮음"}(차이 ${diff >= 0 ? "+" : "−"}${Math.abs(diff).toFixed(4)})`;
+  if (s < low) return `선행 개념도 연구의 관찰 범위(${low.toFixed(2)}–${high.toFixed(2)})의 하한보다 낮음; ${rel}.`;
+  if (s > high) return `선행 개념도 연구의 관찰 범위(${low.toFixed(2)}–${high.toFixed(2)})의 상한보다 높음; ${rel}. 범위 밖이라는 사실만으로 부적합을 뜻하지는 않으나 잔차 진단·안정성·내용 해석을 더 면밀히 검토해야 함.`;
+  return `선행 개념도 연구의 관찰 범위(${low.toFixed(2)}–${high.toFixed(2)}) 안; ${rel}.`;
 }
 
-export function rangePosition(s: number): { text: string; tone: Tone } {
-  const { low, high } = CONCEPT_MAPPING_STRESS_RANGE;
-  if (s < low) return { text: `비교 범위(${low}–${high})의 하한보다 낮음. 하한 미만이라는 사실이 '부적합'을 뜻하지는 않음`, tone: "neutral" };
-  if (s > high) return { text: `비교 범위(${low}–${high})의 상한보다 높음`, tone: "unfavorable" };
-  return { text: `비교 범위(${low}–${high}) 안에 있음. 범위 안이라는 사실이 지도의 타당성을 입증하지는 않음`, tone: "neutral" };
-}
+const FIT_PRINCIPLE =
+  "Stress는 참여자의 분류 관계와 2차원 지도 사이의 불일치를 나타내며 낮을수록 좋습니다. 일반 MDS의 고정 임계값만으로 개념도 연구의 적합 여부를 판정하지 않습니다. 선행 개념도 연구의 분포, 잔차 진단, 안정성 및 내용 해석을 함께 검토해야 합니다.";
 
 export function evaluateMetrics(a: ScopeAnalysis, recommendedK: number | null): MetricRecord[] {
   const p: DimensionAnalysis = a.primary;
@@ -68,6 +90,7 @@ export function evaluateMetrics(a: ScopeAnalysis, recommendedK: number | null): 
   out.push({
     id: "numeric_convergence",
     group: "convergence",
+    evaluates: "수렴",
     nameKo: "수치적 수렴 (2차원 SMACOF)",
     definitionKo:
       "majorization 반복에서 직전 반복 대비 raw stress의 상대적 감소량이 허용오차 이하가 되었는지. 분모는 직전 반복의 raw stress이며, 목적함수(raw stress)는 이론상 단조 비증가이므로 증가가 관측되면 별도 종료 사유(OBJECTIVE_INCREASED)로 구분한다.",
@@ -97,10 +120,59 @@ export function evaluateMetrics(a: ScopeAnalysis, recommendedK: number | null): 
     limitsKo: ["수렴은 국소 최소에 도달했다는 수치적 사실일 뿐 2차원 표현이 자료에 적합하다는 뜻이 아님.", "시작 수·반복 상한·허용오차는 이 작업의 계산 설정임."],
   });
 
+  // 1b. how to read the fit metrics (what is evaluated, what is not claimed) ------------------------------------
+  {
+    const s1v = p.stress1;
+    out.push({
+      id: "fit_interpretation",
+      group: "fit",
+      evaluates: "해석 안내",
+      nameKo: "2차원 표현의 적합도 해석",
+      definitionKo: FIT_PRINCIPLE,
+      formula: "평가 대상은 서로 다른 네 가지: ① 수치적 수렴(알고리즘이 국소 최소에 도달했는가) ② 2차원 표현의 적합도(Stress-1·raw stress·RSQ·잔차) ③ 분류 안정성(반복 분할 신뢰도) ④ 내용 타당성(군집 구성·명칭이 문항 내용과 맞는가)",
+      value: null,
+      valueDisplay: `Stress-1 ${f(s1v, 4)} · RSQ ${f(p.rsq, 4)} · ${p.numericallyConverged ? "수치적 수렴함" : "수치적 수렴하지 못함"}${s1v !== null ? ` · ${stressComparisonText(s1v)}` : ""}`,
+      criteria: [
+        {
+          kind: "interpretation_principle",
+          labelKo: "고정 임계값을 판정에 쓰지 않는 이유",
+          text: "Kruskal(1964)의 구술 척도(20% poor, 10% fair, 5% good, 2.5% excellent, 0% perfect)는 실험·합성 자료의 경험에서 나온 것인데 이후 기계적으로 적용되어 왔고, Stress가 문항 수 n에 의존(n이 클수록 값이 커짐)하는 등의 이유로 문제가 있음. 이 시스템은 Stress > 0.20이라는 사실만으로 개념도 분석을 실패·부적합으로 분류하지 않음.",
+          sourceKeys: ["mair2022", "mair2016", "kruskal1964"],
+          location: "Mair et al. (2022) §3.2 Stress norms and permutation tests; Mair et al. (2016)",
+        },
+        {
+          kind: "empirical_comparison_range",
+          labelKo: "선행 개념도 연구의 분포(비교 참고)",
+          text: `69개 개념도 연구의 Stress: 평균 ${CONCEPT_MAPPING_STRESS_REFERENCE.mean.toFixed(2)}, 표준편차 ${CONCEPT_MAPPING_STRESS_REFERENCE.sd.toFixed(2)}, 관찰 범위 ${CONCEPT_MAPPING_STRESS_REFERENCE.low.toFixed(2)}–${CONCEPT_MAPPING_STRESS_REFERENCE.high.toFixed(2)}(Rosas & Kane, 2012, §3.5에 귀속). 관찰된 범위일 뿐 보편적인 합격 기준이 아님. ※ 원문 직접 대조 불가(접근 차단): 평균과 범위는 2차 문헌(Rocliffe et al., 2023)이 같은 논문에 귀속하며 표준편차는 연구자 제공값이고, 다른 2차 문헌(Henderikx & Stoffers, 2023)은 0.205–0.365를 같은 논문의 범위로 제시해 서로 다름 → 원문 확인 필요.`,
+          sourceKeys: ["rosas2012", "rocliffe2023", "henderikx2023"],
+          location: "Rosas & Kane (2012) §3.5 (원문 미대조); Rocliffe et al. (2023) Results > Sorting/cluster map",
+        },
+        {
+          kind: "interpretation_principle",
+          labelKo: "선행 연구와 현재 엔진의 비교 가능성",
+          text: "확인된 것: 이 엔진의 Stress-1은 Kruskal(1964) 정의 Σ(d̂*−d)²/Σd²의 제곱근(디스패리티 크기 최적화), 동점 처리 secondary, 서열 비계량 SMACOF. 미확인: 선행 개념도 연구들이 쓴 소프트웨어의 Stress 산식·정규화·동점 처리·문항 수·참여자 수가 같은지(원문에 명시되지 않거나 열람하지 못함). 따라서 숫자 비교는 동일 정의 비교가 아닐 수 있는 참고용임.",
+          sourceKeys: ["mair2022", "henderikx2023"],
+        },
+      ],
+      verdicts: [
+        { aspectKo: "수렴", textKo: p.numericallyConverged ? "수치적으로 수렴함(적합도와 별개의 사실)" : "수치적으로 수렴하지 못함", tone: p.numericallyConverged ? "met" : "unfavorable" },
+        { aspectKo: "2차원 표현의 적합도", textKo: s1v === null ? "계산 불가" : `선행 연구 분포 대비 위치(비교 참고, 판정 아님): ${stressComparisonText(s1v)}`, tone: "neutral" },
+        { aspectKo: "분류 안정성", textKo: "반복 분할 신뢰도를 별도로 보고함(양호 기준 미확정, 아래 지표 참조)", tone: "unconfirmed" },
+        { aspectKo: "내용 타당성", textKo: "이 시스템은 판정하지 않음 — 군집 수·명칭은 연구자 검토 전 추천안이며 문항 내용과의 대응은 연구자 검토 대상", tone: "unconfirmed" },
+      ],
+      sourceKeys: ["mair2022", "mair2016", "kruskal1964", "rosas2012", "rocliffe2023", "henderikx2023"],
+      limitsKo: [
+        "‘매우 적합’·‘타당성 입증’ 같은 판정을 하지 않음. 수치가 선행 연구의 관찰 범위 안이라는 사실은 지도의 타당성을 입증하지 않음.",
+        "Mair 등(2022)이 소개한 무작위 자료 Stress 규준(randomstress)·순열 검정은 이번에 수행하지 않았음.",
+      ],
+    });
+  }
+
   // 2. raw stress ----------------------------------------------------------------------------
   out.push({
     id: "raw_stress",
     group: "fit",
+    evaluates: "2차원 표현의 적합도",
     nameKo: "Raw stress (정규화된 디스패리티 기준)",
     definitionKo: "정규화된 디스패리티와 배치 거리의 제곱 오차합. 디스패리티는 Σd̂² = n(n−1)/2가 되도록 정규화(smacof의 명시적 정규화).",
     formula: "σ_raw = Σ_{i<j} (d̂_ij − d_ij)²,  Σ_{i<j} d̂_ij² = n(n−1)/2",
@@ -114,40 +186,42 @@ export function evaluateMetrics(a: ScopeAnalysis, recommendedK: number | null): 
 
   // 3. Stress-1 ------------------------------------------------------------------------------
   const s1 = p.stress1;
-  const pos = s1 !== null ? rangePosition(s1) : null;
   out.push({
     id: "stress1",
     group: "fit",
+    evaluates: "2차원 표현의 적합도",
     nameKo: "Stress-1 (Kruskal)",
     definitionKo:
-      "Kruskal(1964)의 암묵적 정규화 Stress. 디스패리티는 거리에 대한 단조 회귀값(크기 제약 없음)이며 분모는 배치 거리의 제곱합. 국소 최소에서 √(σ_raw / (n(n−1)/2))와 같으므로 이 분석은 두 식의 일치를 계산으로 확인한다.",
+      "참여자의 분류 관계(비유사성 δ)와 2차원 지도의 거리 사이의 불일치 정도(낮을수록 좋음). Kruskal(1964)의 암묵적 정규화 Stress로, 디스패리티는 거리에 대한 단조 회귀값(크기 제약 없음)이며 분모는 배치 거리의 제곱합. 국소 최소에서 √(σ_raw / (n(n−1)/2))와 같으므로 이 분석은 두 식의 일치를 계산으로 확인한다.",
     formula: "σ₁ = √( Σ_{i<j}(d̂*_ij − d_ij)² / Σ_{i<j} d_ij² ),  d̂* = 단조회귀(d | δ)",
     value: s1,
     valueDisplay: `${f(s1, 5)}  (√(σ_raw/q) = ${f(p.stressNormalizedSqrt, 5)})`,
     criteria: [
-      {
-        kind: "general_rule_of_thumb",
-        labelKo: "일반 MDS 참고 구분 (Kruskal)",
-        text: "20% poor, 10% fair, 5% good, 2.5% excellent (Kruskal이 실험·합성 자료 경험으로 제시). Mair 등은 문항 수 증가에 따라 Stress가 커지고 상한이 자명하지 않으며 자료 오차·동점·결측이 Stress에 영향을 주므로 이 경험칙만으로 판단하지 말 것을 권고함",
-        sourceKeys: ["kruskal1964", "mair2016", "mair2022"],
-        location: "Mair et al. (2016) 원고 pp. 3, 8–9; Mair et al. (2022) p. 7–9",
-      },
+      { kind: "definitional_range", labelKo: "정의상 범위", text: "0 이상, 0이면 완전 일치, 낮을수록 좋음. 값의 크기는 문항 수·동점·자료 오차·분석 조건에 의존하므로 단독 합격선이 없음", sourceKeys: ["mair2022", "mair2016"], location: "Mair et al. (2022) §3.2; Mair et al. (2016)" },
       {
         kind: "empirical_comparison_range",
-        labelKo: "개념도 연구의 비교 범위",
-        text: `${CONCEPT_MAPPING_STRESS_RANGE.low}–${CONCEPT_MAPPING_STRESS_RANGE.high}: Henderikx & Stoffers(2023)가 Rosas & Kane(2012)을 인용해 제시한 개념도 연구들의 Stress 범위. Rosas & Kane 원문에서의 위치는 확인하지 못했고, 개념도 소프트웨어의 Stress 정의가 위 Stress-1과 같은지는 원문에 명시되어 있지 않아 동일 정의의 비교인지 미확정. 참고 사례: Trochim 외(1994)는 최종 Stress .31을 보고했으나 정의와 허용 기준은 서술하지 않음`,
-        sourceKeys: ["henderikx2023", "rosas2012", "trochim1994"],
-        location: "Henderikx & Stoffers (2023) 초록, §3.1, §4.1; Trochim et al. (1994) Results(MDS)",
+        labelKo: "선행 개념도 연구의 분포(비교 참고)",
+        text: `평균 ${CONCEPT_MAPPING_STRESS_REFERENCE.mean.toFixed(2)}, 표준편차 ${CONCEPT_MAPPING_STRESS_REFERENCE.sd.toFixed(2)}, 관찰 범위 ${CONCEPT_MAPPING_STRESS_REFERENCE.low.toFixed(2)}–${CONCEPT_MAPPING_STRESS_REFERENCE.high.toFixed(2)}(69개 연구; Rosas & Kane, 2012, §3.5에 귀속, 원문 미대조). 관찰 범위이며 보편적 합격 기준이 아님. Trochim 외(1994)는 최종 Stress .31을 보고했으나 정의와 허용 기준은 서술하지 않음`,
+        sourceKeys: ["rosas2012", "rocliffe2023", "henderikx2023", "trochim1994"],
+        location: "Rosas & Kane (2012) §3.5 (미대조); Trochim et al. (1994) Results(MDS)",
+      },
+      {
+        kind: "general_rule_of_thumb",
+        labelKo: "일반 MDS 구술 척도(방법론 참고 정보 · 판정에 사용하지 않음)",
+        text: "Kruskal(1964): 20% poor, 10% fair, 5% good, 2.5% excellent, 0% perfect — 실험·합성 자료의 경험에서 나온 구술 평가. Mair 등(2022)은 이 경험칙이 기계적으로 적용되어 왔고 Stress가 n에 의존하는 등의 이유로 문제라고 지적하며 Mair 등(2016)도 자료 오차·동점·결측의 영향을 들어 이 경험칙만으로 판단하지 말 것을 권고함. 이 시스템은 이 척도로 결과를 분류하지 않음.",
+        sourceKeys: ["kruskal1964", "mair2016", "mair2022"],
+        location: "Mair et al. (2022) §3.2; Mair et al. (2016) 원고 pp. 3, 8–9",
       },
     ],
     verdicts: [
-      { aspectKo: "일반 MDS 참고 구분", textKo: s1 === null ? "계산 불가" : `${kruskalBand(s1)}. 이는 불리한 결과이며 숨기지 않음`, tone: s1 !== null && s1 > 0.2 ? "unfavorable" : "neutral" },
-      { aspectKo: "개념도 연구의 비교 범위", textKo: pos ? pos.text : "계산 불가", tone: pos ? pos.tone : "unconfirmed" },
+      { aspectKo: "선행 개념도 연구 분포와의 위치(비교 참고)", textKo: s1 === null ? "계산 불가" : stressComparisonText(s1), tone: "neutral" },
+      { aspectKo: "일반 MDS 고정 임계값", textKo: "고정 임계값만으로 적합 여부를 판정하지 않음(Mair et al., 2022, §3.2). 잔차 진단·안정성·내용 해석을 함께 검토", tone: "unconfirmed" },
     ],
-    sourceKeys: ["mair2022", "mair2016", "kruskal1964", "henderikx2023", "rosas2012"],
+    sourceKeys: ["mair2022", "mair2016", "kruskal1964", "rosas2012", "rocliffe2023", "henderikx2023"],
     limitsKo: [
       "47개 문항·서열 MDS·동점이 많은 자료(서로 다른 비유사성 수준이 적음)에서의 Stress는 문항 수·동점 처리·분석 조건과 함께 해석해야 함.",
       "동점 처리(secondary: 같은 비유사성은 같은 디스패리티)는 primary보다 높은 Stress를 낼 수 있음 — 민감도 분석 참조.",
+      "선행 연구와의 숫자 비교는 Stress 산식·정규화·동점 처리·문항 수가 같은지 확인되지 않아 동일 정의 비교가 아닐 수 있음(미확인).",
       "이전 구현(v1)의 'Stress-1'은 분자에 명시적으로 정규화한 디스패리티(Σd̂²=n(n−1)/2), 분모에 Σd²를 쓰는 정의였으며 scikit-learn의 normalized_stress와 같은 정의임(외부 라이브러리와 5자리까지 일치 확인)(오류가 아니라 다른 정의이며, 같은 좌표에서 Kruskal 값 이상의 값을 냄; 아래 ‘Stress 계산 정의 구분’ 표 참조). 이전 표시값과 새 값의 차이에는 수렴 상태의 변화와 계산 정의의 정비가 함께 들어 있으며 감소분 전부가 수렴 개선 효과는 아님.",
     ],
   });
@@ -161,6 +235,7 @@ export function evaluateMetrics(a: ScopeAnalysis, recommendedK: number | null): 
     out.push({
       id: "stress_definitions",
       group: "fit",
+      evaluates: "2차원 표현의 적합도",
       nameKo: "Stress 계산 정의 구분 (같은 최종 좌표에서 네 값)",
       definitionKo: "같은 최종 좌표·같은 거리 d에서 서로 다른 정의가 서로 다른 값을 낸다. raw stress와 √(σ_raw/q)는 명시적으로 정규화한 디스패리티 d̂(Σd̂²=q)를, Kruskal Stress-1은 크기 제약 없이 단조 회귀한 디스패리티 d̂*를 쓴다. 국소 최소에서는 Kruskal Stress-1 = √(σ_raw/q)이고(Mair et al., 2022, 식 4), 이전 구현과 scikit-learn의 normalized_stress(분자 σ_raw, 분모 Σd²)는 디스패리티의 크기를 최적화하지 않아 같은 좌표에서 더 크거나 같은 값을 낸다. 둘 다 유효한 정의이며, 이 분석은 Kruskal 원정의 및 smacof(R)의 보고값과 일치하는 Σ(d̂*−d)²/Σd²를 ‘Stress-1’로 쓰고 다른 정의의 값은 항상 함께 보고한다.",
       formula: "σ_raw = Σ(d̂−d)²;  Stress-1 = √(Σ(d̂*−d)² / Σd²);  √(σ_raw/q);  이전 정의 = √(σ_raw / Σd²);  q = n(n−1)/2",
@@ -189,8 +264,9 @@ export function evaluateMetrics(a: ScopeAnalysis, recommendedK: number | null): 
   out.push({
     id: "rsq",
     group: "fit",
+    evaluates: "2차원 표현의 적합도",
     nameKo: "RSQ",
-    definitionKo: "정규화된 디스패리티와 배치 거리 사이 피어슨 상관의 제곱(MultBiplotR의 MDS RSQ 정의). 비유사성 δ와 거리의 회귀 R²나 ALSCAL의 RSQ와는 정의가 다름.",
+    definitionKo: "정규화된 디스패리티 d̂와 2차원 배치 거리 d 사이 피어슨 상관의 제곱(MultBiplotR의 MDS RSQ 정의). 거리가 (순서 변환된) 비유사성을 선형으로 얼마나 재현하는지를 보는 값이다. 비유사성 δ와 거리의 회귀 R²가 아니며, 다른 소프트웨어(예: SPSS ALSCAL)의 RSQ와 같은 정의인지는 확인하지 않았다.",
     formula: "RSQ = [ corr(d̂_ij, d_ij) ]²  (모든 i<j 쌍)",
     value: p.rsq,
     valueDisplay: f(p.rsq, 4),
@@ -200,13 +276,14 @@ export function evaluateMetrics(a: ScopeAnalysis, recommendedK: number | null): 
     ],
     verdicts: [{ aspectKo: "판정", textKo: "참고 지표 · 양호 기준 미확정", tone: "unconfirmed" }],
     sourceKeys: ["multbiplotr"],
-    limitsKo: ["정의상 범위(0–1)를 양호 기준으로 사용하지 않음.", "상관은 모든 쌍을 동등하게 취급한 값이며 일부 구조(예: 큰 군집 간 분리)에 지배될 수 있음."],
+    limitsKo: ["정의상 범위(0–1)를 양호 기준으로 사용하지 않음.", "참고 논문들이 인용한 RSQ ≥ .60 기준(Kruskal & Wish, 1978 인용)이 이 분석의 RSQ와 같은 정의에 대한 기준인지 확인되지 않아 적용하지 않음.", "d̂와 d 사이 상관의 제곱이며 참여자 응답 전체의 분산 설명 비율이 아님 — 그렇게 해석하지 않음.", "상관은 모든 쌍을 동등하게 취급한 값이며 일부 구조(예: 큰 군집 간 분리)에 지배될 수 있음."],
   });
 
   // 5. dimension scree -------------------------------------------------------------------------
   out.push({
     id: "stress_by_dimension",
     group: "fit",
+    evaluates: "2차원 표현의 적합도",
     nameKo: "차원별 Stress-1 비교 (1~5차원)",
     definitionKo: "같은 방법·설정으로 1~5차원을 각각 계산한 보조 비교. 3차원 이상 결과는 2차원 지도의 대용이 아니며 지도에는 2차원 해만 사용함.",
     formula: "차원 p마다 σ₁(p)",
@@ -224,6 +301,7 @@ export function evaluateMetrics(a: ScopeAnalysis, recommendedK: number | null): 
     out.push({
       id: "tie_sensitivity",
       group: "fit",
+      evaluates: "2차원 표현의 적합도",
       nameKo: "동점 처리 민감도 (primary: 동점 분리 허용)",
       definitionKo: "공식 결과는 secondary(같은 비유사성은 같은 디스패리티). 동점을 분리하는 primary 접근으로 같은 설정에서 2차원을 다시 계산한 민감도 분석이며 공식 결과를 대체하지 않음.",
       formula: "tieHandling = primary; 나머지 설정 동일",
@@ -242,8 +320,9 @@ export function evaluateMetrics(a: ScopeAnalysis, recommendedK: number | null): 
     out.push({
       id: "silhouette_map",
       group: "cluster",
+      evaluates: "군집 구조",
       nameKo: `실루엣 평균 폭 — 지도 좌표 기준 (k=${sol.k})`,
-      definitionKo: "각 문항 i에 대해 자기 군집 내 평균 거리 a(i)와 가장 가까운 다른 군집까지의 평균 거리 b(i)로 s(i)=(b−a)/max(a,b). 단일 점 군집은 0. 여기서는 2차원 지도 위의 유클리드 거리로 계산한 값이며 Ward가 이 지도 위에서 수행된 것과 같은 공간임.",
+      definitionKo: "[평가 대상: 군집 구조 — 지도 위 군집의 분리도이며 MDS 적합도나 분류 안정성이 아님] 각 문항 i에 대해 자기 군집 내 평균 거리 a(i)와 가장 가까운 다른 군집까지의 평균 거리 b(i)로 s(i)=(b−a)/max(a,b). 단일 점 군집은 0. 여기서는 2차원 지도 위의 유클리드 거리로 계산한 값이며 Ward가 이 지도 위에서 수행된 것과 같은 공간임.",
       formula: "s(i) = (b(i) − a(i)) / max(a(i), b(i)),  평균 = (1/n) Σ s(i)",
       value: sol.silhouetteMap.mean,
       valueDisplay: f(sol.silhouetteMap.mean, 4),
@@ -258,6 +337,7 @@ export function evaluateMetrics(a: ScopeAnalysis, recommendedK: number | null): 
     out.push({
       id: "silhouette_delta",
       group: "cluster",
+      evaluates: "군집 구조",
       nameKo: `실루엣 평균 폭 — 원래 비유사성 δ 기준 (k=${sol.k})`,
       definitionKo: "같은 군집 소속에 대해 지도 거리 대신 원래 비유사성 δ=1−S/N으로 계산한 실루엣. 2차원 지도가 군집 구조를 얼마나 왜곡했는지 보는 보조 값.",
       formula: "s(i) 동일, 거리 = δ_ij",
@@ -271,6 +351,7 @@ export function evaluateMetrics(a: ScopeAnalysis, recommendedK: number | null): 
     out.push({
       id: "between_share",
       group: "cluster",
+      evaluates: "군집 구조",
       nameKo: `군집 간 제곱합 비율 (k=${sol.k})`,
       definitionKo: "2차원 좌표의 전체 제곱합 중 군집 간 제곱합 비율(1 − 군집 내 제곱합/전체 제곱합). Ward가 최소화하는 기준과 직접 연결되는 기술 통계.",
       formula: "1 − W_k / T,  W_k = Σ_군집 Σ_점 ‖x − 군집중심‖²,  T = Σ ‖x − 전체중심‖²",
@@ -290,8 +371,9 @@ export function evaluateMetrics(a: ScopeAnalysis, recommendedK: number | null): 
   out.push({
     id: "split_half",
     group: "reliability",
+    evaluates: "분류 안정성",
     nameKo: "반복 분할 신뢰도 (행렬 신뢰도)",
-    definitionKo: `참여자를 무작위로 반분(${Object.entries(sh.halfSizes).map(([k, v]) => `${k} ${v.join("/")}`).join(", ")})해 각 반쪽의 문항 쌍 동시분류 빈도(1,081쌍)의 상관을 ${sh.repetitions}회 반복 계산. Spearman–Brown 값 2r/(1+r)은 두 반쪽이 평행 측정이라는 가정 하의 전체 길이 환산값.`,
+    definitionKo: `[평가 대상: 분류 안정성(행렬 신뢰도) — 수렴·적합도와 별개] 참여자를 무작위로 반분(${Object.entries(sh.halfSizes).map(([k, v]) => `${k} ${v.join("/")}`).join(", ")})해 각 반쪽의 문항 쌍 동시분류 빈도(1,081쌍)의 상관을 ${sh.repetitions}회 반복 계산. Spearman–Brown 값 2r/(1+r)은 두 반쪽이 평행 측정이라는 가정 하의 전체 길이 환산값.`,
     formula: "r = corr(S_A[i<j], S_B[i<j]);  SB = 2r / (1 + r)",
     value: sh.rawR ? sh.rawR.mean : null,
     valueDisplay: sh.rawR && sh.spearmanBrown ? `원상관 평균 ${f(sh.rawR.mean, 3)} (중앙값 ${f(sh.rawR.median, 3)}, 최소–최대 ${f(sh.rawR.min, 3)}–${f(sh.rawR.max, 3)}); SB 평균 ${f(sh.spearmanBrown.mean, 3)} (중앙값 ${f(sh.spearmanBrown.median, 3)}); 계산 불능 ${sh.undefinedCount}회, 음수 ${sh.negativeRawCount}회` : "계산 불가",
@@ -314,6 +396,7 @@ export function evaluateMetrics(a: ScopeAnalysis, recommendedK: number | null): 
   out.push({
     id: "data_validation",
     group: "data",
+    evaluates: "자료 검증",
     nameKo: "입력 행렬 검증",
     definitionKo: "47×47 크기, 대칭성, 값의 범위(0≤S_ij≤N), 대각선=N, 동시분류 빈도의 분포.",
     formula: "S_ij = Σ_참여자 1{i,j 같은 묶음};  P=S/N;  D=N−S;  δ=1−S/N (MDS 입력)",

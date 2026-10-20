@@ -1,0 +1,15 @@
+{
+ "_note": "Cross-check evidence files (docs/mds-reanalysis/evidence/*.json) were computed once for the data below. The package builder includes them in a package only when the run's fingerprints equal these values; otherwise the package says that no evidence applies. Values are the fingerprints of the 2026-10-18 production runs.",
+ "KR": {
+  "numericDataHash": "e7e8a1508f6c070aa1bfe8b21c6b83d54d63b18bb449fe841ecdf8c21c6e357e",
+  "participantsHash": "24aa32ee595e4f14fbbaab4c6aa54ad8a4b578cc2246f5cba549c114c9ab2fcc"
+ },
+ "JP": {
+  "numericDataHash": "3a24e86f98cf8a1b76b7817565726a42fa02837d29d7eeb0d9a7434e78181bc3",
+  "participantsHash": "b7dc21e8a13f992cdd1c48a94ab18535691eea02118c0f3adcf5ff8e46ad0b57"
+ },
+ "ALL": {
+  "numericDataHash": "dc0507f3a0bd567a0e28a0a7d825fcbb8e74fe0ce7a5554708067210618ba2c1",
+  "participantsHash": "801f3c7183b93b7f576218eb8437933c5af0a9168504f04a2a7beb47829806fa"
+ }
+}

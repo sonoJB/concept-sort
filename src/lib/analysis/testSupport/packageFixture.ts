@@ -49,7 +49,7 @@ export function responseCsvFor(run: RunLike, mutateRows?: (rows: (string | numbe
  * A minimal but valid package for a run (manifest + README + the real response table).
  * `files` are the entries under the single root folder `pkg/`; `mutate` may change the manifest/files before zipping.
  */
-export function buildPackageZip(run: RunLike, opts: { files?: Record<string, Uint8Array>; mutate?: (manifest: Record<string, unknown>, files: Record<string, Uint8Array>) => void; zipFilename?: string; extraRawEntries?: Record<string, Uint8Array>; omitResponses?: boolean } = {}): Uint8Array {
+export function buildPackageZip(run: RunLike, opts: { files?: Record<string, Uint8Array>; mutate?: (manifest: Record<string, unknown>, files: Record<string, Uint8Array>) => void; zipFilename?: string; extraRawEntries?: Record<string, Uint8Array>; omitResponses?: boolean; extraManifest?: Record<string, unknown> } = {}): Uint8Array {
   const f = JSON.parse(run.resultBundle!).meta.fingerprints;
   const files: Record<string, Uint8Array> = { "pkg/README.txt": strToU8("hello"), [`pkg/${RESPONSE_PATH}`]: responseCsvFor(run), ...participantFilesFor(run), ...(opts.files ?? {}) };
   if (opts.omitResponses) delete files[`pkg/${RESPONSE_PATH}`];
@@ -61,6 +61,7 @@ export function buildPackageZip(run: RunLike, opts: { files?: Record<string, Uin
     fingerprints: { participantsHash: f.participantsHash, numericDataHash: f.numericDataHash, parameterHash: f.parameterHash },
     files: Object.entries(files).map(([p, b]) => ({ path: p.replace(/^pkg\//, ""), sha256: sha(b), bytes: b.byteLength })),
   };
+  Object.assign(manifest, opts.extraManifest ?? {});
   opts.mutate?.(manifest, files); // may tamper with the manifest or add unlisted files
   return zipSync({ ...files, ...(opts.extraRawEntries ?? {}), "pkg/manifest.json": strToU8(JSON.stringify(manifest)) });
 }

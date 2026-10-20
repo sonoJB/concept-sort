@@ -14,7 +14,7 @@ const MIGRATION_ORDER = [
   "20260813011500_add_guide_template_fields",
   "20260813062600_add_data_role_and_analysis_dataset",
   "20260813082418_add_main_study_schedule_and_guide_video",
-  "20261018100000_add_analysis_result_bundle_and_package",
+  "20261018100000_add_analysis_result_bundle_and_package", "20261021000000_add_package_versions_and_jobs",
 ];
 
 /**

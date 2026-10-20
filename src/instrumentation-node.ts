@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
+import { startPackageWorker } from "@/lib/analysis/packageWorker";
 
 /**
  * Starts the scheduled database-backup watcher (scripts/backup/auto-backup.mjs)
@@ -30,3 +31,16 @@ function startBackupScheduler() {
 }
 
 startBackupScheduler();
+
+/** Package pipeline worker (see lib/analysis/packageWorker.ts). Disabled with DISABLE_PACKAGE_WORKER=1. */
+function startPackagePipeline() {
+  if (process.env.NODE_ENV !== "production") return;
+  if (process.env.DISABLE_PACKAGE_WORKER === "1") return;
+  try {
+    startPackageWorker();
+  } catch (err) {
+    console.error("[package-worker] start-up failed (the app continues without it):", err);
+  }
+}
+
+startPackagePipeline();
