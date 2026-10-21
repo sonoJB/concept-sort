@@ -71,6 +71,10 @@ if args.expect_scope:
     check("scope equals expected", scope == args.expect_scope, scope)
 readme = z.read(f"{root}/00_안내/README.txt").decode("utf-8")
 check("README names the same run id and fingerprint", manifest["runId"] in readme and manifest["fingerprints"]["participantsHash"] in readme)
+if manifest.get("packageFormatVersion", "") >= "package-format-5":
+    check("README declares the numeric reference files and carries the glossary of stored terms", "수치 기준 파일과 정밀도" in readme and "용어 대응표" in readme)
+    coords_rows = list(csv.reader(z.read(f"{root}/05_MDS/좌표_2D.csv").decode("utf-8-sig").splitlines()))[1:]
+    check("좌표_2D.csv keeps the coordinates at full precision (more than 12 decimals)", any(len(r[1].split(".")[-1]) > 12 for r in coords_rows), "")
 resp = list(csv.reader(z.read(f"{root}/02_원자료_가명/참여자별_분류응답표.csv").decode("utf-8-sig").splitlines()))
 hdr, body = resp[0], resp[1:]
 pids = sorted({r[0] for r in body})

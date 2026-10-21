@@ -30,7 +30,7 @@ from tables import build_tables, kst, write_csvs  # noqa: E402
 from workbook import write_analysis_workbook  # noqa: E402
 
 KST = timezone(timedelta(hours=9))
-PKG_INFO = {"packageVersion": 1, "packageFormatVersion": "package-format-4"}
+PKG_INFO = {"packageVersion": 1, "packageFormatVersion": "package-format-5"}
 
 
 SHEETS_COORD = "좌표·군집(추천)"
@@ -101,7 +101,7 @@ def main():
     ap.add_argument("--scopes", nargs="*", default=["KR", "JP", "ALL"])
     ap.add_argument("--skip-repro", action="store_true")
     ap.add_argument("--package-version", type=int, default=1, help="version of the package FOR THIS RUN (1 = first); versions > 1 get a _pkgN file name suffix")
-    ap.add_argument("--package-format", default="package-format-4", help="layout / document version of the package (distinct from the analysis engine version)")
+    ap.add_argument("--package-format", default="package-format-5", help="layout / document version of the package (distinct from the analysis engine version)")
     args = ap.parse_args()
     PKG_INFO.update({"packageVersion": args.package_version, "packageFormatVersion": args.package_format})
 
@@ -497,6 +497,25 @@ def readme(d, base):
 
 읽는 순서: 01_요약의 분석자료 Excel과 보고서 → 08_그림(그림목록.csv의 캡션·대응 데이터) → 필요 시 각 폴더의 CSV.
 주의: 수렴과 적합도는 별개입니다. 군집 수·군집명은 자동 제안(연구자 검토 전)이며 확정 명칭이 아닙니다.
+
+수치 기준 파일과 정밀도
+  - 수치의 기준(재현·재계산에 쓰는 값)은 CSV입니다. 04_행렬(S·P·D·δ), 05_MDS/좌표_2D.csv·차원비교_1-5D.csv·반복이력_2D.csv,
+    06_진단/쌍진단_1081.csv·점별_stress기여.csv, 07_군집/병합이력_병합비용.csv, 09_보완분석/반복분할_신뢰도_전체값.csv는
+    배정밀도(double)가 같은 값으로 다시 읽히는 표기(유효숫자 최대 17자리)로 저장되어 있습니다.
+  - 07_군집의 군집후보비교.csv·군집구성_k별.csv·군집별_문항_명명근거.csv·추천_군집.csv는 소수 4~6자리로 줄인 보고용 표입니다.
+    전체 정밀도의 값이 필요하면 좌표(05_MDS/좌표_2D.csv)에서 10_재현/reproduce_mds.py로 다시 계산하십시오.
+  - 01_요약의 분석자료 Excel은 같은 값을 열람·편집하기 위한 사본입니다. 셀에는 전체 정밀도의 값이 들어 있고 표시 자릿수만 서식으로 줄였습니다.
+    논문에 쓰는 수치는 CSV 또는 이 Excel의 셀 값을 사용하고, 원본 Excel 파일은 덮어쓰지 말고 사본으로 작업하십시오.
+    Excel의 '표시된 정밀도로 계산' 옵션을 켜면 저장값이 표시 자릿수로 줄어들므로 켜지 마십시오.
+  - 이 패키지의 CSV·Excel 값의 일치 여부는 11_검증/검증보고서.md와 패키지 제작 시 점검 결과를 참고하십시오(점검을 통과했다는 사실이 논문의 학술적 타당성을 입증하지는 않습니다).
+
+용어 대응표 (저장값 ↔ 표시 문구)
+  random halves (예: "KR random halves")   ↔ 무작위 반분(한국/일본 참여자를 무작위로 두 반쪽으로 나눔). 저장된 설계 문자열이며 보고서·Excel 표시 문구만 한국어로 옮겼습니다.
+                                              저장된 원문값은 09_보완분석/반복분할_신뢰도_요약.csv와 Excel '안정성_분할반분' 시트에 '설계(저장된 원문값, 변경하지 않음)'으로 남아 있습니다.
+  stratified by country: each half receives 15 KR + 19 JP ↔ 국가별 층화 무작위 반분(각 반쪽에 한국 15명 + 일본 19명). 숫자는 해당 범위의 저장값.
+  CONVERGED                                   ↔ 수렴(MDS 종료 사유의 저장값; 수렴은 적합도와 별개)
+  AUTO_PROPOSED                               ↔ 자동 제안(연구자 검토 전)
+  FULL_TEXT_READ / ABSTRACT_ONLY / SECONDARY_ONLY / DOCUMENTATION_READ / NOT_ACCESSED ↔ 원문 전문 열람 / 초록만 열람 / 2차 문헌으로만 확인 / 문서(매뉴얼) 열람 / 열람하지 못함
 """
 
 

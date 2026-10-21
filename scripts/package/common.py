@@ -34,6 +34,18 @@ def ko_design(design):
     return design
 
 
+def ko_text(text):
+    """Korean reading of the stored split-half design wherever it is embedded in a longer stored sentence (display only;
+    the stored English value stays in the reference tables and is listed in the glossary of 00_안내/README.txt)."""
+    import re
+
+    if not isinstance(text, str):
+        return text
+    text = re.sub(r"\b(KR|JP) random halves\b", lambda m: f"{'한국' if m.group(1) == 'KR' else '일본'} 참여자를 무작위로 두 반쪽으로 나눔(무작위 반분)", text)
+    text = re.sub(r"stratified by country: each half receives (\d+) KR \+ (\d+) JP", lambda m: f"국가별 층화 무작위 반분: 각 반쪽에 한국 {m.group(1)}명 + 일본 {m.group(2)}명", text)
+    return text
+
+
 def fmt(v, d=4):
     if v is None or (isinstance(v, float) and not math.isfinite(v)):
         return "계산 불가"

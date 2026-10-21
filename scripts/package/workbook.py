@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 import numpy as np
 import xlsxwriter
 
-from common import SCOPE_LABEL_KO, rewrite_zip_deterministic, sid
+from common import SCOPE_LABEL_KO, ko_text, rewrite_zip_deterministic, sid
 
 def _install_full_precision_numbers():
     """XlsxWriter prints numbers with 16 significant digits, which can change the last bit of a double. Print the shortest text that
@@ -323,9 +323,9 @@ def write_analysis_workbook(path, d, T, resp_rows, figrows, versions):
 
     mrows = []
     for me in d.b["metrics"]:
-        crit = " / ".join(f"[{c['labelKo']}] {c['text']}" + (f" (위치: {c['location']})" if c.get("location") else "") for c in me["criteria"])
+        crit = " / ".join(f"[{c['labelKo']}] {ko_text(c['text'])}" + (f" (위치: {c['location']})" if c.get("location") else "") for c in me["criteria"])
         ver = " / ".join(f"{v['aspectKo']}: {v['textKo']}" for v in me["verdicts"])
-        mrows.append([me["nameKo"], me["evaluates"], me["formula"], DIRECTION.get(me["id"], ""), me["valueDisplay"], crit, ver, " / ".join(me["limitsKo"]), ", ".join(me["sourceKeys"])])
+        mrows.append([me["nameKo"], me["evaluates"], me["formula"], DIRECTION.get(me["id"], ""), ko_text(me["valueDisplay"]), crit, ver, " / ".join(me["limitsKo"]), ", ".join(me["sourceKeys"])])
     B.table("metrics", ["지표", "평가 대상", "산식", "값의 방향", "이 분석의 값", "적용 가능한 판단 근거·기준 종류", "판정(해석 범위)", "한계", "참고문헌 키"], mrows, widths={0: 28, 1: 18, 2: 44, 3: 40, 4: 40, 5: 70, 6: 60, 7: 60, 8: 22},
             note="수렴·적합도·분류 안정성·내용 타당성은 서로 다른 평가 대상입니다. 확인되지 않은 합격 기준은 만들지 않았고 Stress > 0.20만으로 부적합을 판정하지 않습니다.")
     B.table("refs", T["references"][1], T["references"][2], widths={0: 70, 1: 36, 2: 16, 3: 60, 4: 70})
@@ -393,6 +393,8 @@ def write_analysis_workbook(path, d, T, resp_rows, figrows, versions):
     notes = [
         f"범위 {label} · 유효 N {d.N} (한국 {m['nKr']} · 일본 {m['nJp']}) · 진술문 {n}개 · 실행 {m['runId']} · 엔진 {m['algorithmVersion']} · 패키지 버전 {versions['packageVersion']} ({versions['packageFormatVersion']})",
         "모든 값은 저장된 분석 결과에서 읽은 실제 셀 값입니다(그림을 붙이지 않았음). 표시 자릿수만 서식으로 줄였고 저장값은 전체 정밀도입니다. 수식은 '행렬정의·수식검산' 시트에만 있고 계산된 결과값이 함께 저장되어 있습니다.",
+        "수치의 기준 파일은 패키지의 CSV(04_행렬·05_MDS·06_진단 등)입니다. 이 Excel은 같은 값을 열람·편집하기 위한 사본이며, 원본 파일은 덮어쓰지 말고 사본으로 작업하십시오. Excel의 '표시된 정밀도로 계산' 옵션은 저장값을 표시 자릿수로 줄이므로 켜지 마십시오. 보고용으로 소수 4~6자리로 줄여 둔 표(군집별 실루엣, 군집 수별 지표 등)의 전체 정밀도 값은 좌표에서 다시 계산합니다.",
+        "'random halves' 같은 영어 저장값의 한국어 표시 대응은 패키지 00_안내/README.txt의 용어 대응표에 있습니다.",
         "개인정보(이름·전화번호·세션 ID·토큰)는 포함하지 않으며 응답은 가명 연구 ID로만 제공합니다. 한국 파일에는 한국 응답만, 일본 파일에는 일본 응답만, 전체 파일에는 두 국가를 국가 열로 구분해 포함합니다.",
         "행렬: S(대각선 N, 유사성) → P=S/N(대각선 1) → D=N−S(대각선 0) → δ=1−S/N(대각선 0, MDS 입력). 기존 '빈도행렬(대각선 0)'은 S의 대각선만 0으로 표시한 유사성 빈도이며 비유사성 행렬이 아닙니다.",
         "묶음 번호는 명목 식별자입니다. 크기·순서에 의미가 없으며 평균·상관 등 연속형 점수처럼 계산하지 마십시오.",

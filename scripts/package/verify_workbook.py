@@ -173,7 +173,7 @@ cs = wb_v["좌표·군집(추천)"]
 chdr = [c.value for c in cs[2]]
 crow = [[c.value for c in r] for r in cs.iter_rows(min_row=3)]
 coords_csv = read_csv("05_MDS/좌표_2D.csv")
-check("coordinates equal 좌표_2D.csv (full precision to 1e-11) and the bundle", all(abs(float(coords_csv[i + 1][1]) - crow[i][2]) < 1e-11 and abs(float(coords_csv[i + 1][2]) - crow[i][3]) < 1e-11 for i in range(n)) and np.allclose(np.array([[r[2], r[3]] for r in crow]), np.array(bundle["analysis"]["primary"]["coordinates"]), atol=1e-11, rtol=0))
+check("coordinates equal 좌표_2D.csv exactly (the CSV keeps full precision) and the bundle", all(float(coords_csv[i + 1][1]) == crow[i][2] and float(coords_csv[i + 1][2]) == crow[i][3] for i in range(n)) and np.allclose(np.array([[r[2], r[3]] for r in crow]), np.array(bundle["analysis"]["primary"]["coordinates"]), atol=1e-12, rtol=0))
 rec = bundle["naming"]["proposal"]
 sig = [int(x) for x in rec["solution"]["signature"].split(",")]
 check("cluster membership equals the stored recommended solution", [r[4] for r in crow] == sig)
