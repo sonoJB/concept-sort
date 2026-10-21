@@ -81,7 +81,7 @@ export const REFERENCES: Record<ReferenceKey, Reference> = {
     doi: "10.1016/j.evalprogplan.2011.10.003",
     url: "https://doi.org/10.1016/j.evalprogplan.2011.10.003",
     access: "ABSTRACT_ONLY",
-    accessNoteKo: "원문 접근이 차단되어(출판사 403) 초록 수준만 확인함. 69개 연구의 Stress 평균 0.28·관찰 범위 0.17–0.34(§3.5)는 2차 문헌(Rocliffe et al., 2023)이 이 논문에 귀속한 내용이며 표준편차 0.04는 연구자가 제공한 값으로 2차 문헌에서도 확인하지 못함. 원문 대조 필요. 다른 2차 문헌(Henderikx & Stoffers, 2023)은 0.205–0.365를 이 논문의 범위로 제시해 서로 다름.",
+    accessNoteKo: "원문 접근이 차단되어(출판사 403) 초록 수준만 확인함. 69개 연구의 Stress 평균 0.28·관찰 범위 0.17–0.34(§3.5)는 2차 문헌(Rocliffe et al., 2023)이 이 논문에 귀속한 내용이며 표준편차 0.04는 연구자가 제공한 값으로 2차 문헌에서도 확인하지 못함. 원문 대조 필요. 0.205–0.365(평균 0.285)는 별개의 비교 범위로 일부 2차 문헌이 Kane & Trochim(2007)이 인용한 Trochim의 미발표 1993년 검토에서 나온 것으로 설명하며(전문 미열람) Henderikx & Stoffers(2023)는 이 논문의 인용으로 제시함: 서로 다른 자료·범위일 수 있어 모순으로 단정하지 않고 출처 귀속은 원문 확인 필요.",
     locations: [],
   },
   rocliffe2023: {
