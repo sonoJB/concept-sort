@@ -143,7 +143,7 @@ export function evaluateMetrics(a: ScopeAnalysis, recommendedK: number | null): 
         {
           kind: "empirical_comparison_range",
           labelKo: "선행 개념도 연구의 분포(비교 참고)",
-          text: `69개 개념도 연구의 Stress: 평균 ${CONCEPT_MAPPING_STRESS_REFERENCE.mean.toFixed(2)}, 표준편차 ${CONCEPT_MAPPING_STRESS_REFERENCE.sd.toFixed(2)}, 관찰 범위 ${CONCEPT_MAPPING_STRESS_REFERENCE.low.toFixed(2)}–${CONCEPT_MAPPING_STRESS_REFERENCE.high.toFixed(2)}(Rosas & Kane, 2012, §3.5에 귀속). 관찰된 범위일 뿐 보편적인 합격 기준이 아님. ※ 원문 직접 대조 불가(접근 차단): 평균과 범위는 2차 문헌(Rocliffe et al., 2023)이 같은 논문에 귀속하며 표준편차는 연구자 제공값이고, 다른 2차 문헌(Henderikx & Stoffers, 2023)은 0.205–0.365를 같은 논문의 범위로 제시해 서로 다름 → 원문 확인 필요.`,
+          text: `69개 개념도 연구의 Stress: 평균 ${CONCEPT_MAPPING_STRESS_REFERENCE.mean.toFixed(2)}, 표준편차 ${CONCEPT_MAPPING_STRESS_REFERENCE.sd.toFixed(2)}, 관찰 범위 ${CONCEPT_MAPPING_STRESS_REFERENCE.low.toFixed(2)}–${CONCEPT_MAPPING_STRESS_REFERENCE.high.toFixed(2)}(Rosas & Kane, 2012, §3.5에 귀속). 관찰된 범위일 뿐 보편적인 합격 기준이 아님. ※ 원문 직접 대조 불가(접근 차단): 평균과 범위는 2차 문헌(Rocliffe et al., 2023)이 같은 논문에 귀속하며 표준편차는 연구자 제공값이다(한 2차 문헌은 연구 수를 68편으로 적음). 0.205–0.365(평균 0.285)는 별개의 비교 범위로, 일부 2차 문헌은 이를 Kane & Trochim(2007)이 인용한 Trochim의 미발표 1993년 문헌 검토에서 나온 것으로 설명하고(검색 발췌 수준에서만 확인, 전문 미열람), Henderikx & Stoffers(2023)는 Rosas & Kane(2012)의 인용으로 제시한다. 두 범위는 서로 다른 자료·관찰 범위일 수 있어 모순이나 오류로 판단하지 않으며, 출처 귀속은 원문 확인이 필요하다.`,
           sourceKeys: ["rosas2012", "rocliffe2023", "henderikx2023"],
           location: "Rosas & Kane (2012) §3.5 (원문 미대조); Rocliffe et al. (2023) Results > Sorting/cluster map",
         },
