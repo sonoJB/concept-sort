@@ -21,6 +21,19 @@ def cluster_style(c):
     return CLUSTER_COLORS[i], CLUSTER_MARKERS[i], i == RING_INDEX
 
 
+def ko_design(design):
+    """Korean reading of the stored split-half design text (the stored English string is not changed anywhere in the data files)."""
+    import re
+
+    m = re.fullmatch(r"(KR|JP) random halves", design or "")
+    if m:
+        return f"{'한국' if m.group(1) == 'KR' else '일본'} 참여자를 무작위로 두 반쪽으로 나눔"
+    m = re.fullmatch(r"stratified by country: each half receives (\d+) KR \+ (\d+) JP", design or "")
+    if m:
+        return f"국가별 층화 무작위 반분: 각 반쪽에 한국 {m.group(1)}명 + 일본 {m.group(2)}명"
+    return design
+
+
 def fmt(v, d=4):
     if v is None or (isinstance(v, float) and not math.isfinite(v)):
         return "계산 불가"

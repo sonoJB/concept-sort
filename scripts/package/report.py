@@ -4,7 +4,7 @@ import os
 
 import numpy as np
 
-from common import SCOPE_LABEL_KO, fmt, sid
+from common import SCOPE_LABEL_KO, fmt, ko_design, sid
 from scopedata import ScopeData
 
 CLAIM_SOURCE_ROWS = [
@@ -73,7 +73,7 @@ def blocks_for(d: ScopeData, figs, tables, verif, figtext=None):
         "최종 좌표에서 raw stress, Stress-1, RSQ를 다시 계산해 저장값과 일치함을 확인했고, 독립 구현(numpy)으로 교차 검증함.",
         "1~5차원은 같은 방법으로 계산한 보조 Stress 비교이며 3차원 이상 결과를 2차원 지도로 쓰지 않음.",
         f"군집분석: 2차원 지도 좌표에 대한 Ward 최소분산 계층 군집(Ward, 1963; Lance–Williams 갱신). 군집 수 k = {a['settings']['ward']['kMin']}–{a['settings']['ward']['kMax']}를 비교하고 지도 실루엣·δ 실루엣(Rousseeuw, 1987), 병합 높이·비용, 최소 군집 크기, 문항 내용을 함께 검토함.",
-        f"반복 분할 신뢰도: 참여자를 무작위로 반분({a['splitHalf']['design']})해 문항 쌍(1,081개) 상관을 {a['splitHalf']['repetitions']}회(seed {a['splitHalf']['seed']}) 계산하고 Spearman–Brown 값을 함께 보고함. 행렬 신뢰도이며 지도 신뢰도가 아님.",
+        f"반복 분할 신뢰도: 참여자를 무작위로 반분({ko_design(a['splitHalf']['design'])})해 문항 쌍(1,081개) 상관을 {a['splitHalf']['repetitions']}회(seed {a['splitHalf']['seed']}) 계산하고 Spearman–Brown 값을 함께 보고함. 행렬 신뢰도이며 지도 신뢰도가 아님.",
     ]))
 
     # ---------------------------------------------------------------------------------------- 3
@@ -129,7 +129,7 @@ def blocks_for(d: ScopeData, figs, tables, verif, figtext=None):
         B.append(("p", "군집 추천이 첨부되지 않았습니다."))
     B.append(("h3", "3.5 반복 분할 신뢰도"))
     sh = a["splitHalf"]
-    B.append(("p", f"{sh['design']}, {sh['repetitions']}회(seed {sh['seed']}). 원상관 평균 {fmt(sh['rawR']['mean'], 3)}(중앙값 {fmt(sh['rawR']['median'], 3)}, 최소–최대 {fmt(sh['rawR']['min'], 3)}–{fmt(sh['rawR']['max'], 3)}), Spearman–Brown 평균 {fmt(sh['spearmanBrown']['mean'], 3)}. 계산 불능 {sh['undefinedCount']}회, 음수 {sh['negativeRawCount']}회. 분위수 범위는 이 표본의 무작위 분할 분포이며 모집단 신뢰구간이 아니고, 행렬 신뢰도를 지도 신뢰도로 바꾸어 해석하지 않습니다."))
+    B.append(("p", f"{ko_design(sh['design'])}, {sh['repetitions']}회(seed {sh['seed']}). 원상관 평균 {fmt(sh['rawR']['mean'], 3)}(중앙값 {fmt(sh['rawR']['median'], 3)}, 최소–최대 {fmt(sh['rawR']['min'], 3)}–{fmt(sh['rawR']['max'], 3)}), Spearman–Brown 평균 {fmt(sh['spearmanBrown']['mean'], 3)}. 계산 불능 {sh['undefinedCount']}회, 음수 {sh['negativeRawCount']}회. 분위수 범위는 이 표본의 무작위 분할 분포이며 모집단 신뢰구간이 아니고, 행렬 신뢰도를 지도 신뢰도로 바꾸어 해석하지 않습니다."))
     if "split" in figs:
         B.append(("fig", figs["split"], cap("split", "반복 분할 신뢰도 분포")))
     B.append(("p", "브리징 값: 산식과 정규화 방식을 학술지 원문에서 확인하지 못해 산출하지 않았습니다(임의 대체식을 공식 브리징 값이라고 부르지 않음)."))

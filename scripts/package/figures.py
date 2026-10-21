@@ -224,7 +224,7 @@ def draw_map(coords, labels, clusters, names, title, show_numbers=True, show_bou
         legend_title = "군집 (명도·기호·해치가 같은 점 = 같은 군집)"
     left, right_m, top, gap, head, row, foot = 0.52, 0.12, 0.34, 0.20, 0.22, 0.20, 0.30
     if not show_legend:
-        gap, head, row = 0.05, 0.0, 0.0
+        gap, head, row, foot = 0.05, 0.0, 0.0, 0.50  # the x-axis label needs its own line above the note
     ax_w = W_IN - left - right_m
     H = top + ax_w + gap + head + k * row + foot
     fig = plt.figure(figsize=(W_IN, H))
@@ -477,7 +477,9 @@ def fig_split_half(raw_values, sb_values, design, title, note=""):
         ax.set_xlabel(name)
         _clean(ax)
     axes[0].set_ylabel("분할 횟수")
-    fig.suptitle(f"{title}\n{design}", fontsize=8, x=0.01, ha="left")
+    from common import ko_design
+
+    fig.suptitle(f"{title}\n{ko_design(design)}", fontsize=8, x=0.01, ha="left")
     stamp(fig, note)
     return fig
 
