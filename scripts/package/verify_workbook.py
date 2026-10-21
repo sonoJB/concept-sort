@@ -161,6 +161,12 @@ else:
     check("ALL statement sheet has both languages", any("한국어" in str(h) for h in shdr) and any("日本語" in str(h) for h in shdr), shdr)
 st_rows = [[c.value for c in r] for r in stm.iter_rows(min_row=2)]
 check("47 statements in order S01..S47", [r[0] for r in st_rows] == [f"S{i + 1:02d}" for i in range(n)])
+stm_csv = read_csv("03_진술문/진술문_대응표.csv")[1:]  # 번호, 순서, DB id, 한국어, 日本語, 검수
+ko_ok = all(r[3 if a.scope != "JP" else 5] == c[3] for r, c in zip(st_rows, stm_csv))
+check("Korean statement text equals the statement table CSV character for character", ko_ok)
+if a.scope in ("JP", "ALL"):
+    ja_col = 3 if a.scope == "JP" else 4
+    check("Japanese statement text equals the statement table CSV character for character (kana/kanji preserved)", all(r[ja_col] == c[4] for r, c in zip(st_rows, stm_csv)) and any(re.search(r"[぀-ヿ]", str(r[ja_col])) for r in st_rows))
 
 # coordinates / clusters
 cs = wb_v["좌표·군집(추천)"]
