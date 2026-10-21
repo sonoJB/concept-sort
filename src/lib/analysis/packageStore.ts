@@ -36,6 +36,19 @@ export function writePackageFile(bytes: Uint8Array): { storedFile: string; sha25
   return { storedFile, sha256 };
 }
 
+export type PackageFileState = "OK" | "MISSING" | "SIZE_MISMATCH";
+
+/** Cheap state of a registered package's file (existence + recorded size; no hashing) for status screens. The full SHA-256 is checked on every download. */
+export function packageFileState(storedFile: string, byteSize: number): PackageFileState {
+  if (!/^[0-9a-f]{64}\.zip$/.test(storedFile)) return "MISSING";
+  try {
+    const st = fs.statSync(path.join(packageStorageDir(), storedFile));
+    return st.size === byteSize ? "OK" : "SIZE_MISMATCH";
+  } catch {
+    return "MISSING";
+  }
+}
+
 export function readPackageFile(storedFile: string, expectedSha256: string): Uint8Array | null {
   if (!/^[0-9a-f]{64}\.zip$/.test(storedFile)) return null;
   const p = path.join(packageStorageDir(), storedFile);

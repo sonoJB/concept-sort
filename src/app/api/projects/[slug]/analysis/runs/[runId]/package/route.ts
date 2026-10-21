@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireAdminProjectFromRequest } from "@/lib/analysis/auth";
 import { serializeRunMetadata, isResultBodyExposable } from "@/lib/analysis/runSerializer";
-import { readPackageFile } from "@/lib/analysis/packageStore";
+import { packageFileState, readPackageFile } from "@/lib/analysis/packageStore";
 import { sha256 } from "@/lib/analysis/packageVerify";
 import { registerPackageBytes } from "@/lib/analysis/packageRegister";
 import { DEFAULT_ANALYSIS_PARAMETERS } from "@/lib/analysis/config";
@@ -27,8 +27,10 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   if (wanted !== null && (!Number.isInteger(wanted) || wanted < 1)) return NextResponse.json({ errorCode: "VERSION_INVALID" }, { status: 400 });
   const pkg = await prisma.analysisPackage.findFirst({ where: { analysisRunId: runId, ...(wanted === null ? {} : { packageVersion: wanted }) }, orderBy: { packageVersion: "desc" } });
   if (!pkg) return NextResponse.json({ errorCode: "PACKAGE_NOT_AVAILABLE" }, { status: 404 });
+  const state = packageFileState(pkg.storedFile, pkg.byteSize);
+  if (state === "MISSING") return NextResponse.json({ errorCode: "PACKAGE_FILE_MISSING", version: pkg.packageVersion }, { status: 500 });
   const bytes = readPackageFile(pkg.storedFile, pkg.sha256);
-  if (!bytes) return NextResponse.json({ errorCode: "PACKAGE_INTEGRITY_FAILURE" }, { status: 500 });
+  if (!bytes) return NextResponse.json({ errorCode: "PACKAGE_INTEGRITY_FAILURE", version: pkg.packageVersion }, { status: 500 });
   return new NextResponse(Buffer.from(bytes), {
     status: 200,
     headers: {

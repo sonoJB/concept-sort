@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireAdminProjectFromRequest } from "@/lib/analysis/auth";
 import { enqueuePackageJob, serializePackageJob } from "@/lib/analysis/packageJobs";
+import { packageFileState } from "@/lib/analysis/packageStore";
 
 /**
  * Package state of ONE run, separate from the analysis state: the latest build job (QUEUED / BUILDING / VERIFYING /
@@ -14,11 +15,11 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   const run = await prisma.analysisRun.findUnique({ where: { id: runId } });
   if (!run || run.projectId !== check.project.id) return NextResponse.json({ errorCode: "RUN_NOT_FOUND" }, { status: 404 });
   const job = await prisma.analysisPackageJob.findFirst({ where: { analysisRunId: runId }, orderBy: { targetVersion: "desc" } });
-  const packages = await prisma.analysisPackage.findMany({ where: { analysisRunId: runId }, orderBy: { packageVersion: "desc" }, select: { packageVersion: true, filename: true, sha256: true, byteSize: true, createdAt: true, builderVersion: true, textVersion: true } });
+  const packages = await prisma.analysisPackage.findMany({ where: { analysisRunId: runId }, orderBy: { packageVersion: "desc" }, select: { packageVersion: true, filename: true, sha256: true, byteSize: true, createdAt: true, builderVersion: true, textVersion: true, storedFile: true } });
   return NextResponse.json({
     runId,
     job: job ? serializePackageJob(job) : null,
-    packages: packages.map((p) => ({ ...p, createdAt: p.createdAt.toISOString() })),
+    packages: packages.map(({ storedFile, ...p }) => ({ ...p, createdAt: p.createdAt.toISOString(), fileStatus: packageFileState(storedFile, p.byteSize) })),
   });
 }
 

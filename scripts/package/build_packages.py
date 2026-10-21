@@ -26,10 +26,42 @@ import figures as F  # noqa: E402
 from common import SCOPE_LABEL_KO, SCOPE_NAME_KO, canonical_hash, fmt, load_json, sha256_bytes, sha256_file, sid, write_csv, write_text  # noqa: E402
 from report import blocks_for, render_docx, render_md, render_pdf  # noqa: E402
 from scopedata import ScopeData  # noqa: E402
-from tables import build_tables, kst, write_csvs, write_xlsx  # noqa: E402
+from tables import build_tables, kst, write_csvs  # noqa: E402
+from workbook import write_analysis_workbook  # noqa: E402
 
 KST = timezone(timedelta(hours=9))
-PKG_INFO = {"packageVersion": 1, "packageFormatVersion": "package-format-3"}
+PKG_INFO = {"packageVersion": 1, "packageFormatVersion": "package-format-4"}
+
+
+SHEETS_COORD = "좌표·군집(추천)"
+SHEETS_REC = "추천군집·문항"
+SHEETS_MEMBER = "군집소속_k별"
+SHEETS_MERGE = "Ward병합이력"
+SHEETS_KCMP = "군집수별_지표"
+SHEETS_PAIRS = "문항쌍_진단"
+SHEETS_SPP = "문항별_stress기여"
+SHEETS_HIST = "(반복이력은 05_MDS/반복이력_2D.csv)"
+SHEETS_DIMS = "차원별_지표"
+SHEETS_SPLITV = "분할반분_전체값"
+SHEETS_CMP = "한일비교; P_한국; P_일본; P차이_한국-일본"
+
+
+def figure_doc(figinfo, font_name):
+    rows = "\n".join(f"| {f['file']} | {f['title']} | {f['png_px']} |" for f in figinfo)
+    return f"""# 그림 제작 기준
+
+- **인쇄 폭 16 cm** 기준으로 한 번 렌더링한 그림입니다. PNG는 600 dpi(폭 3,780 px)로 실제 렌더링했고(작은 화면 캡처를 키우거나 해상도 메타데이터만 바꾼 것이 아님), SVG(글자를 도형으로 변환 — 글꼴 없이도 열림)와 PDF(글꼴 일부 포함)는 같은 그림의 벡터 원본입니다.
+- 특정 학술지의 그림 규정(크기·해상도·형식·색상)은 정해지지 않았으므로 이 기준을 모든 학술지의 공통 규정이라고 주장하지 않습니다. 투고처가 정해지면 해당 규정에 맞춰 같은 데이터 파일(그림목록.csv의 ‘대응 데이터’)로 다시 만들 수 있습니다.
+- 좌표와 군집 소속은 저장된 결과 그대로이며 점을 이동하거나 흔들지 않았습니다. 번호가 겹치면 글자 위치만 옮기고 연결선으로 표시했습니다. 두 축은 같은 거리 단위(같은 눈금 간격)입니다. 네 사분면을 네 군집으로 해석하지 않았습니다.
+- 모든 그림에 범위·표본 수·진술문 수·분석 엔진 버전·실행 ID·패키지 버전을 아래쪽에 표시했습니다.
+- 글꼴: {font_name}. 한국어와 수학 기호가 글꼴에 없으면 제작이 중단되도록 했습니다(깨진 글자 방지). 서버가 쓰는 Noto Sans CJK는 SIL Open Font License 1.1이며 PDF·SVG에 포함·변환이 허용됩니다. 로컬 제작 시 Windows 글꼴(맑은 고딕)을 쓰면 그 글꼴의 라이선스를 확인해야 합니다.
+- 보고서(PDF·Word) 안의 그림은 파일 크기 때문에 같은 렌더를 절반 해상도(300 dpi)로 줄인 사본이며, 이 폴더의 PNG가 600 dpi 원본입니다.
+- 색상판은 색 + 기호 모양, 흑백판은 명도 + 기호 + 해치로 군집을 구분합니다.
+
+| 파일 | 제목 | PNG 크기 |
+|---|---|---|
+{rows}
+"""
 
 
 def adjusted_rand(a, b):
@@ -69,7 +101,7 @@ def main():
     ap.add_argument("--scopes", nargs="*", default=["KR", "JP", "ALL"])
     ap.add_argument("--skip-repro", action="store_true")
     ap.add_argument("--package-version", type=int, default=1, help="version of the package FOR THIS RUN (1 = first); versions > 1 get a _pkgN file name suffix")
-    ap.add_argument("--package-format", default="package-format-3", help="layout / document version of the package (distinct from the analysis engine version)")
+    ap.add_argument("--package-format", default="package-format-4", help="layout / document version of the package (distinct from the analysis engine version)")
     args = ap.parse_args()
     PKG_INFO.update({"packageVersion": args.package_version, "packageFormatVersion": args.package_format})
 
@@ -114,49 +146,100 @@ def build_one(scope, bundles, raw, args):
         rows += [["지도 비교: Procrustes 정렬(직교 변환 + 평행 이동, 크기 조정 없음)", f"반사 {'예' if refl else '아니오'}, 회전 {ang:.1f}°, 정규화 불일치도(1−(Σσ)²/(‖A‖²‖B‖²)) {disp:.4f}, 상대 잔차 {rel:.4f}"], ["지도 비교 해석 주의", "정렬 후에도 같은 위치가 같은 의미임을 뜻하지 않음; 탐색적"]] + [[f"군집 소속 일치(조정 Rand 지수) {k}", v] for k, v in ari.items()]
         T["compare"] = (name, hdr, rows, note)
 
-    # ---------------------------------------------------------------- figures
+    # ---------------------------------------------------------------- figures (print size 16 cm, PNG 600 dpi + SVG + PDF)
     figs = {}
+    figtext = {}
     figinfo = []
-
-    def fig(key, fname, desc, make):
-        out = F.save_all(make(), os.path.join(D08, fname))
-        figs[key] = f"08_그림/{fname}.png"
-        for o in out:
-            reg(o, desc)
-        figinfo.append([fname, desc])
-
-    coords = d.coords
     label = SCOPE_LABEL_KO[scope]
     k = d.rec_k
+    stamp_text = f"{label} · N={d.N} · 진술문 {d.n}개 · 분석 엔진 v{b['meta']['algorithmVersion']} · 실행 {b['meta']['runId'][:10]} · 패키지 v{args.package_version}"
+    font_name = F.font_used()
+
+    def fig(key, fname, title, make, data, sheet, caption, note, only_if=True):
+        if not only_if:
+            return
+        out = F.save_all(make(), os.path.join(D08, fname))
+        figs[key] = f"08_그림/{fname}.png"
+        figtext[key] = f"{caption} {note}"
+        px = F.png_size(out[0])
+        assert px[0] == F.PNG_WIDTH_PX, (fname, px)
+        for o in out:
+            reg(o, f"{title} ({os.path.splitext(o)[1][1:].upper()}{' 600 dpi, 인쇄 폭 16 cm' if o.endswith('.png') else ' 벡터'})")
+        figinfo.append({"file": fname, "title": title, "caption": caption, "note": note, "data": data, "sheet": sheet, "png_px": f"{px[0]}×{px[1]}", "width_cm": "16", "dpi": "600 (실제 렌더링)", "font": font_name})
+
+    coords = d.coords
     names = {c: d.cluster_name(c) for c in range(1, (k or 0) + 1)}
-    fig("map_plain", f"F01_quadrant_point_map_{scope}", f"{label} 사분면 점지도(군집 구분 없음)", lambda: F.draw_plain_quadrant_map(coords, f"{label} 사분면 점지도 (2차원, 문항 번호)"))
+    N_ = d.N
+    ORDER = "문항 번호는 분석 순서(S01…S47)와 같다."
+    fig("map_plain", f"F01_point_map_{scope}", f"{label} 2차원 점 지도", lambda: F.draw_plain_point_map(coords, f"{label} 2차원 점 지도 (점 = 진술문, 숫자 = 문항 번호)", stamp_text),
+        "05_MDS/좌표_2D.csv", SHEETS_COORD,
+        f"{label} 유사성 분류 자료(N={N_})의 2차원 MDS 점 지도.",
+        "점은 진술문이고 숫자는 문항 번호이다. 좌표는 저장된 최종 비계량 MDS 해이며 이동·회전·보정하지 않았다. 축의 방향은 임의이고 두 축은 같은 거리 단위를 쓴다. 점선(x=0, y=0)은 원점 표시일 뿐이며 네 사분면을 군집이나 해석 단위로 쓰지 않았다. 겹치는 번호는 점이 아니라 글자의 위치만 옮기고 연결선으로 표시했다.")
     if d.sol:
-        fig("map_color", f"F02_concept_map_k{k}_color_{scope}", f"{label} 개념도 추천 {k}군집(색)", lambda: F.draw_map(coords, d.sol["labels"], d.sol["clusters"], names, f"{label} 개념도 (2차원, {k}군집 — 자동 제안명)"))
-        fig("map_gray", f"F03_concept_map_k{k}_bw_{scope}", f"{label} 개념도 추천 {k}군집(흑백)", lambda: F.draw_map(coords, d.sol["labels"], d.sol["clusters"], names, f"{label} 개념도 (흑백, {k}군집)", gray=True))
+        fig("map_color", f"F02_concept_map_k{k}_color_{scope}", f"{label} 개념도 추천 {k}군집(색)", lambda: F.draw_map(coords, d.sol["labels"], d.sol["clusters"], names, f"{label} 개념도 (2차원, {k}군집 — 자동 제안명, 연구자 확정 전)", note=stamp_text),
+            "05_MDS/좌표_2D.csv; 07_군집/추천_군집.csv; 07_군집/군집별_문항_명명근거.csv", f"{SHEETS_COORD}; {SHEETS_REC}",
+            f"{label} 개념도(Ward 군집, 군집 수 k={k}, 자동 제안·연구자 확정 전).",
+            "색과 기호가 같은 점은 같은 군집이다. 윤곽은 군집에 속한 점의 볼록 껍질로 군집 소속 표시일 뿐이며 윤곽의 크기·모양에 통계적 의미를 부여하지 않았다. 군집 이름은 문항 내용을 읽고 만든 자동 제안이다. 군집 번호나 지도 방향이 같아도 다른 국가의 군집과 같은 개념이라고 가정하지 않는다. " + ORDER)
+        fig("map_gray", f"F03_concept_map_k{k}_bw_{scope}", f"{label} 개념도 추천 {k}군집(흑백)", lambda: F.draw_map(coords, d.sol["labels"], d.sol["clusters"], names, f"{label} 개념도 (흑백, {k}군집)", gray=True, note=stamp_text),
+            "05_MDS/좌표_2D.csv; 07_군집/추천_군집.csv", f"{SHEETS_COORD}; {SHEETS_REC}",
+            f"{label} 개념도의 흑백판(군집 수 k={k}).", "군집은 기호·명도·해치로 구분한다. 나머지 주석은 색상판과 같다.")
         for alt in d.proposal["alternatives"]:
             s_alt = d.solution(alt["k"])
-            fig(f"map_alt{alt['k']}", f"F04_concept_map_k{alt['k']}_alternative_{scope}", f"{label} 개념도 비교 대안 {alt['k']}군집", lambda s_alt=s_alt, alt=alt: F.draw_map(coords, s_alt["labels"], s_alt["clusters"], {}, f"{label} 개념도 비교 대안 ({alt['k']}군집, 명칭 미부여)"))
-        fig("dendro", f"F05_ward_dendrogram_{scope}", f"{label} Ward 덴드로그램", lambda: F.fig_dendrogram(a_ward(d), d.n, d.sol["labels"], k, f"{label} Ward 덴드로그램 (k={k} 절단)"))
-        fig("sil", f"F06_silhouette_k{k}_{scope}", f"{label} 문항별 실루엣(지도 좌표 기준)", lambda: F.fig_silhouette(d.sol["labels"], d.sol["silhouetteMap"]["perPoint"], names, f"{label} 실루엣 (k={k})"))
-        fig("kcmp", f"F07_k_comparison_{scope}", f"{label} 군집 수 비교", lambda: F.fig_k_comparison(d.a["solutions"], d.a["ward"]["merges"], k, f"{label} 군집 수 비교"))
+            fig(f"map_alt{alt['k']}", f"F04_concept_map_k{alt['k']}_alternative_{scope}", f"{label} 개념도 비교 대안 {alt['k']}군집", lambda s_alt=s_alt, alt=alt: F.draw_map(coords, s_alt["labels"], s_alt["clusters"], {}, f"{label} 개념도 비교 대안 ({alt['k']}군집, 명칭 미부여)", note=stamp_text),
+                "05_MDS/좌표_2D.csv; 07_군집/군집소속_k별.csv", f"{SHEETS_COORD}; {SHEETS_MEMBER}",
+                f"{label} 개념도의 비교 대안(군집 수 k={alt['k']}).", "추천 해와 같은 좌표에서 군집 수만 바꾼 비교용이며 명칭을 붙이지 않았다. 군집 수는 수학적 유일 해가 아니다.")
+        fig("dendro", f"F05_ward_dendrogram_{scope}", f"{label} Ward 덴드로그램", lambda: F.fig_dendrogram(a_ward(d), d.n, d.sol["labels"], k, f"{label} Ward 덴드로그램 (k={k} 절단)", stamp_text),
+            "07_군집/병합이력_병합비용.csv", SHEETS_MERGE,
+            f"{label} 2차원 지도 좌표에 대한 Ward 계층 군집 덴드로그램.", f"세로축은 Ward 병합 높이, 점선은 k={k} 절단선이며 가로축 번호의 색은 절단 시 군집이다. 군집 수는 병합 높이·실루엣·최소 군집 크기·문항 내용을 함께 검토해 정한 제안이다.")
+        fig("sil", f"F06_silhouette_k{k}_{scope}", f"{label} 문항별 실루엣(지도 좌표 기준)", lambda: F.fig_silhouette(d.sol["labels"], d.sol["silhouetteMap"]["perPoint"], names, f"{label} 실루엣 (k={k})", stamp_text),
+            "07_군집/군집별_문항_명명근거.csv", f"{SHEETS_COORD}",
+            f"{label} 추천 해(k={k})의 문항별 실루엣 폭(지도 좌표 기준).", "s(i)=(b(i)−a(i))/max(a(i),b(i)). 양호 기준을 원문에서 확인하지 못해 값만 보고하며, 지도 실루엣 0.1 미만을 경계 문항으로 표시한 것은 연구자 검토를 돕는 탐색적 규칙이다.")
+        fig("kcmp", f"F07_k_comparison_{scope}", f"{label} 군집 수별 진단 지표", lambda: F.fig_k_comparison(d.a["solutions"], d.a["ward"]["merges"], k, f"{label} 군집 수별 진단 지표", stamp_text),
+            "07_군집/군집후보비교.csv", SHEETS_KCMP,
+            f"{label} 군집 수(k)별 저장된 진단 지표: (a) 실루엣 평균 폭, (b) Ward 병합 높이, (c) 군집 간 제곱합 비율, (d) 최소 군집 크기.",
+            f"점선은 자동 추천 k={k}(연구자 확정 전)이다. 군집 간 제곱합 비율은 k가 커질수록 커지는 경향이 있고 어느 지표도 군집 수의 수학적 정답을 주지 않는다.")
     pr = d.a["pairDiagnostics"]
-    fig("shepard", f"F08_shepard_{scope}", f"{label} Shepard 다이어그램", lambda: F.fig_shepard([x["delta"] for x in pr], [x["distance"] for x in pr], [x["disparityKruskal"] for x in pr], f"{label} Shepard 다이어그램 (2차원)"))
-    fig("iter", f"F09_objective_history_{scope}", f"{label} 목적함수 반복 이력", lambda: F.fig_iterations(d.a["primary"]["trace"]["rawStress"], d.a["primary"]["selected"]["main"]["iterations"], d.a["primary"]["trace"]["thinned"], f"{label} raw stress 반복 이력"))
-    fig("dims", f"F10_stress_by_dimension_{scope}", f"{label} 차원별 Stress-1", lambda: F.fig_dimensions(d.a["dimensions"], f"{label} 차원별 Stress-1 (1~5차원, 보조 비교)"))
+    fig("shepard", f"F08_shepard_{scope}", f"{label} Shepard 도표", lambda: F.fig_shepard([x["delta"] for x in pr], [x["distance"] for x in pr], [x["disparityKruskal"] for x in pr], f"{label} Shepard 도표 (2차원)", stamp_text),
+        "06_진단/쌍진단_1081.csv", SHEETS_PAIRS,
+        f"{label} 2차원 해의 Shepard 도표(문항 쌍 {len(pr):,}개).", "점은 문항 쌍의 입력 비유사성 δ와 배치 거리 d이고 계단선은 δ 수준별 Kruskal 디스패리티 d̂*(Stress-1 정의)이다. 동점이 많아 δ 수준이 적다.")
+    fig("resid", f"F15_residual_diagnostics_{scope}", f"{label} 잔차 진단", lambda: F.fig_residuals([x["delta"] for x in pr], [x["residualKruskal"] for x in pr], f"{label} 잔차 진단 (d̂* − d)", stamp_text),
+        "06_진단/쌍진단_1081.csv", SHEETS_PAIRS,
+        f"{label} 2차원 해의 잔차 진단: (a) 잔차 대 입력 비유사성, (b) 잔차 분포.", "잔차는 Kruskal 디스패리티와 배치 거리의 차이(d̂*−d)이며 저장된 쌍 진단표의 값이다. δ 수준별 평균 잔차는 기술 통계이며 추가 모형이 아니다.")
+    spp_pct = [row[2] for row in T["spp"][2]]
+    fig("itemstress", f"F16_item_stress_contribution_{scope}", f"{label} 문항별 stress 기여", lambda: F.fig_item_stress(spp_pct, f"{label} 문항별 raw stress 기여 비율", stamp_text),
+        "06_진단/점별_stress기여.csv", SHEETS_SPP,
+        f"{label} 문항별 raw stress 기여 비율(47개 문항의 합 = 100%).", "기여는 정규화 디스패리티 기준 잔차 제곱의 문항별 합이다. 기여가 큰 문항을 제외하거나 가중하지 않았으며 적합도를 높이기 위한 조정은 없다.")
+    fig("iter", f"F09_objective_history_{scope}", f"{label} 목적함수 반복 이력", lambda: F.fig_iterations(d.a["primary"]["trace"]["rawStress"], d.a["primary"]["selected"]["main"]["iterations"], d.a["primary"]["trace"]["thinned"], f"{label} raw stress 반복 이력", stamp_text),
+        "05_MDS/반복이력_2D.csv", SHEETS_HIST,
+        f"{label} 선택한 해의 raw stress 반복 이력.", "수렴은 raw stress의 상대 감소가 허용오차 이하가 된 것이며 2차원 표현의 적합도나 전역 최적을 뜻하지 않는다.")
+    fig("dims", f"F10_stress_by_dimension_{scope}", f"{label} 차원별 Stress-1·RSQ", lambda: F.fig_dimensions(d.a["dimensions"], f"{label} 차원별 Stress-1·RSQ (1~5차원, 보조 비교)", stamp_text),
+        "05_MDS/차원비교_1-5D.csv", SHEETS_DIMS,
+        f"{label} 차원 수(1~5)별 저장된 Stress-1과 RSQ.", "2차원은 시각화를 위해 사전에 정한 차원이며 이 그림으로 최적 차원을 결정하지 않았다. 차원이 늘면 Stress가 줄어드는 것은 일반적 경향이다. 1·3~5차원은 보조 비교이다.")
     sh = d.a["splitHalf"]
-    fig("split", f"F11_split_half_{scope}", f"{label} 반복 분할 신뢰도 분포", lambda: F.fig_split_half(sh["rawValues"], sh["spearmanBrownValues"], sh["design"], f"{label} 반복 분할 신뢰도 ({sh['repetitions']}회)"))
+    fig("split", f"F11_split_half_{scope}", f"{label} 반복 분할 신뢰도 분포", lambda: F.fig_split_half(sh["rawValues"], sh["spearmanBrownValues"], sh["design"], f"{label} 반복 분할 신뢰도 ({sh['repetitions']}회)", stamp_text),
+        "09_보완분석/반복분할_신뢰도_전체값.csv", SHEETS_SPLITV,
+        f"{label} 반복 분할 신뢰도({sh['repetitions']}회 무작위 반분)의 분포.", "행렬의 안정성 지표이며 분위수 범위는 이 표본의 반복 분포이지 모집단 신뢰구간이 아니다. 군집 명칭의 타당성을 뜻하지 않는다.")
     if scope == "ALL" and cmp_extra:
         c = d.b["comparison"]
         diff = np.array(c["Skr"], dtype=float) / c["nKr"] - np.array(c["Sjp"], dtype=float) / c["nJp"]
-        fig("cmp_heat", "F12_KR_JP_difference_heatmap", "P_KR − P_JP 히트맵(공통 색 범위)", lambda: F.fig_heatmap(diff, c["diffColorLimit"], "P_KR − P_JP"))
+        fig("cmp_heat", "F12_KR_JP_difference_heatmap", "P_KR − P_JP 히트맵", lambda: F.fig_heatmap(diff, c["diffColorLimit"], "P_KR − P_JP (공통 색 범위)", stamp_text),
+            "09_보완분석/P_KR-P_JP.csv", SHEETS_CMP,
+            "한국과 일본의 문항 쌍 유사성 비율 차이(P_KR − P_JP).", "각 국가의 N으로 나눈 비율을 비교했으며 색 범위는 두 방향에서 같다. 탐색적 기술 통계이며 통계검정이 아니다.")
         iu = np.triu_indices(d.n, 1)
         pk = (np.array(c["Skr"], dtype=float) / c["nKr"])[iu]
         pj = (np.array(c["Sjp"], dtype=float) / c["nJp"])[iu]
-        fig("cmp_scatter", "F13_KR_JP_P_scatter", "P_KR 대 P_JP 산점도", lambda: F.fig_scatter_p(pk, pj, "한국 대 일본 문항 쌍 유사성 비율", c["pearson"], c["spearman"]))
+        fig("cmp_scatter", "F13_KR_JP_P_scatter", "P_KR 대 P_JP 산점도", lambda: F.fig_scatter_p(pk, pj, "한국 대 일본 문항 쌍 유사성 비율", c["pearson"], c["spearman"], stamp_text),
+            "09_보완분석/P_KR.csv; 09_보완분석/P_JP.csv", SHEETS_CMP,
+            "한국과 일본의 문항 쌍 유사성 비율 산점도.", "문항 쌍은 독립 관측치가 아니므로 상관계수의 p값은 제시하지 않았다.")
         dk, dj = cmp_extra["dk"], cmp_extra["dj"]
-        fig("cmp_proc", "F14_KR_JP_procrustes", "한국·일본 지도 Procrustes 정렬(탐색적)", lambda: F.fig_aligned_maps(dk.coords - dk.coords.mean(0), cmp_extra["aligned"], dk.sol["labels"], dj.sol["labels"], f"직교 변환·평행 이동만 허용(크기 조정 없음): 반사 {'예' if cmp_extra['refl'] else '아니오'}, 회전 {cmp_extra['ang']:.1f}°, 정규화 불일치도 {cmp_extra['disp']:.3f}. 각 지도는 자신의 군집(한국 k={dk.rec_k}, 일본 k={dj.rec_k})을 표시. 같은 위치가 같은 의미임을 뜻하지 않음", "한국 · 일본 지도의 Procrustes 정렬(탐색적)"))
-    write_csv(os.path.join(D08, "그림목록.csv"), ["파일(확장자 제외)", "설명(.png .svg .pdf 세 형식)"], figinfo)
-    reg(os.path.join(D08, "그림목록.csv"), "그림 파일 목록")
+        fig("cmp_proc", "F14_KR_JP_procrustes", "한국·일본 지도 Procrustes 정렬(탐색적)", lambda: F.fig_aligned_maps(dk.coords - dk.coords.mean(0), cmp_extra["aligned"], dk.sol["labels"], dj.sol["labels"], f"직교 변환·평행 이동만 허용(크기 조정 없음): 반사 {'예' if cmp_extra['refl'] else '아니오'}, 회전 {cmp_extra['ang']:.1f}°, 정규화 불일치도 {cmp_extra['disp']:.3f}. 각 지도는 자신의 군집(한국 k={dk.rec_k}, 일본 k={dj.rec_k})을 표시. 같은 위치가 같은 의미임을 뜻하지 않음", "한국 · 일본 지도의 Procrustes 정렬(탐색적)", stamp_text),
+            "05_MDS/좌표_2D.csv", SHEETS_COORD,
+            "한국 지도와 정렬한 일본 지도의 비교(탐색적).", "정렬 후에도 같은 위치가 같은 의미임을 뜻하지 않으며 군집 번호가 같다고 같은 개념이 아니다.")
+    fl_rows = [[f["file"], f["title"], f["caption"], f["note"], f["data"], f["sheet"], "PNG 600 dpi · SVG · PDF", f["png_px"], f["width_cm"], f["font"]] for f in figinfo]
+    write_csv(os.path.join(D08, "그림목록.csv"), ["파일(확장자 제외)", "제목", "학술지용 캡션", "주석", "대응 데이터 파일(패키지 내 경로)", "대응 데이터 시트(분석자료 Excel)", "형식", "PNG 크기(px)", "인쇄 폭(cm)", "글꼴"], fl_rows)
+    reg(os.path.join(D08, "그림목록.csv"), "그림 파일 목록: 제목·학술지용 캡션·주석·대응 데이터·크기·글꼴")
+    write_text(os.path.join(D08, "그림_제작_안내.md"), figure_doc(figinfo, font_name))
+    reg(os.path.join(D08, "그림_제작_안내.md"), "그림 제작 기준·형식·글꼴 안내")
 
     # ---------------------------------------------------------------- csv + xlsx
     csv_map = {
@@ -174,11 +257,6 @@ def build_one(scope, bundles, raw, args):
     for key, rel in csv_map.items():
         if key in T:
             reg(os.path.join(root, rel), desc_csv[key])
-
-    order = ["summary", "metrics", "recommended", "items", "coords", "M_S", "M_P", "M_D", "M_delta", "M_legacy0", "M_legacyN", "kcompare", "merges", "membership", "dims", "starts", "pairs", "metric_recompute", "spp", "reliability", "validation", "tie", "compare", "compare_diff", "references"]
-    xl = os.path.join(D01, f"{SCOPE_NAME_KO[scope]}_분석요약.xlsx")
-    write_xlsx(xl, T, order)
-    reg(xl, "요약 Excel: 분석요약·지표·기준·출처·추천군집·군집별문항·명명근거·좌표·S·P·D·δ·군집후보비교·신뢰도·자료검증·참고문헌 등")
 
     # ---------------------------------------------------------------- raw (pseudonymous) data
     stm = d.statements
@@ -204,7 +282,7 @@ def build_one(scope, bundles, raw, args):
     import xlsxwriter
 
     xp = os.path.join(D02, "참여자별_분류응답표.xlsx")
-    wb = xlsxwriter.Workbook(xp)
+    wb = xlsxwriter.Workbook(xp, {"strings_to_formulas": False, "strings_to_urls": False, "strings_to_numbers": False})  # participant-typed text must stay text
     wb.set_properties({"created": datetime(2026, 1, 1, tzinfo=timezone.utc), "title": os.path.basename(xp), "author": "concept-sort analysis package"})
     ws = wb.add_worksheet("분류응답")
     for j, h in enumerate(["가명ID", "국가", "제출시각(KST)", "진술문", "문항번호", "묶음번호", "묶음 이름(참여자 입력)"]):
@@ -223,6 +301,9 @@ def build_one(scope, bundles, raw, args):
 
     rewrite_zip_deterministic(xp)
     reg(xp, "참여자별 분류 응답 Excel(분류응답·묶음요약)")
+    xl = os.path.join(D01, f"{SCOPE_NAME_KO[scope]}_분석자료.xlsx")
+    sheets_written = write_analysis_workbook(xl, d, T, resp_rows, figinfo, {"packageVersion": args.package_version, "packageFormatVersion": args.package_format, "interpretationTextVersion": (b.get("interpretation") or {}).get("textVersion")})
+    reg(xl, f"분석자료 Excel({len(sheets_written)}개 시트): 메타데이터·가명 응답·S·P·D·δ·좌표·군집·차원별/군집수별 지표·쌍 진단·안정성·검증·지표 정의·참고문헌·그림 목록·편집 가능한 차트")
     ls = d.label_scan()
     rules = f"""# 자료 포함 규칙 · 원자료 지문 ({SCOPE_LABEL_KO[scope]})
 
@@ -257,12 +338,21 @@ def build_one(scope, bundles, raw, args):
     reg(os.path.join(D07, "군집명_검토상태.md"), "추천 군집 수·군집명의 검토 상태(자동 제안)")
 
     # ---------------------------------------------------------------- report
-    blocks = blocks_for(d, figs, T, vr)
+    blocks = blocks_for(d, figs, T, vr, figtext)
+    import tempfile
+    from PIL import Image
+
+    small = tempfile.mkdtemp(prefix="pkgfigs_")
+    for fn in os.listdir(D08):
+        if fn.endswith(".png"):
+            with Image.open(os.path.join(D08, fn)) as im:
+                im.resize((im.width // 2, im.height // 2), Image.LANCZOS).save(os.path.join(small, fn), optimize=True, dpi=(300, 300))  # halved render for the PDF/Word report only
     write_text(os.path.join(D01, f"{SCOPE_NAME_KO[scope]}_분석보고서.md"), render_md(blocks, "../"))
     reg(os.path.join(D01, f"{SCOPE_NAME_KO[scope]}_분석보고서.md"), "분석보고서(편집 가능한 원문, Markdown)")
-    render_docx(blocks, D08, os.path.join(D01, f"{SCOPE_NAME_KO[scope]}_분석보고서.docx"))
+    render_docx(blocks, small, os.path.join(D01, f"{SCOPE_NAME_KO[scope]}_분석보고서.docx"))
     reg(os.path.join(D01, f"{SCOPE_NAME_KO[scope]}_분석보고서.docx"), "분석보고서(편집 가능한 원문, Word)")
-    pages = render_pdf(blocks, D08, os.path.join(D01, f"{SCOPE_NAME_KO[scope]}_분석보고서.pdf"))
+    pages = render_pdf(blocks, small, os.path.join(D01, f"{SCOPE_NAME_KO[scope]}_분석보고서.pdf"))
+    shutil.rmtree(small, ignore_errors=True)
     reg(os.path.join(D01, f"{SCOPE_NAME_KO[scope]}_분석보고서.pdf"), f"분석보고서 PDF({pages}쪽)")
 
     # ---------------------------------------------------------------- reproduction material
@@ -392,20 +482,20 @@ def readme(d, base):
 개인정보(이름·전화번호·실제 세션 ID·토큰)는 없으며 개별 응답은 가명 연구 ID로만 제공합니다.
 
 폴더
-  01_요약     요약 Excel, 분석보고서(PDF·Word·Markdown), 지표·기준·출처, 참고문헌
+  01_요약     분석자료 Excel(이 범위의 모든 표), 분석보고서(PDF·Word·Markdown), 지표·기준·출처, 참고문헌
   02_원자료_가명  참여자별 분류 응답, 이진 유사성(상삼각), 묶음 요약, 자료검증표, 포함 규칙·원자료 지문
   03_진술문    진술문 ID·순서·한국어 원문·일본어 대응문
   04_행렬     S·P·D·δ, 기존 표시 형식 두 가지, 행렬 설명
   05_MDS      2차원 좌표, 차원 비교(1~5D), 초기화별 결과·종료 사유, 반복 이력, 동점 처리 민감도
   06_진단     1,081개 문항 쌍 진단표(δ·거리·디스패리티·잔차), 점별 stress 기여
   07_군집     추천 군집·명명 근거, 군집 후보 비교, k별 소속, 병합 이력·비용, 군집명 검토 상태
-  08_그림     사분면 점지도·개념도(색·흑백)·덴드로그램·진단 그래프 (PNG 300dpi + SVG + PDF)
+  08_그림     점 지도·개념도(색·흑백)·덴드로그램·Shepard·잔차·차원/군집수 지표·분할반분 분포 (PNG 600dpi·16cm + SVG + PDF), 그림목록(캡션·주석·대응 데이터)
   09_보완분석   반복 분할 신뢰도, 브리징 값 미산출 사유, 평정 자료 미수집 기록{', 한국·일본 비교' if d.scope == 'ALL' else ''}
   10_재현     설정, 환경, 실행 방법, 독립 구현(reproduce_mds.py), 분석 소스
   11_검증     검증 보고서, 독립 재현 실행 결과, 교차검증 근거
   파일목록.csv / SHA256SUMS.txt / manifest.json  무결성 확인용
 
-읽는 순서: 01_요약의 요약 Excel과 보고서 → 08_그림 → 필요 시 각 폴더의 CSV.
+읽는 순서: 01_요약의 분석자료 Excel과 보고서 → 08_그림(그림목록.csv의 캡션·대응 데이터) → 필요 시 각 폴더의 CSV.
 주의: 수렴과 적합도는 별개입니다. 군집 수·군집명은 자동 제안(연구자 검토 전)이며 확정 명칭이 아닙니다.
 """
 

@@ -29,7 +29,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { appliedMigrationNames, backupRootFor, contentFingerprint, createBackup, packagesDirFor, resolveDbPath, sha256File } from "./auto-backup.mjs";
+import { appliedMigrationNames, backupRootFor, checkLivePackageFiles, contentFingerprint, createBackup, packagesDirFor, resolveDbPath, sha256File } from "./auto-backup.mjs";
 
 const SIDECARS = ["-journal", "-wal", "-shm"];
 const stamp = (d) => d.toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
@@ -257,32 +257,9 @@ export function restorePackages({ dbPath, from, dryRun = false }) {
   return { from: path.basename(from), dryRun, restored, identical, check: checkPackages({ dbPath }) };
 }
 
-/** Verifies every AnalysisPackage row against the file on disk (existence + SHA-256). Read-only. */
+/** Verifies every AnalysisPackage row against the file on disk (existence, size, SHA-256). Read-only; same check the scheduled backup runs. */
 export function checkPackages({ dbPath }) {
-  const db = new DatabaseSync(dbPath, { readOnly: true });
-  try {
-    let rows = [];
-    try {
-      rows = db.prepare("select scope, filename, sha256, byteSize, storedFile, analysisRunId from AnalysisPackage order by scope").all();
-    } catch {
-      return { packageRows: 0, ok: true, note: "database has no AnalysisPackage table (older schema)", problems: [] };
-    }
-    const dir = packagesDirFor(dbPath);
-    const problems = [];
-    for (const r of rows) {
-      if (!/^[0-9a-f]{64}\.zip$/.test(String(r.storedFile))) {
-        problems.push({ scope: r.scope, filename: r.filename, problem: "stored file name is not a SHA-256 name" });
-        continue;
-      }
-      const f = path.join(dir, r.storedFile);
-      if (!fs.existsSync(f)) problems.push({ scope: r.scope, filename: r.filename, problem: "file missing — regenerate this package" });
-      else if (sha256File(f) !== r.sha256) problems.push({ scope: r.scope, filename: r.filename, problem: "SHA-256 does not match the database row" });
-      else if (fs.statSync(f).size !== r.byteSize) problems.push({ scope: r.scope, filename: r.filename, problem: "size does not match the database row" });
-    }
-    return { packageRows: rows.length, ok: problems.length === 0, problems };
-  } finally {
-    db.close();
-  }
+  return checkLivePackageFiles(dbPath);
 }
 
 function main() {

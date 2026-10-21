@@ -24,8 +24,13 @@ CLAIM_SOURCE_ROWS = [
 ]
 
 
-def blocks_for(d: ScopeData, figs, tables, verif):
-    """figs: {key: relative png path}; tables: ScopeData tables dict; verif: verification dict."""
+def blocks_for(d: ScopeData, figs, tables, verif, figtext=None):
+    """figs: {key: relative png path}; tables: ScopeData tables dict; verif: verification dict; figtext: {key: caption + note} of the figure list."""
+    figtext = figtext or {}
+
+    def cap(key, default):
+        return figtext.get(key, default)
+
     a, m, scope = d.a, d.meta, d.scope
     p = a["primary"]
     sel = p["selected"]
@@ -89,16 +94,17 @@ def blocks_for(d: ScopeData, figs, tables, verif):
     if a["tieSensitivity"]:
         t = a["tieSensitivity"]
         B.append(("p", f"동점 처리 민감도(공식 결과 아님): primary(동점 분리 허용)로 같은 설정에서 계산하면 Stress-1 = {fmt(t['stress1'], 4)}, RSQ = {fmt(t['rsq'], 3)}. 동점이 많은 자료에서 동점 처리 선택이 Stress에 영향을 줍니다(Mair et al., 2016)."))
-    for key, cap in (("shepard", "그림 5. Shepard 다이어그램"), ("iter", "그림 6. 목적함수(raw stress) 반복 이력"), ("dims", "그림 7. 차원별 Stress-1 (보조 비교)")):
+    for key, default in (("shepard", "Shepard 다이어그램"), ("resid", "잔차 진단"), ("itemstress", "문항별 stress 기여"), ("iter", "목적함수(raw stress) 반복 이력"), ("dims", "차원별 Stress-1·RSQ (보조 비교)")):
         if key in figs:
-            B.append(("fig", figs[key], cap))
+            B.append(("fig", figs[key], cap(key, default)))
     B.append(("h3", "3.3 2차원 개념도와 군집"))
     if d.sol:
         pr = d.proposal
         B.append(("p", f"추천 군집 수 {d.rec_k}(검토 상태: 자동 제안·연구자 검토 전). ‘최적’은 검토한 후보(k={a['settings']['ward']['kMin']}–{a['settings']['ward']['kMax']})와 아래 기준에서의 추천을 뜻하며 수학적 유일 정답이 아닙니다."))
         B.append(("ul", pr["recommendationRationaleKo"]))
-        B.append(("fig", figs["map_color"], f"그림 2. 사분면 개념도(2차원, {d.rec_k}군집, 색). 점은 문항이며 좌표는 변경하지 않았고, 볼록 껍질은 군집 소속 표시일 뿐 인과·영향 경로가 아니다. 사분면은 x=0, y=0 기준선에 의한 시각적 구획이며 군집 수 4개나 축의 의미를 뜻하지 않는다. 지도의 방향은 임의이고 군집의 크기·모양에는 의미 있는 해석이 없다(Trochim et al., 1994)."))
-        B.append(("fig", figs["map_gray"], "그림 3. 같은 지도의 흑백판(기호·해치로 군집 구분)"))
+        B.append(("fig", figs["map_plain"], cap("map_plain", "2차원 점 지도")))
+        B.append(("fig", figs["map_color"], cap("map_color", f"개념도(2차원, {d.rec_k}군집, 색)") + " 지도의 방향은 임의이고 군집의 크기·모양에는 의미 있는 해석이 없다(Trochim et al., 1994)."))
+        B.append(("fig", figs["map_gray"], cap("map_gray", "같은 지도의 흑백판(기호·해치로 군집 구분)")))
         bd = d.boundary(d.sol)
         rows = []
         for cl in d.sol["clusters"]:
@@ -116,24 +122,24 @@ def blocks_for(d: ScopeData, figs, tables, verif):
         merges = {mm["clustersAfter"]: mm["height"] for mm in a["ward"]["merges"]}
         alt = {x["k"]: x["commentKo"] for x in pr["alternatives"]}
         B.append(("table", ["k", "최소 군집", "2문항 이하", "지도 실루엣", "δ 실루엣", "군집 간 제곱합 비율", "k+1→k 병합 높이", "비고"], [[sl["k"] if sl["k"] != d.rec_k else f"{sl['k']} ★", sl["minSize"], sl["smallClusters"], fmt(sl["silhouetteMap"]["mean"], 3), fmt(sl["silhouetteDelta"]["mean"], 3), fmt(sl["betweenShare"], 3), fmt(merges.get(sl["k"]), 3), alt.get(sl["k"], "")] for sl in a["solutions"]]))
-        for key, cap in (("kcmp", "그림 8. 군집 수 비교"), ("dendro", "그림 4. Ward 덴드로그램"), ("sil", "그림 9. 문항별 실루엣(지도 좌표 기준)")):
+        for key, default in (("kcmp", "군집 수 비교"), ("dendro", "Ward 덴드로그램"), ("sil", "문항별 실루엣(지도 좌표 기준)")):
             if key in figs:
-                B.append(("fig", figs[key], cap))
+                B.append(("fig", figs[key], cap(key, default)))
     else:
         B.append(("p", "군집 추천이 첨부되지 않았습니다."))
     B.append(("h3", "3.5 반복 분할 신뢰도"))
     sh = a["splitHalf"]
     B.append(("p", f"{sh['design']}, {sh['repetitions']}회(seed {sh['seed']}). 원상관 평균 {fmt(sh['rawR']['mean'], 3)}(중앙값 {fmt(sh['rawR']['median'], 3)}, 최소–최대 {fmt(sh['rawR']['min'], 3)}–{fmt(sh['rawR']['max'], 3)}), Spearman–Brown 평균 {fmt(sh['spearmanBrown']['mean'], 3)}. 계산 불능 {sh['undefinedCount']}회, 음수 {sh['negativeRawCount']}회. 분위수 범위는 이 표본의 무작위 분할 분포이며 모집단 신뢰구간이 아니고, 행렬 신뢰도를 지도 신뢰도로 바꾸어 해석하지 않습니다."))
     if "split" in figs:
-        B.append(("fig", figs["split"], "그림 10. 반복 분할 신뢰도 분포"))
+        B.append(("fig", figs["split"], cap("split", "반복 분할 신뢰도 분포")))
     B.append(("p", "브리징 값: 산식과 정규화 방식을 학술지 원문에서 확인하지 못해 산출하지 않았습니다(임의 대체식을 공식 브리징 값이라고 부르지 않음)."))
     cmp_ = d.b.get("comparison")
     if cmp_:
         B.append(("h3", "3.6 한국·일본 비교(탐색적)"))
         B.append(("p", f"N이 다른 빈도를 직접 비교하지 않고 P_KR = S_KR/N_KR (N={cmp_['nKr']}), P_JP = S_JP/N_JP (N={cmp_['nJp']})를 사용했습니다. 동일 문항 쌍의 Pearson r = {cmp_['pearson']:.3f}, Spearman ρ = {cmp_['spearman']:.3f}, |P_KR−P_JP| 평균 {cmp_['meanAbsDiff']:.3f}, 최대 {cmp_['maxAbsDiff']:.3f}. 1,081개 문항 쌍은 독립 관측치가 아니므로 일반 상관검정의 p값은 제시하지 않으며, 전체는 한국·일본을 포함하므로 세 범위를 독립 표본처럼 비교하지 않습니다."))
-        for key, cap in (("cmp_heat", "그림 11. P_KR − P_JP 히트맵(공통 색 범위)"), ("cmp_scatter", "그림 12. P_KR 대 P_JP"), ("cmp_proc", "그림 13. 한국·일본 지도의 Procrustes 정렬(탐색적)")):
+        for key, default in (("cmp_heat", "P_KR − P_JP 히트맵(공통 색 범위)"), ("cmp_scatter", "P_KR 대 P_JP"), ("cmp_proc", "한국·일본 지도의 Procrustes 정렬(탐색적)")):
             if key in figs:
-                B.append(("fig", figs[key], cap))
+                B.append(("fig", figs[key], cap(key, default)))
 
     # ---------------------------------------------------------------------------------------- 4
     B.append(("h2", "4. 지표별 정의·기준·판정·출처·한계"))
@@ -159,6 +165,7 @@ def blocks_for(d: ScopeData, figs, tables, verif):
     B.append(("h3", "주장–출처 대응표"))
     B.append(("table", ["주장·방법", "출처", "확인한 원문 위치", "비고"], CLAIM_SOURCE_ROWS))
     B.append(("h2", "7. 재현"))
+    B.append(("p", "01_요약의 분석자료 Excel에는 이 보고서의 표(S·P·D·δ, 좌표·군집, 차원별·군집 수별 지표, 문항 쌍 진단, 안정성, 지표 정의·참고문헌)가 편집 가능한 실제 셀로 들어 있고, 08_그림의 그림목록.csv가 각 그림의 캡션·주석과 대응 데이터 파일을 연결합니다. 그림은 인쇄 폭 16 cm 기준 PNG 600 dpi와 SVG·PDF 벡터로 제공합니다(보고서 안의 그림은 파일 크기 때문에 절반 해상도 사본)."))
     B.append(("p", "10_재현 폴더에 설정(settings.json), 환경, 실행 방법, 독립 구현(reproduce_mds.py)과 TypeScript 소스를 포함했습니다. 02_원자료_가명의 참여자별 분류응답표만으로 S 행렬·MDS·Ward·분할 신뢰도를 다시 계산해 결과와 대조할 수 있습니다. 11_검증에 검증 보고서와 SHA-256 목록이 있습니다."))
     return number_figs(B)
 

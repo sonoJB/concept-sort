@@ -25,10 +25,15 @@ export type BackupEntry = {
   sha256: string | null;
   integrityCheck: string | null;
   tableCounts: Record<string, number> | null;
+  /** ZIP files this backup holds (manifest) and files the backup could not capture. */
+  packages: number | null;
+  packageProblems: number | null;
   source: "automatic" | "manual-folder";
 };
 
-export type HealthIssue = "FAILING" | "CHECKS_STOPPED" | "NO_VERIFIED_COPY" | "LOW_DISK";
+export type HealthIssue = "FAILING" | "CHECKS_STOPPED" | "NO_VERIFIED_COPY" | "LOW_DISK" | "PACKAGE_FILES";
+
+export type PackageFileProblem = { scope?: string | null; version?: number | null; runId?: string | null; filename: string | null; problem: string };
 
 export type BackupStatus = {
   enabled: boolean;
@@ -44,6 +49,9 @@ export type BackupStatus = {
   consecutiveFailures: number;
   freeBytes: number | null;
   lowDisk: boolean;
+  /** AnalysisPackage rows at the last scheduled check, and the rows whose ZIP file is missing / damaged on the live volume. */
+  packageRows: number | null;
+  packageFileProblems: PackageFileProblem[];
   daemonStartedAt: string | null;
   lastDaemonTickAt: string | null;
   /** Hours since the most recent check/tick, or null if never. */
@@ -86,6 +94,8 @@ export function readBackupStatus(root: string | null, now: Date = new Date(), ma
     consecutiveFailures: 0,
     freeBytes: null,
     lowDisk: false,
+    packageRows: null,
+    packageFileProblems: [],
     daemonStartedAt: null,
     lastDaemonTickAt: null,
     checkAgeHours: null,
@@ -109,6 +119,8 @@ export function readBackupStatus(root: string | null, now: Date = new Date(), ma
       sha256: str(manifest?.sha256),
       integrityCheck: str(manifest?.integrityCheck),
       tableCounts: (manifest?.tableCounts as Record<string, number>) ?? null,
+      packages: Array.isArray(manifest?.analysisPackages) ? (manifest.analysisPackages as unknown[]).length : null,
+      packageProblems: Array.isArray(manifest?.analysisPackageProblems) ? (manifest.analysisPackageProblems as unknown[]).length : null,
       source: manifest ? "automatic" : "manual-folder",
     });
   }
@@ -126,6 +138,8 @@ export function readBackupStatus(root: string | null, now: Date = new Date(), ma
   if (consecutiveFailures > 0 || status.lastResult === "FAILED") issues.push("FAILING");
   if (checkAgeMs === null || checkAgeMs > CHECK_STALE_AFTER_MS) issues.push("CHECKS_STOPPED");
   if (lastVerifiedOk !== true) issues.push("NO_VERIFIED_COPY");
+  const packageFileProblems = Array.isArray(status.packageFileProblems) ? (status.packageFileProblems as PackageFileProblem[]) : [];
+  if (packageFileProblems.length > 0) issues.push("PACKAGE_FILES");
   if (lowDisk) issues.push("LOW_DISK");
 
   return {
@@ -142,11 +156,13 @@ export function readBackupStatus(root: string | null, now: Date = new Date(), ma
     consecutiveFailures,
     freeBytes: num(status.freeBytes),
     lowDisk,
+    packageRows: num(status.packageRows),
+    packageFileProblems,
     daemonStartedAt: str(status.daemonStartedAt),
     lastDaemonTickAt,
     checkAgeHours: checkAgeMs === null ? null : Math.round((checkAgeMs / 3600000) * 10) / 10,
     health: {
-      level: issues.includes("FAILING") || issues.includes("CHECKS_STOPPED") || issues.includes("NO_VERIFIED_COPY") ? "error" : issues.length ? "warn" : "ok",
+      level: issues.includes("FAILING") || issues.includes("CHECKS_STOPPED") || issues.includes("NO_VERIFIED_COPY") || issues.includes("PACKAGE_FILES") ? "error" : issues.length ? "warn" : "ok",
       issues,
       unchangedSinceLastBackup: (lastCheckResult ?? "").startsWith("UNCHANGED") || lastCheckResult === "SKIPPED_UNCHANGED",
     },

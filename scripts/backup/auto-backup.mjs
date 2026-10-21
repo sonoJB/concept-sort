@@ -119,8 +119,56 @@ export function captureAnalysisPackages(dbPath, finalDir) {
       problems.push({ file: name, problem: "could not be backed up: " + (e instanceof Error ? e.message : String(e)) });
     }
   }
+  // rows of the database that point at a file which is not there are reported too (the backup cannot contain what the volume lost)
+  for (const p of checkLivePackageFiles(dbPath).problems) problems.push({ file: p.filename, problem: `database row (${p.scope ?? "?"}${p.version ? " v" + p.version : ""}): ${p.problem}` });
   if (problems.length) log("error", "analysis package files with problems (database backup continues)", problems);
   return { packages, problems };
+}
+
+/**
+ * Live check (read-only, never throws): every AnalysisPackage row must have its ZIP file next to the database (it exists, has the recorded
+ * size and its own SHA-256). A row whose file is missing is a package that cannot be downloaded; nothing else in the service notices that,
+ * so every scheduled check records the result in status.json and every backup manifest lists it.
+ */
+export function checkLivePackageFiles(dbPath) {
+  let db;
+  try {
+    db = new DatabaseSync(dbPath, { readOnly: true });
+  } catch (e) {
+    return { packageRows: 0, ok: false, problems: [{ filename: null, problem: "cannot open the database to check package files: " + (e instanceof Error ? e.message : String(e)) }] };
+  }
+  try {
+    let rows;
+    try {
+      rows = db.prepare("select scope, filename, sha256, byteSize, storedFile, analysisRunId, packageVersion from AnalysisPackage order by scope, packageVersion").all();
+    } catch {
+      try {
+        rows = db.prepare("select scope, filename, sha256, byteSize, storedFile, analysisRunId from AnalysisPackage order by scope").all();
+      } catch {
+        return { packageRows: 0, ok: true, note: "database has no AnalysisPackage table (older schema)", problems: [] };
+      }
+    }
+    const dir = packagesDirFor(dbPath);
+    const problems = [];
+    const add = (r, problem) => problems.push({ scope: r.scope, version: r.packageVersion ?? null, runId: r.analysisRunId, filename: r.filename, problem });
+    for (const r of rows) {
+      if (!PACKAGE_FILE.test(String(r.storedFile))) {
+        add(r, "stored file name is not a SHA-256 name");
+        continue;
+      }
+      const f = path.join(dir, r.storedFile);
+      try {
+        if (!fs.existsSync(f)) add(r, "file missing - restore it from a backup (restore-packages) or regenerate it as a new package version");
+        else if (sha256File(f) !== r.sha256) add(r, "SHA-256 does not match the database row");
+        else if (fs.statSync(f).size !== r.byteSize) add(r, "size does not match the database row");
+      } catch (e) {
+        add(r, "cannot read the file: " + (e instanceof Error ? e.message : String(e)));
+      }
+    }
+    return { packageRows: rows.length, ok: problems.length === 0, problems };
+  } finally {
+    db.close();
+  }
 }
 
 function readJson(file) {
@@ -321,12 +369,16 @@ export function runOnce({ reason, databaseUrl = process.env.DATABASE_URL, now = 
   const logFile = path.join(root, "backup-log.jsonl");
   const prev = readStatus(statusFile);
   const free = freeBytesOf(root);
+  const pkgCheck = checkLivePackageFiles(dbPath);
   const base = {
     lastCheckAt: now.toISOString(),
     lastAttemptAt: now.toISOString(),
     freeBytes: free,
     lowDisk: free !== null && free < LOW_DISK_WARN_BYTES,
+    packageRows: pkgCheck.packageRows,
+    packageFileProblems: pkgCheck.problems,
   };
+  if (pkgCheck.problems.length) log("error", "analysis package files with problems on the live volume", pkgCheck.problems);
   const record = (entry) => {
     try {
       fs.appendFileSync(logFile, JSON.stringify({ at: now.toISOString(), reason, ...entry }) + "\n");
