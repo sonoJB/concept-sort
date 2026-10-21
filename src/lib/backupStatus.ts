@@ -27,6 +27,8 @@ export type BackupEntry = {
   tableCounts: Record<string, number> | null;
   /** ZIP files this backup holds (manifest) and files the backup could not capture. */
   packages: number | null;
+  /** SHA-256 of every ZIP the backup holds (manifest) — compare with the registered packages; no content is exposed. */
+  packageHashes: string[] | null;
   packageProblems: number | null;
   source: "automatic" | "manual-folder";
 };
@@ -120,6 +122,7 @@ export function readBackupStatus(root: string | null, now: Date = new Date(), ma
       integrityCheck: str(manifest?.integrityCheck),
       tableCounts: (manifest?.tableCounts as Record<string, number>) ?? null,
       packages: Array.isArray(manifest?.analysisPackages) ? (manifest.analysisPackages as unknown[]).length : null,
+      packageHashes: Array.isArray(manifest?.analysisPackages) ? (manifest.analysisPackages as { sha256?: unknown }[]).map((x) => String(x.sha256 ?? "")) : null,
       packageProblems: Array.isArray(manifest?.analysisPackageProblems) ? (manifest.analysisPackageProblems as unknown[]).length : null,
       source: manifest ? "automatic" : "manual-folder",
     });
