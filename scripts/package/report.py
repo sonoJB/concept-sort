@@ -4,7 +4,7 @@ import os
 
 import numpy as np
 
-from common import SCOPE_LABEL_KO, fmt, ko_design, sid
+from common import SCOPE_LABEL_KO, fmt, ko_design, ko_text, sid
 from scopedata import ScopeData
 
 CLAIM_SOURCE_ROWS = [
@@ -145,9 +145,9 @@ def blocks_for(d: ScopeData, figs, tables, verif, figtext=None):
     B.append(("h2", "4. 지표별 정의·기준·판정·출처·한계"))
     rows = []
     for me in d.b["metrics"]:
-        crit = " / ".join(f"[{c['labelKo']}] {c['text']}" + (f" (위치: {c['location']})" if c.get("location") else "") for c in me["criteria"])
+        crit = " / ".join(f"[{c['labelKo']}] {ko_text(c['text'])}" + (f" (위치: {c['location']})" if c.get("location") else "") for c in me["criteria"])
         ver = " / ".join(f"{v['aspectKo']}: {v['textKo']}" for v in me["verdicts"])
-        rows.append([me["nameKo"], me["formula"], me["valueDisplay"], crit, ver, ", ".join(me["sourceKeys"]), " / ".join(me["limitsKo"])])
+        rows.append([me["nameKo"], me["formula"], ko_text(me["valueDisplay"]), crit, ver, ", ".join(me["sourceKeys"]), " / ".join(me["limitsKo"])])
     B.append(("table", ["지표", "계산식", "실제 값", "기준(종류별)", "판정", "출처", "적용 한계"], rows))
     # ---------------------------------------------------------------------------------------- 5
     B.append(("h2", "5. 해석의 한계"))

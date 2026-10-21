@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 import numpy as np
 import xlsxwriter
 
-from common import SCOPE_LABEL_KO, fmt, sid, write_csv
+from common import SCOPE_LABEL_KO, fmt, ko_design, ko_text, sid, write_csv
 from scopedata import ScopeData
 
 KST = timezone(timedelta(hours=9))
@@ -62,7 +62,7 @@ def build_tables(d: ScopeData, raw, cross=None):
     mrows = []
     for me in d.b["metrics"]:
         for ci, c in enumerate(me["criteria"]):
-            mrows.append([me["nameKo"] if ci == 0 else "", me.get("evaluates", "") if ci == 0 else "", me["definitionKo"] if ci == 0 else "", me["formula"] if ci == 0 else "", me["valueDisplay"] if ci == 0 else "", c["kind"], c["labelKo"], c["text"], ", ".join(c["sourceKeys"]), c.get("location", "")])
+            mrows.append([me["nameKo"] if ci == 0 else "", me.get("evaluates", "") if ci == 0 else "", me["definitionKo"] if ci == 0 else "", me["formula"] if ci == 0 else "", ko_text(me["valueDisplay"]) if ci == 0 else "", c["kind"], c["labelKo"], ko_text(c["text"]), ", ".join(c["sourceKeys"]), c.get("location", "")])
         mrows.append(["", "", "", "", "", "판정", "", " | ".join(f"{v['aspectKo']}[{v['tone']}] {v['textKo']}" for v in me["verdicts"]), ", ".join(me["sourceKeys"]), ""])
         mrows.append(["", "", "", "", "", "적용 한계", "", " / ".join(me["limitsKo"]), "", ""])
     T["metrics"] = ("지표·기준·출처", ["지표", "평가 대상", "정의", "계산식", "실제 값", "기준 종류", "기준 이름", "기준 내용·판정·한계", "출처 키", "원문 위치"], mrows, "")
@@ -85,7 +85,7 @@ def build_tables(d: ScopeData, raw, cross=None):
     crow = []
     for i in range(d.n):
         c = d.sol["labels"][i] if d.sol else ""
-        crow.append([sid(i), round(float(d.coords[i][0]), 12), round(float(d.coords[i][1]), 12), c, d.cluster_name(c) if c != "" else ""])
+        crow.append([sid(i), float(d.coords[i][0]), float(d.coords[i][1]), c, d.cluster_name(c) if c != "" else ""])  # full precision: this CSV is a numeric reference file
     T["coords"] = ("좌표", ["문항", "차원 1", "차원 2", f"군집(k={d.rec_k})", "추천 군집명"], crow, "")
 
     # ------------------------------------------------------------------ matrices
@@ -155,7 +155,7 @@ def build_tables(d: ScopeData, raw, cross=None):
 
     # ------------------------------------------------------------------ reliability
     sh = a["splitHalf"]
-    rel = [["설계", sh["design"]], ["반복 횟수", sh["repetitions"]], ["seed", sh["seed"]], ["반쪽 크기", str(sh["halfSizes"])], ["계산 불능 횟수", sh["undefinedCount"]], ["음수 원상관 횟수", sh["negativeRawCount"]]]
+    rel = [["설계", ko_design(sh["design"])], ["설계(저장된 원문값, 변경하지 않음)", sh["design"]], ["반복 횟수", sh["repetitions"]], ["seed", sh["seed"]], ["반쪽 크기", str(sh["halfSizes"])], ["계산 불능 횟수", sh["undefinedCount"]], ["음수 원상관 횟수", sh["negativeRawCount"]]]
     for key, nm in (("rawR", "원상관 r"), ("spearmanBrown", "Spearman–Brown 2r/(1+r)")):
         dist = sh[key]
         if dist:

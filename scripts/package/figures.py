@@ -451,7 +451,7 @@ def fig_dimensions(dims, title, note=""):
             if d["stress1"] is None:
                 continue
             ax.scatter([d["dimension"]], [d[key]], s=30, facecolor="#0072B2" if d["numericallyConverged"] else "white", edgecolor="#0072B2", linewidths=1.2, zorder=3)
-            ax.annotate(fmt_.format(d[key]), (d["dimension"], d[key]), textcoords="offset points", xytext=(0, 6), ha="center", fontsize=6.3)
+            ax.annotate(fmt_.format(d[key]), (d["dimension"], d[key]), textcoords="offset points", xytext=(0, 6), ha="center", fontsize=6.3, zorder=6, path_effects=_halo())
         ax.set_xticks(xs)
         ax.set_xlabel("차원 수 (2차원 이외는 보조 비교)")
         ax.set_ylabel(lab)
@@ -469,11 +469,13 @@ def fig_split_half(raw_values, sb_values, design, title, note=""):
     raw = [v for v in raw_values if v is not None]
     sb = [v for v in sb_values if v is not None]
     fig, axes = _fig(3.1, 1, 2, sharey=True)
+    top = max(max(np.histogram(v, bins=24)[0]) for v in (raw, sb))
     for ax, vals, name in ((axes[0], raw, "원상관 r"), (axes[1], sb, "Spearman–Brown 2r/(1+r)")):
         ax.hist(vals, bins=24, color="#56B4E9", edgecolor="#0072B2", lw=0.4)
+        ax.set_ylim(0, top * 1.16)  # the mean label sits in this head-room, never on a bar
         m = float(np.mean(vals))
         ax.axvline(m, color="#D55E00", ls="--", lw=0.8)
-        ax.text(m, ax.get_ylim()[1] * 0.97, f" 평균 {m:.3f}", color="#D55E00", fontsize=6.5, va="top", bbox=dict(facecolor="white", edgecolor="none", pad=0.8, alpha=0.9))
+        ax.text(m, top * 1.14, f" 평균 {m:.3f}", color="#D55E00", fontsize=6.5, va="top")
         ax.set_xlabel(name)
         _clean(ax)
     axes[0].set_ylabel("분할 횟수")
@@ -579,7 +581,6 @@ def fig_aligned_maps(A, B, labelsA, labelsB, rot_info, title, note=""):
         for i, p in enumerate(pts):
             color, marker, ring = cluster_style(labs[i])
             ax.scatter([p[0]], [p[1]], marker=marker, s=22, facecolor="white" if ring else color, edgecolor=color, linewidths=0.9)
-            ax.annotate(str(i + 1), (p[0], p[1]), textcoords="offset points", xytext=(3, 2), fontsize=5.6)
         ax.axhline(0, color="#999", lw=0.5, ls="--")
         ax.axvline(0, color="#999", lw=0.5, ls="--")
         ax.set_aspect("equal")
@@ -589,6 +590,22 @@ def fig_aligned_maps(A, B, labelsA, labelsB, rot_info, title, note=""):
     for ax in axes:
         ax.set_xlim(-lim, lim)
         ax.set_ylim(-lim, lim)
+    fig.canvas.draw()  # final axes geometry, so that the numbers can be placed without overlapping each other or the markers
+    fs = 5.6
+    cw = fs * 0.62 * fig.dpi / 72
+    for ax, pts in ((axes[0], A), (axes[1], B)):
+        pts = np.asarray(pts)
+        pix = [tuple(ax.transData.transform(p)) for p in pts]
+        bb = ax.get_window_extent()
+        frame = (bb.x0 + 2, bb.y0 + 2, bb.width - 4, bb.height - 4)
+        placed = place_labels(pix, [str(i + 1) for i in range(len(pts))], frame, [], mr=4.0, cw=cw, h=fs * 1.25 * fig.dpi / 72)
+        inv = ax.transData.inverted()
+        for i, (box, leader) in enumerate(placed):
+            tx, ty = inv.transform((box[0] + 1, box[1] + box[3] / 2))
+            ax.text(tx, ty, str(i + 1), fontsize=fs, ha="left", va="center", color="#0f172a", zorder=7, path_effects=_halo())
+            if leader:
+                cxd, cyd = inv.transform((box[0] + box[2] / 2, box[1] + box[3] / 2))
+                ax.plot([pts[i][0], cxd], [pts[i][1], cyd], color="#94a3b8", lw=0.5, zorder=4)
     import textwrap
 
     fig.suptitle(title, fontsize=8.5, x=0.01, ha="left")

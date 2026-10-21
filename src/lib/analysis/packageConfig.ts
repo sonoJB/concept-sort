@@ -1,7 +1,7 @@
 /** Settings of the package pipeline (analysis finished -> build -> verify -> register -> ready). */
 
 /** Layout / document version of a package. Independent of the analysis engine version stored on the run. */
-export const PACKAGE_FORMAT_VERSION = "package-format-4";
+export const PACKAGE_FORMAT_VERSION = "package-format-5";
 
 /** More versions than this per run are refused: every package is ~25 MB on a small persistent volume. */
 export const MAX_PACKAGE_VERSIONS_PER_RUN = 6;
