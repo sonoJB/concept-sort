@@ -195,7 +195,7 @@ def figure(doc, path, caption, width_cm=13.5):
 
 
 # ----------------------------------------------------------------------------------------------- content
-def build(D, C, figs, limits, out_path, ids):
+def build(D, C, figs, figcap, limits, out_path, ids):
     S = D["scopes"]
     desc = D["desc"]
     doc = new_doc()
@@ -213,7 +213,7 @@ def build(D, C, figs, limits, out_path, ids):
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     set_font(p.add_run("초안 · 군집 수와 군집명은 연구자 확정 전 추천안 · 노란 대괄호 [확인 필요]는 기록으로 확인되지 않은 항목(별도 검토표 참조)"), 8.5, color=(0xB4, 0x53, 0x09))
-    P(doc, f"분석 실행: 한국 {ids['KR'][:12]}…, 일본 {ids['JP'][:12]}…, 한국·일본 전체 {ids['ALL'][:12]}… (분석 엔진 v{S['KR']['algorithm']}, 자료 기준 시점 {S['KR']['snapshot_at'][:10]}). 모든 수치는 이 세 실행의 저장 결과에서 읽었다.", indent=False, size=8.5)
+    P(doc, f"분석 실행: 한국 {ids['KR'][:12]}…, 일본 {ids['JP'][:12]}…, 한국·일본 전체 {ids['ALL'][:12]}… (분석 엔진 v{S['KR']['algorithm']}, 자료 기준 시점 한국 {S['KR']['snapshot_at'][:10]}, 일본 {S['JP']['snapshot_at'][:10]}, 전체 {S['ALL']['snapshot_at'][:10]}). 모든 수치는 이 세 실행의 저장 결과에서 읽었다.", indent=False, size=8.5)
 
     # ======================================================================================= Ⅱ. 연구방법
     H(doc, "Ⅱ. 연구방법", 1)
@@ -481,11 +481,15 @@ def build(D, C, figs, limits, out_path, ids):
         f"경계 문항은 한국 {len(S['KR']['boundary'])}개, 일본 {len(S['JP']['boundary'])}개, 전체 {len(S['ALL']['boundary'])}개였다.",
     )
 
-    # ---- 5. figures
-    H(doc, "5. 국가별 실제 개념도", 2)
-    P(doc, "아래 그림은 저장된 2차원 좌표와 군집 소속으로 그린 개념도(추천 군집 수)이다. 점은 진술문 1개이며 좌표와 소속은 변경하지 않았다. 사분면 기준선은 시각적 구획이고 차원 1·2에는 의미를 부여하지 않았다.", indent=False)
-    for i, sc in enumerate(SCOPES, 1):
-        figure(doc, figs[sc], f"[그림 {i}] {NAME[sc]} 개념도 (2차원, {S[sc]['rec_k']}군집 — 연구자 확정 전 추천안)", width_cm=12.6)
+    # ---- 5. figures (PNG files of the registered analysis packages; captions from each package's 그림목록.csv)
+    H(doc, "5. 국가별 개념도와 진단 그림", 2)
+    P(doc, "아래 그림은 운영에 등록된 분석 패키지의 그림 파일(인쇄 폭 16 cm 기준 600 dpi PNG)을 그대로 넣은 것이며, 저장된 2차원 좌표와 군집 소속으로 그렸다. 점은 진술문 1개이고 좌표와 소속은 변경하지 않았다. 점선(x=0, y=0)은 원점 표시이며 차원 1·2에는 의미를 부여하지 않았고 네 사분면을 군집으로 해석하지 않았다. 각 그림의 대응 데이터 파일은 패키지의 그림목록에 있다.", indent=False)
+    n_fig = 0
+    for key, title in (("map", "개념도"), ("dendro", "Ward 덴드로그램"), ("kcmp", "군집 수별 진단 지표"), ("dims", "차원별 Stress-1·RSQ")):
+        for sc in SCOPES:
+            n_fig += 1
+            cap = figcap[sc][key]
+            figure(doc, figs[sc][key], f"[그림 {n_fig}] {NAME[sc]} {title}. {cap}", width_cm=13.0 if key in ("map",) else 14.5)
 
     # ---- 6. limits
     H(doc, "6. 결과의 해석 범위와 한계", 2)
@@ -523,9 +527,16 @@ def build(D, C, figs, limits, out_path, ids):
                 set_font(p.add_run(seg), 9, italic=(k % 2 == 1))
     P(doc, "※ Rosas와 Kane(2012)은 원문을 직접 열람하지 못해 §3.5의 수치를 2차 문헌을 통해서만 확인하였다(검토표 참조). Kruskal(1964)은 Mair 등(2022)을 통한 재인용이다.", indent=False, size=8.5)
 
-    # ---- appendix: statements
+    # ---- appendix: further diagnostics + statements
     doc.add_page_break()
     H(doc, "부록", 1)
+    H(doc, "부록 그림. 적합도·안정성 진단", 2)
+    P(doc, "아래 그림은 같은 패키지의 진단 그림이다. Shepard 도표와 잔차는 저장된 문항 쌍 진단표에서, 분할 반분 분포는 저장된 반복 값에서 그렸다.", indent=False, size=9.5)
+    for key, title in (("shepard", "Shepard 도표"), ("resid", "잔차 진단"), ("split", "반복 분할 신뢰도 분포")):
+        for sc in SCOPES:
+            n_fig += 1
+            figure(doc, figs[sc][key], f"[그림 {n_fig}] {NAME[sc]} {title}. {figcap[sc][key]}", width_cm=14.0)
+    doc.add_page_break()
     rows = [[no, txt] for no, txt in S["KR"]["statements_text"]]
     for no, txt in S["KR"]["statements_text"]:
         C.rows.append({"key": "tableA1:" + no, "printed": txt, "value": None, "source": "statements.textKo"})
@@ -544,23 +555,31 @@ def main():
     paths = {sc: os.path.join(a.bundles_dir, f"bundle_{sc}_production.json") for sc in SCOPES}
     D, bundles = collect(paths, a.db)
     limits = json.load(open(a.limits_json, encoding="utf-8"))
-    figs = {}
+    figs, figcap = {}, {}
+    prefix = {"map": "F02_", "dendro": "F05_", "kcmp": "F07_", "dims": "F10_", "shepard": "F08_", "resid": "F15_", "split": "F11_"}
+    import csv
+
     for sc in SCOPES:
-        k = D["scopes"][sc]["rec_k"]
         root = [d for d in os.listdir(a.figures_root) if os.path.isdir(os.path.join(a.figures_root, d))]
-        # package folder names start with the scope label
         key = {"KR": "한국_", "JP": "일본_", "ALL": "한국-일본전체_"}[sc]
-        folder = next(d for d in root if d.startswith(key))
-        figs[sc] = os.path.join(a.figures_root, folder, "08_그림", f"F02_concept_map_k{k}_color_{sc}.png")
-        assert os.path.exists(figs[sc]), figs[sc]
+        folder = os.path.join(a.figures_root, next(d for d in root if d.startswith(key)), "08_그림")
+        listing = {r[0]: r for r in list(csv.reader(open(os.path.join(folder, "그림목록.csv"), encoding="utf-8-sig")))[1:]}
+        figs[sc], figcap[sc] = {}, {}
+        for k_, pre in prefix.items():
+            names_ = [n_ for n_ in listing if n_.startswith(pre)]
+            assert len(names_) == 1, (sc, pre, names_)
+            figs[sc][k_] = os.path.join(folder, names_[0] + ".png")
+            assert os.path.exists(figs[sc][k_]), figs[sc][k_]
+            figcap[sc][k_] = (listing[names_[0]][2] + " " + listing[names_[0]][3]).strip()
     C = Claims()
     ids = {sc: D["scopes"][sc]["run_id"] for sc in SCOPES}
     os.makedirs(a.out, exist_ok=True)
-    out_docx = os.path.join(a.out, "한일_유사성분류_연구방법_연구결과_초안_검증본_v2.docx")
-    build(D, C, figs, limits, out_docx, ids)
+    out_docx = os.path.join(a.out, "한일_유사성분류_연구방법_연구결과_초안_검증본_v3.docx")
+    build(D, C, figs, figcap, limits, out_docx, ids)
     json.dump(D, open(os.path.join(a.out, "_manuscript_data.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1, default=str)
     json.dump(C.rows, open(os.path.join(a.out, "_claims.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1, default=str)
     json.dump({sc: figs[sc] for sc in SCOPES}, open(os.path.join(a.out, "_figures_used.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    json.dump(figcap, open(os.path.join(a.out, "_figure_captions.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     print("written", out_docx, "claims", len(C.rows))
 
 
