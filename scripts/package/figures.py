@@ -98,10 +98,10 @@ def stamp(fig, text):
     fig.text(0.012, 0.008, text, fontsize=5.8, color="#64748b", ha="left", va="bottom")
 
 
-def _fig(height, rows=1, cols=1, **kw):
+def _fig(height, rows=1, cols=1, bottom=0.045, **kw):
     """Figure at print width with constrained layout; the bottom 4% is kept free for the note."""
     fig = plt.figure(figsize=(W_IN, height), layout="constrained")
-    fig.get_layout_engine().set(rect=(0, 0.045, 1, 0.955), w_pad=0.04, h_pad=0.04)
+    fig.get_layout_engine().set(rect=(0, bottom, 1, 1 - bottom), w_pad=0.04, h_pad=0.04)
     if rows * cols == 1:
         return fig, fig.add_subplot(1, 1, 1)
     return fig, fig.subplots(rows, cols, **kw)
@@ -473,7 +473,7 @@ def fig_split_half(raw_values, sb_values, design, title, note=""):
         ax.hist(vals, bins=24, color="#56B4E9", edgecolor="#0072B2", lw=0.4)
         m = float(np.mean(vals))
         ax.axvline(m, color="#D55E00", ls="--", lw=0.8)
-        ax.text(m, ax.get_ylim()[1] * 0.97, f" 평균 {m:.3f}", color="#D55E00", fontsize=6.5, va="top")
+        ax.text(m, ax.get_ylim()[1] * 0.97, f" 평균 {m:.3f}", color="#D55E00", fontsize=6.5, va="top", bbox=dict(facecolor="white", edgecolor="none", pad=0.8, alpha=0.9))
         ax.set_xlabel(name)
         _clean(ax)
     axes[0].set_ylabel("분할 횟수")
@@ -497,7 +497,7 @@ def fig_silhouette(labels, per_point, names, title, note=""):
     ax.set_ylabel("문항 번호")
     ax.set_title(title, loc="left")
     handles = [plt.Rectangle((0, 0), 1, 1, color=cluster_style(c)[0]) for c in sorted(set(labels))]
-    fig.legend(handles, [f"군집 {c} {names.get(c, '')}".strip() for c in sorted(set(labels))], loc="outside lower center", ncol=2, fontsize=6.3, frameon=False)
+    ax.legend(handles, [f"군집 {c} {names.get(c, '')}".strip() for c in sorted(set(labels))], loc="upper center", bbox_to_anchor=(0.5, -0.07), ncol=2, fontsize=6.3, frameon=False)
     _clean(ax)
     stamp(fig, note)
     return fig
@@ -571,7 +571,7 @@ def fig_scatter_p(pk, pj, title, pearson, spearman, note=""):
 
 
 def fig_aligned_maps(A, B, labelsA, labelsB, rot_info, title, note=""):
-    fig, axes = _fig(3.7, 1, 2)
+    fig, axes = _fig(3.9, 1, 2, bottom=0.115)
     for ax, pts, labs, name in ((axes[0], A, labelsA, "한국 지도(기준)"), (axes[1], B, labelsB, "일본 지도(정렬 후)")):
         pts = np.asarray(pts)
         for i, p in enumerate(pts):
@@ -589,6 +589,7 @@ def fig_aligned_maps(A, B, labelsA, labelsB, rot_info, title, note=""):
         ax.set_ylim(-lim, lim)
     import textwrap
 
-    fig.suptitle(title + "\n" + "\n".join(textwrap.wrap(rot_info, 100)), fontsize=7.0, x=0.01, ha="left")
+    fig.suptitle(title, fontsize=8.5, x=0.01, ha="left")
+    fig.text(0.012, 0.042, "\n".join(textwrap.wrap(rot_info, 105)), fontsize=6.3, color="#334155", ha="left", va="bottom")
     stamp(fig, note)
     return fig
