@@ -62,6 +62,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (e instanceof RunAlreadyRunningError) {
       return NextResponse.json({ errorCode: "RUN_ALREADY_RUNNING" }, { status: 409 });
     }
+    // two requests for the same project at the same moment: the database lets only one write transaction start (Prisma P2028 / P2034 / P1008).
+    // No run was created for the loser; tell the caller to wait instead of reporting an internal error.
+    if (["P2028", "P2034", "P1008"].includes(String((e as { code?: string })?.code))) {
+      return NextResponse.json({ errorCode: "REQUEST_IN_PROGRESS" }, { status: 409 });
+    }
+    console.error("[analysis] POST /runs failed", (e as { code?: string })?.code ?? "", e instanceof Error ? e.message : String(e)); // detail goes to the server log only
     return NextResponse.json({ errorCode: "INTERNAL_ERROR" }, { status: 500 });
   }
 }

@@ -57,6 +57,26 @@ const KIND_LABEL: Record<string, string> = {
   interpretation_principle: "해석 원칙",
 };
 
+/** What a failed 'new analysis' request means and what to do next. */
+function describeRunError(code: string | undefined, status: number): string {
+  const detail = code ? ` (코드 ${code})` : ` (HTTP ${status})`;
+  switch (code) {
+    case "RUN_ALREADY_RUNNING":
+      return "이 범위의 분석이 이미 실행 중입니다. 끝날 때까지 기다린 뒤 화면을 새로고침하세요. 새 분석을 중복으로 만들지 않았습니다." + detail;
+    case "REQUEST_IN_PROGRESS":
+      return "같은 시각에 다른 분석 요청이 처리 중입니다(버튼을 두 번 눌렀거나 다른 창에서 실행 중일 수 있음). 새 분석은 중복으로 만들어지지 않았습니다. 잠시 후 화면을 새로고침해 결과를 확인하세요." + detail;
+    case "PARTICIPANT_COUNT_ZERO":
+      return "이 범위에 분석에 포함할 수 있는 본조사 참여자가 없습니다." + detail;
+    case "ENGINE_SOURCE_SHA_UNAVAILABLE":
+      return "서버가 배포 커밋 정보를 알 수 없어 분석을 시작하지 않았습니다. 관리자 점검이 필요합니다." + detail;
+    case "SCOPE_INVALID":
+    case "DATASET_INVALID":
+      return "분석 범위 또는 자료 구분이 올바르지 않습니다. 화면을 새로고침하세요." + detail;
+    default:
+      return status === 401 || status === 403 ? "관리자 권한이 확인되지 않아 분석을 시작하지 못했습니다. 관리자 주소를 다시 확인하세요." + detail : "분석을 시작하지 못했습니다. 잠시 후 다시 시도하고, 계속되면 서버 로그를 확인해야 합니다." + detail;
+  }
+}
+
 /** What a failed ZIP download means for the researcher and what to do next (the raw code stays visible for support). */
 function describeDownloadError(code: string | undefined, status: number): string {
   const detail = code ? ` (코드 ${code})` : ` (HTTP ${status})`;
@@ -222,7 +242,7 @@ export default function ConceptMapPanel({ slug, adminToken }: { slug: string; ad
     try {
       const res = await api("runs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ scope, dataset: "MAIN" }) });
       const j = await res.json().catch(() => ({}));
-      if (!res.ok) setError(`분석 실행 실패: ${j.errorCode ?? res.status}`);
+      if (!res.ok) setError(describeRunError(j.errorCode, res.status));
       setReloadTick((t) => t + 1);
     } catch {
       setError("분석 실행 중 네트워크 오류가 발생했습니다.");
