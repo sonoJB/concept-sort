@@ -39,8 +39,9 @@ function freeBytes(dir: string): number {
  * figures of the ALL package). A companion is used only if its own participants fingerprint equals the fingerprint of the
  * ALL run's participants of that country — otherwise it is left out instead of being mixed in.
  */
-async function companionBundles(prisma: PrismaClient, run: RunForBuild, participants: { country: string }[]): Promise<Record<"KR" | "JP", ResultBundle | null>> {
+async function companionBundles(prisma: PrismaClient, run: RunForBuild): Promise<Record<"KR" | "JP", ResultBundle | null>> {
   const out: Record<"KR" | "JP", ResultBundle | null> = { KR: null, JP: null };
+  const allParticipants = JSON.parse(run.inputSnapshot).participants as { country: string }[];
   for (const country of ["KR", "JP"] as const) {
     const runs = await prisma.analysisRun.findMany({ where: { projectId: run.projectId, scope: country, dataset: "MAIN", executionStatus: "COMPLETED", algorithmVersion: DEFAULT_ANALYSIS_PARAMETERS.algorithmVersion }, orderBy: { startedAt: "desc" } });
     for (const r of runs) {
@@ -48,12 +49,11 @@ async function companionBundles(prisma: PrismaClient, run: RunForBuild, particip
       const meta = await serializeRunMetadata(prisma, r);
       if (!isResultBodyExposable(r.executionStatus, meta.freshness)) continue;
       const b = JSON.parse(r.resultBundle) as ResultBundle;
-      const mine = (JSON.parse(run.inputSnapshot).participants as { country: string }[]).filter((p) => p.country === country);
+      const mine = allParticipants.filter((p) => p.country === country);
       if (canonicalHash(mine) === b.meta.fingerprints.participantsHash) out[country] = b;
       break; // only the newest current run of that country is a candidate
     }
   }
-  void participants;
   return out;
 }
 
@@ -113,7 +113,7 @@ export async function buildPackageBytes(
     fs.writeFileSync(path.join(work, "raw.json"), JSON.stringify(raw));
 
     if (run.scope === "ALL") {
-      const comp = await companionBundles(prisma, run, raw.participants);
+      const comp = await companionBundles(prisma, run);
       for (const c of ["KR", "JP"] as const) if (comp[c]) fs.writeFileSync(path.join(bundlesDir, `bundle_${c}.json`), JSON.stringify({ bundle: withCurrentInterpretation(comp[c]!) }));
     }
     const evidence = prepareEvidence(repoRoot, work, run.scope, { numericDataHash: bundle.meta.fingerprints.numericDataHash, participantsHash: bundle.meta.fingerprints.participantsHash });
@@ -133,7 +133,7 @@ export async function buildPackageBytes(
         log = (log + b.toString("utf8")).slice(-12000);
       };
       child.stdout.on("data", (b: Buffer) => {
-        stdout += b.toString("utf8");
+        stdout = (stdout + b.toString("utf8")).slice(-1_000_000); // the summary JSON is the last output; bound the buffer
         keep(b);
       });
       child.stderr.on("data", keep);

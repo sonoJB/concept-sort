@@ -37,5 +37,6 @@ export const PACKAGE_JOB_MESSAGES: Record<string, string> = {
   PERSONAL_DATA_FOUND: "만들어진 ZIP에서 개인정보로 의심되는 값이 발견되어 등록하지 않았습니다.",
   REGISTER_FAILED: "ZIP 등록 중 오류가 발생했습니다. 다시 시도할 수 있습니다.",
   TOO_MANY_VERSIONS: "이 분석의 ZIP 버전 수가 한도에 도달했습니다.",
+  PACKAGE_UNCHANGED: "새로 만든 ZIP이 이미 등록된 다른 버전과 바이트까지 같아 새 버전을 만들지 않았습니다(기존 버전 유지).",
   JOB_ABANDONED: "ZIP 작업이 여러 번 중단되어 멈췄습니다(서버 재시작 등). 다시 시도할 수 있습니다.",
 };
