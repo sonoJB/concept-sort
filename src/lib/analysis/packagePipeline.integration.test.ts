@@ -255,6 +255,14 @@ describe("analysis -> ZIP pipeline (queue, build, verify, register, ready)", () 
     const second = buildPackageZip(run, { extraManifest: { packageVersion: 2 }, zipFilename: "JP_second.zip" });
     expect(await (await put(second)).json()).toMatchObject({ created: true, version: 2 });
     expect(await prisma.analysisPackage.count({ where: { analysisRunId: run.id } })).toBe(2);
+    // a REBUILD whose bytes equal an already registered version creates no row and says so instead of an unqualified READY
+    const enq = await jobs.enqueuePackageJob(prisma, run.id, "REBUILD");
+    expect(enq.ok).toBe(true);
+    const same = (async () => ({ bytes, filename: "x.zip" })) as unknown as typeof import("@/lib/analysis/packageBuild").buildPackageBytes;
+    const job = (await jobs.processNextPackageJob(prisma, { build: same }))!;
+    expect(job).toMatchObject({ status: "READY", errorCode: "PACKAGE_UNCHANGED" });
+    expect(job.errorMessageSafe).toContain("버전 1");
+    expect(await prisma.analysisPackage.count({ where: { analysisRunId: run.id } })).toBe(2);
   });
 
   it("the stored input is reproduced exactly for the package; if the responses changed, the build stops instead of mixing data", async () => {

@@ -42,7 +42,7 @@ export async function enqueuePackageJob(prisma: PrismaClient, runId: string, tri
       const latestJob = jobs[0];
       if (trigger === "AUTO") {
         if (latestJob) return { ok: true as const, job: latestJob, created: false, reason: "PACKAGE_EXISTS" as const };
-        if (pkgs.length > 0) return { ok: false as const, status: 200, errorCode: "PACKAGE_EXISTS" };
+        if (pkgs.length > 0) return { ok: false as const, status: 409, errorCode: "PACKAGE_EXISTS" };
       }
       if (trigger === "RETRY") {
         if (!latestJob || latestJob.status !== "FAILED") return { ok: false as const, status: 409, errorCode: "NOTHING_TO_RETRY" };
@@ -154,7 +154,14 @@ export async function runPackageJob(prisma: PrismaClient, jobId: string, deps: J
       if (code) await fail(prisma, jobId, code, { errorCode: result.errorCode, detail: result.detail });
       return prisma.analysisPackageJob.findUniqueOrThrow({ where: { id: jobId } });
     }
-    await transition(prisma, jobId, ["REGISTERING", "VERIFYING"], "READY", { finishedAt: new Date(), errorCode: null, errorMessageSafe: null });
+    // identical bytes already registered as another version: no row exists for this job's target version, so say so
+    // instead of presenting an unqualified READY
+    const unchanged = !result.created;
+    await transition(prisma, jobId, ["REGISTERING", "VERIFYING"], "READY", {
+      finishedAt: new Date(),
+      errorCode: unchanged ? "PACKAGE_UNCHANGED" : null,
+      errorMessageSafe: unchanged ? `${PACKAGE_JOB_MESSAGES.PACKAGE_UNCHANGED} (버전 ${result.version})` : null,
+    });
   } catch (e) {
     if (e instanceof PackageBuildError) await fail(prisma, jobId, e.code, e.detail);
     else await fail(prisma, jobId, "REGISTER_FAILED", e instanceof Error ? e.stack ?? e.message : String(e));
