@@ -29,7 +29,7 @@ type RunMeta = {
   errorCode: string | null;
 };
 type HistoryRow = { id: string; startedAt: string; executionStatus: string; algorithmVersion: string; errorCode: string | null; current: boolean; hasPackage: boolean };
-type PkgInfo = { version: number; filename: string; sha256: string; byteSize: number; createdAt: string; packageFormatVersion: string | null; interpretationTextVersion: string | null };
+type PkgInfo = { version: number; filename: string; sha256: string; byteSize: number; createdAt: string; packageFormatVersion: string | null; interpretationTextVersion: string | null; fileStatus?: "OK" | "MISSING" | "SIZE_MISMATCH" };
 type JobStatus = "QUEUED" | "BUILDING" | "VERIFYING" | "REGISTERING" | "READY" | "FAILED";
 type JobInfo = { id: string; status: JobStatus; active: boolean; attempt: number; trigger: string; targetVersion: number; errorCode: string | null; errorMessageSafe: string | null; createdAt: string; startedAt: string | null; finishedAt: string | null };
 type PreviousResult = { runId: string; startedAt: string; algorithmVersion: string; current: boolean; packages: PkgInfo[] };
@@ -56,6 +56,47 @@ const KIND_LABEL: Record<string, string> = {
   good_fit_criterion_unconfirmed: "양호 기준(미확정)",
   interpretation_principle: "해석 원칙",
 };
+
+/** What a failed 'new analysis' request means and what to do next. */
+function describeRunError(code: string | undefined, status: number): string {
+  const detail = code ? ` (코드 ${code})` : ` (HTTP ${status})`;
+  switch (code) {
+    case "RUN_ALREADY_RUNNING":
+      return "이 범위의 분석이 이미 실행 중입니다. 끝날 때까지 기다린 뒤 화면을 새로고침하세요. 새 분석을 중복으로 만들지 않았습니다." + detail;
+    case "REQUEST_IN_PROGRESS":
+      return "같은 시각에 다른 분석 요청이 처리 중입니다(버튼을 두 번 눌렀거나 다른 창에서 실행 중일 수 있음). 새 분석은 중복으로 만들어지지 않았습니다. 잠시 후 화면을 새로고침해 결과를 확인하세요." + detail;
+    case "PARTICIPANT_COUNT_ZERO":
+      return "이 범위에 분석에 포함할 수 있는 본조사 참여자가 없습니다." + detail;
+    case "ENGINE_SOURCE_SHA_UNAVAILABLE":
+      return "서버가 배포 커밋 정보를 알 수 없어 분석을 시작하지 않았습니다. 관리자 점검이 필요합니다." + detail;
+    case "SCOPE_INVALID":
+    case "DATASET_INVALID":
+      return "분석 범위 또는 자료 구분이 올바르지 않습니다. 화면을 새로고침하세요." + detail;
+    default:
+      return status === 401 || status === 403 ? "관리자 권한이 확인되지 않아 분석을 시작하지 못했습니다. 관리자 주소를 다시 확인하세요." + detail : "분석을 시작하지 못했습니다. 잠시 후 다시 시도하고, 계속되면 서버 로그를 확인해야 합니다." + detail;
+  }
+}
+
+/** What a failed ZIP download means for the researcher and what to do next (the raw code stays visible for support). */
+function describeDownloadError(code: string | undefined, status: number): string {
+  const detail = code ? ` (코드 ${code})` : ` (HTTP ${status})`;
+  switch (code) {
+    case "PACKAGE_FILE_MISSING":
+      return "등록된 ZIP 파일이 서버 저장소에서 사라졌습니다. 분석 결과는 그대로이며, 서버 백업에서 복원하거나 '저장된 결과로 새 ZIP 버전 만들기'로 다시 만들 수 있습니다(분석은 다시 계산하지 않습니다)." + detail;
+    case "PACKAGE_INTEGRITY_FAILURE":
+      return "저장된 ZIP 파일이 손상되어 내려받지 않았습니다(SHA-256 불일치). '저장된 결과로 새 ZIP 버전 만들기' 또는 백업 복원이 필요합니다." + detail;
+    case "PACKAGE_NOT_AVAILABLE":
+      return "이 실행(또는 선택한 버전)에 등록된 ZIP이 없습니다." + detail;
+    case "RESULT_NOT_CURRENT":
+      return "이 분석 결과는 최신 자료·설정과 일치하지 않아 ZIP을 내려받을 수 없습니다. 새 분석이 필요합니다." + detail;
+    case "RUN_NOT_FOUND":
+      return "해당 분석 실행을 찾을 수 없습니다. 화면을 새로고침하세요." + detail;
+    case "VERSION_INVALID":
+      return "ZIP 버전 번호가 올바르지 않습니다." + detail;
+    default:
+      return status === 401 || status === 403 ? "관리자 권한이 확인되지 않아 내려받지 못했습니다. 관리자 주소를 다시 확인하세요." + detail : "ZIP을 내려받지 못했습니다. 잠시 후 다시 시도하세요." + detail;
+  }
+}
 
 function saveBlob(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob);
@@ -201,7 +242,7 @@ export default function ConceptMapPanel({ slug, adminToken }: { slug: string; ad
     try {
       const res = await api("runs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ scope, dataset: "MAIN" }) });
       const j = await res.json().catch(() => ({}));
-      if (!res.ok) setError(`분석 실행 실패: ${j.errorCode ?? res.status}`);
+      if (!res.ok) setError(describeRunError(j.errorCode, res.status));
       setReloadTick((t) => t + 1);
     } catch {
       setError("분석 실행 중 네트워크 오류가 발생했습니다.");
@@ -232,7 +273,7 @@ export default function ConceptMapPanel({ slug, adminToken }: { slug: string; ad
       const res = await api(`runs/${targetRunId}/package${version ? `?version=${version}` : ""}`);
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
-        setError(`ZIP을 내려받지 못했습니다: ${j.errorCode ?? res.status}`);
+        setError(describeDownloadError(j.errorCode, res.status));
         return;
       }
       const blob = await res.blob();
@@ -267,7 +308,7 @@ export default function ConceptMapPanel({ slug, adminToken }: { slug: string; ad
             <button onClick={startRun} disabled={running} className="rounded-lg border border-slate-300 px-3 py-2 text-sm hover:bg-slate-100 disabled:opacity-50">
               {running ? "분석 실행 중…" : `${label} 새 분석 실행`}
             </button>
-            <button onClick={() => void downloadZip()} disabled={dlBusy || !info?.package} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50" title={info?.package ? info.package.filename : "이 결과의 ZIP이 아직 준비되지 않았습니다"}>
+            <button onClick={() => void downloadZip()} disabled={dlBusy || !info?.package || info.package.fileStatus === "MISSING"} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50" title={info?.package ? info.package.filename : "이 결과의 ZIP이 아직 준비되지 않았습니다"}>
               {dlBusy ? "내려받는 중…" : `${label} 전체 분석자료 다운로드 (ZIP)`}
             </button>
           </div>
@@ -398,13 +439,14 @@ function PackageStatus({ info, runId, currentTextVersion, onAction, onDownload, 
   const pkg = info.package;
   const stage = job ? STAGE[job.status] : pkg ? 5 : 1;
   const outdatedText = !!pkg && !!currentTextVersion && pkg.interpretationTextVersion !== currentTextVersion;
+  const brokenVersions = info.packageVersions.filter((v) => v.fileStatus && v.fileStatus !== "OK");
   return (
     <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <b>분석 상태</b> <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-emerald-800">완료 · 실행 {short(runId)}</span>
         <b>ZIP 상태</b>{" "}
-        <span className={`rounded px-1.5 py-0.5 ${job?.status === "FAILED" ? "bg-rose-100 text-rose-800" : pkg && !job?.active ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>
-          {job?.active ? STATUS_LABEL[job.status] : job?.status === "FAILED" ? (pkg ? "새 버전 작업 실패(기존 ZIP은 이용 가능)" : "실패") : pkg ? "준비 완료" : "아직 만들어지지 않음"}
+        <span className={`rounded px-1.5 py-0.5 ${job?.status === "FAILED" || (pkg && pkg.fileStatus && pkg.fileStatus !== "OK") ? "bg-rose-100 text-rose-800" : pkg && !job?.active ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>
+          {job?.active ? STATUS_LABEL[job.status] : pkg && pkg.fileStatus && pkg.fileStatus !== "OK" ? "ZIP 파일 이상(현재 버전을 내려받을 수 없음)" : job?.status === "FAILED" ? (pkg ? "새 버전 작업 실패(기존 ZIP은 이용 가능)" : "실패") : pkg ? "준비 완료" : "아직 만들어지지 않음"}
         </span>
       </div>
       <ol className="flex flex-wrap gap-1.5" aria-label="분석에서 ZIP까지의 진행">
@@ -418,6 +460,12 @@ function PackageStatus({ info, runId, currentTextVersion, onAction, onDownload, 
           );
         })}
       </ol>
+      {brokenVersions.length > 0 && (
+        <p className="rounded border border-rose-300 bg-rose-50 px-2 py-1 text-rose-800">
+          등록 정보는 있으나 서버 저장소에 파일이 없거나 크기가 다른 ZIP 버전: {brokenVersions.map((v) => `v${v.version}(${v.fileStatus === "MISSING" ? "파일 없음" : "크기 불일치"})`).join(", ")}. 분석 결과는 영향이 없습니다. 서버 백업에서 복원(restore-packages)하거나 &lsquo;저장된 결과로 새 ZIP 버전 만들기&rsquo;로 새 버전을 만드세요. 기존 버전의 등록 기록·해시는 지우지 않습니다.
+        </p>
+      )}
+      {job?.status === "READY" && job.errorMessageSafe && <p className="text-slate-600">{job.errorMessageSafe}</p>}
       {job?.active && <p>ZIP을 준비하는 중입니다(시도 {job.attempt}회). 분석은 이미 끝났고 다시 계산하지 않습니다. 화면은 자동으로 새로고침됩니다. 준비되는 동안 아래 &lsquo;이전 검증 결과·ZIP&rsquo;을 이용할 수 있습니다.</p>}
       {job?.status === "FAILED" && (
         <div className="space-y-1">
@@ -442,7 +490,7 @@ function PackageStatus({ info, runId, currentTextVersion, onAction, onDownload, 
             {info.packageVersions.length > 1 && (
               <select aria-label="ZIP 버전" defaultValue="" onChange={(e) => e.target.value && onDownload(Number(e.target.value))} disabled={dlBusy} className="rounded border border-slate-300 bg-white px-2 py-1">
                 <option value="">이전 버전 내려받기…</option>
-                {info.packageVersions.slice(1).map((v) => <option key={v.version} value={v.version}>버전 {v.version} · {dt(v.createdAt)} · {short(v.sha256)}…</option>)}
+                {info.packageVersions.slice(1).map((v) => <option key={v.version} value={v.version} disabled={v.fileStatus === "MISSING"}>버전 {v.version} · {dt(v.createdAt)} · {short(v.sha256)}…{v.fileStatus === "MISSING" ? " (파일 없음)" : v.fileStatus === "SIZE_MISMATCH" ? " (크기 불일치)" : ""}</option>)}
               </select>
             )}
             {!job?.active && <button onClick={() => onAction("rebuild")} className="rounded border border-slate-300 bg-white px-2.5 py-1 hover:bg-slate-100">저장된 결과로 새 ZIP 버전 만들기</button>}
@@ -467,8 +515,8 @@ function PreviousResults({ items, onDownload, dlBusy }: { items: PreviousResult[
             <ul className="mt-1 space-y-1">
               {r.packages.map((p) => (
                 <li key={p.version} className="flex flex-wrap items-center gap-2">
-                  <span>버전 {p.version} · {p.filename} · {(p.byteSize / 1024 / 1024).toFixed(1)} MB · SHA-256 {short(p.sha256)}… · 등록 {dt(p.createdAt)}</span>
-                  <button disabled={dlBusy || !r.current} onClick={() => onDownload(r.runId, p.version)} className="rounded border border-slate-300 px-2 py-0.5 hover:bg-slate-100 disabled:opacity-50">이전 실행의 ZIP 내려받기</button>
+                  <span>버전 {p.version} · {p.filename} · {(p.byteSize / 1024 / 1024).toFixed(1)} MB · SHA-256 {short(p.sha256)}… · 등록 {dt(p.createdAt)}{p.fileStatus && p.fileStatus !== "OK" ? " · 파일 이상(내려받기 불가)" : ""}</span>
+                  <button disabled={dlBusy || !r.current || p.fileStatus === "MISSING"} onClick={() => onDownload(r.runId, p.version)} className="rounded border border-slate-300 px-2 py-0.5 hover:bg-slate-100 disabled:opacity-50">이전 실행의 ZIP 내려받기</button>
                 </li>
               ))}
             </ul>

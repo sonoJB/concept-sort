@@ -88,7 +88,7 @@ check("diagonal of S equals N", all(int(S[i][i + 1]) == len(pids) for i in range
 figs = [n for n in names if "/08_그림/" in n]
 check("figures exist in PNG, SVG and PDF", all(any(n.endswith(e) for n in figs) for e in (".png", ".svg", ".pdf")), f"{len(figs)} figure files")
 check("report exists as PDF, DOCX and Markdown", all(any(n.endswith(e) for n in names) for e in ("_분석보고서.pdf", "_분석보고서.docx", "_분석보고서.md")))
-check("summary workbook exists", any(n.endswith("_분석요약.xlsx") for n in names))
+check("analysis workbook exists (package-format-4: *_분석자료.xlsx; earlier formats: *_분석요약.xlsx)", any(n.endswith(("_분석자료.xlsx", "_분석요약.xlsx")) for n in names))
 
 if args.extract_to:
     z.extractall(args.extract_to)

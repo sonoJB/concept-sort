@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { generateAdminToken, generateSlug } from "@/lib/slug";
+import { projectCreationAllowed } from "@/lib/projectCreation";
 
 export async function POST(request: NextRequest) {
+  if (!projectCreationAllowed()) {
+    return NextResponse.json({ errorCode: "PROJECT_CREATION_DISABLED", error: "이 서버에서는 새 프로젝트 만들기가 꺼져 있습니다. 서버 설정(ALLOW_PROJECT_CREATION=1)으로만 켤 수 있습니다." }, { status: 403 });
+  }
   const body = await request.json().catch(() => null);
 
   const title = typeof body?.title === "string" ? body.title.trim() : "";

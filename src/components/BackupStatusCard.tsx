@@ -9,6 +9,7 @@ const ISSUE_TEXT: Record<HealthIssue, string> = {
   CHECKS_STOPPED: "백업 점검 중단 의심",
   NO_VERIFIED_COPY: "검증된 정상 사본 없음",
   LOW_DISK: "저장공간 부족",
+  PACKAGE_FILES: "등록된 ZIP 파일이 없거나 손상됨",
 };
 
 const mb = (n: number | null) => (n === null ? "알 수 없음" : `${Math.round(n / 1048576)} MB`);
@@ -92,6 +93,17 @@ export default function BackupStatusCard({ slug, adminToken }: { slug: string; a
               <dd className={status.consecutiveFailures > 0 ? "text-red-600" : ""}>
                 {status.consecutiveFailures}회{status.lastError ? ` — ${status.lastError}` : ""}
               </dd>
+              <dt className="text-slate-500">등록된 ZIP 파일</dt>
+              <dd className={status.packageFileProblems.length > 0 ? "text-red-600" : ""}>
+                {status.packageRows === null ? "점검 기록 없음" : `등록 ${status.packageRows}건`}
+                {status.packageFileProblems.length > 0 && (
+                  <ul className="list-disc pl-5">
+                    {status.packageFileProblems.map((p, i) => (
+                      <li key={i}>{[p.scope, p.version ? `v${p.version}` : null, p.filename].filter(Boolean).join(" ")}: {p.problem}</li>
+                    ))}
+                  </ul>
+                )}
+              </dd>
               <dt className="text-slate-500">저장공간</dt>
               <dd className={status.lowDisk ? "text-amber-700" : ""}>
                 남은 용량 {mb(status.freeBytes)}
@@ -108,7 +120,7 @@ export default function BackupStatusCard({ slug, adminToken }: { slug: string; a
                 <li key={b.dir} className="px-3 py-2 flex flex-wrap gap-x-4 gap-y-1">
                   <span className="font-mono text-xs">{b.dir}</span>
                   <span className="text-xs text-slate-500">
-                    {b.bytes ? `${(b.bytes / 1048576).toFixed(2)} MB` : ""} {b.integrityCheck ? `· 무결성 ${b.integrityCheck}` : ""}
+                    {b.bytes ? `${(b.bytes / 1048576).toFixed(2)} MB` : ""} {b.integrityCheck ? `· 무결성 ${b.integrityCheck}` : ""} {b.packages !== null ? `· ZIP ${b.packages}개 보관` : ""}{b.packageProblems ? ` · ZIP 문제 ${b.packageProblems}건` : ""}
                   </span>
                   {b.sha256 && <span className="font-mono text-[10px] text-slate-400 break-all">sha256 {b.sha256}</span>}
                 </li>

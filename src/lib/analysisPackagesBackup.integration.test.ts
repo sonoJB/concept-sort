@@ -5,7 +5,8 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 // @ts-expect-error plain-JS Node script (no type declarations)
-import { createBackup, verifyBackupDir } from "../../scripts/backup/auto-backup.mjs";
+import { createBackup, verifyBackupDir, runOnce, checkLivePackageFiles } from "../../scripts/backup/auto-backup.mjs";
+import { readBackupStatus } from "./backupStatus";
 // @ts-expect-error plain-JS Node script (no type declarations)
 import { restorePackages, checkPackages } from "../../scripts/backup/restore-tool.mjs";
 
@@ -126,5 +127,35 @@ describe("restoring packages after a database replacement", () => {
     const r = restorePackages({ dbPath: v.file, from: b.dirPath });
     expect(r.check.ok).toBe(false);
     expect(r.check.problems.map((p: { problem: string }) => p.problem).join(" ")).toContain("regenerate");
+  });
+});
+
+describe("a registered package whose file is gone is detected, not silently accepted", () => {
+  it("the scheduled check records the missing file in the status, the status API turns red, and the backup manifest lists it", () => {
+    const v = volume("m1", zips);
+    const url = `file:${v.file}`;
+    const ok = runOnce({ reason: "scheduled", databaseUrl: url, now: new Date("2026-10-18T10:00:00Z") });
+    expect(ok.result).toBe("OK");
+    let st = readBackupStatus(path.join(v.dir, "backups"), new Date("2026-10-18T10:05:00Z"));
+    expect(st.packageRows).toBe(3);
+    expect(st.packageFileProblems).toEqual([]);
+    expect(st.health.issues).not.toContain("PACKAGE_FILES");
+    // the volume loses one file; the database content is unchanged, so no new backup is needed -- but the check must notice
+    fs.rmSync(path.join(v.pkgDir, `${sha(zips[1])}.zip`));
+    const skipped = runOnce({ reason: "scheduled", databaseUrl: url, now: new Date("2026-10-18T16:00:00Z") });
+    expect(skipped.result).toBe("SKIPPED_UNCHANGED");
+    st = readBackupStatus(path.join(v.dir, "backups"), new Date("2026-10-18T16:05:00Z"));
+    expect(st.packageFileProblems).toHaveLength(1);
+    expect(st.packageFileProblems[0]).toMatchObject({ scope: "JP", filename: "1.zip" });
+    expect(st.health.issues).toContain("PACKAGE_FILES");
+    expect(st.health.level).toBe("error");
+    // a manual backup taken now lists the problem in its manifest and still succeeds (the database is what must not be lost)
+    const m = createBackup({ reason: "manual", databaseUrl: url, now: new Date("2026-10-18T16:10:00Z") });
+    expect(m.result).toBe("OK");
+    expect(m.manifest.analysisPackageProblems.map((p: { problem: string }) => p.problem).join(" ")).toContain("database row (JP");
+    // restoring the file from the earlier backup clears the finding
+    const first = readBackupStatus(path.join(v.dir, "backups"), new Date("2026-10-18T16:11:00Z")).backups[0];
+    restorePackages({ dbPath: v.file, from: path.join(v.dir, "backups", first.dir) });
+    expect(checkLivePackageFiles(v.file).ok).toBe(true);
   });
 });

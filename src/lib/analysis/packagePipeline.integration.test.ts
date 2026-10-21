@@ -265,6 +265,41 @@ describe("analysis -> ZIP pipeline (queue, build, verify, register, ready)", () 
     expect(await prisma.analysisPackage.count({ where: { analysisRunId: run.id } })).toBe(2);
   });
 
+  it("a registered package whose file is missing or damaged is shown as such and never offered as ready; the analysis stays untouched", async () => {
+    const run = await prisma.analysisRun.findFirstOrThrow({ where: { scope: "KR" } });
+    const row = await prisma.analysisPackage.findFirstOrThrow({ where: { analysisRunId: run.id, packageVersion: 1 } });
+    const file = path.join(path.dirname(dbFile), "analysis-packages", row.storedFile);
+    const original = fs.readFileSync(file);
+    try {
+      fs.chmodSync(file, 0o666);
+      fs.rmSync(file);
+      let o = await overview();
+      const v1 = o.scopes.KR.packageVersions.find((v: { version: number }) => v.version === 1);
+      expect(v1.fileStatus).toBe("MISSING");
+      const res = await download(run.id, 1);
+      expect(res.status).toBe(500);
+      expect(await res.json()).toMatchObject({ errorCode: "PACKAGE_FILE_MISSING", version: 1 });
+      const pj = await (await jobRoute.GET(req("/"), ctx({ runId: run.id }))).json();
+      expect(pj.packages.find((p: { packageVersion: number }) => p.packageVersion === 1).fileStatus).toBe("MISSING");
+      // same size is not enough: a different content under the same name is caught by the hash on download
+      fs.writeFileSync(file, Buffer.alloc(original.length, 1));
+      o = await overview();
+      expect(o.scopes.KR.packageVersions.find((v: { version: number }) => v.version === 1).fileStatus).toBe("OK"); // cheap check only looks at existence and size
+      const bad = await download(run.id, 1);
+      expect(bad.status).toBe(500);
+      expect((await bad.json()).errorCode).toBe("PACKAGE_INTEGRITY_FAILURE");
+      fs.writeFileSync(file, original.subarray(0, 10));
+      o = await overview();
+      expect(o.scopes.KR.packageVersions.find((v: { version: number }) => v.version === 1).fileStatus).toBe("SIZE_MISMATCH");
+      expect((await prisma.analysisRun.findUniqueOrThrow({ where: { id: run.id } })).executionStatus).toBe("COMPLETED");
+    } finally {
+      fs.rmSync(file, { force: true });
+      fs.writeFileSync(file, original);
+      fs.chmodSync(file, 0o444);
+    }
+    expect((await download(run.id, 1)).status).toBe(200);
+  });
+
   it("the stored input is reproduced exactly for the package; if the responses changed, the build stops instead of mixing data", async () => {
     const run = await prisma.analysisRun.findFirstOrThrow({ where: { scope: "KR" } });
     const raw = await loadPackageRaw(prisma, run);

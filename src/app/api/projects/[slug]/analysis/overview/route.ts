@@ -6,11 +6,13 @@ import { DEFAULT_ANALYSIS_PARAMETERS } from "@/lib/analysis/config";
 import { serializePackageJob } from "@/lib/analysis/packageJobs";
 import { INTERPRETATION_TEXT_VERSION } from "@/lib/conceptMap/metrics";
 import { PACKAGE_FORMAT_VERSION } from "@/lib/analysis/packageConfig";
+import { packageFileState } from "@/lib/analysis/packageStore";
 
 const SCOPES = ["KR", "JP", "ALL"] as const;
 
-type PackageRow = { packageVersion: number; filename: string; sha256: string; byteSize: number; createdAt: Date; builderVersion: string | null; textVersion: string | null };
-const pkgView = (p: PackageRow) => ({ version: p.packageVersion, filename: p.filename, sha256: p.sha256, byteSize: p.byteSize, createdAt: p.createdAt.toISOString(), packageFormatVersion: p.builderVersion, interpretationTextVersion: p.textVersion });
+type PackageRow = { packageVersion: number; filename: string; sha256: string; byteSize: number; createdAt: Date; builderVersion: string | null; textVersion: string | null; storedFile: string };
+// fileStatus: a registered package whose file is missing or has the wrong size is NOT presented as ready to download
+const pkgView = (p: PackageRow) => ({ version: p.packageVersion, filename: p.filename, sha256: p.sha256, byteSize: p.byteSize, createdAt: p.createdAt.toISOString(), packageFormatVersion: p.builderVersion, interpretationTextVersion: p.textVersion, fileStatus: packageFileState(p.storedFile, p.byteSize) });
 
 /**
  * Per scope: the newest MAIN run that is COMPLETED, fully current and of the current algorithm version (the
@@ -27,7 +29,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     const runs = await prisma.analysisRun.findMany({
       where: { projectId: check.project.id, scope, dataset: "MAIN" },
       orderBy: { startedAt: "desc" },
-      include: { packages: { orderBy: { packageVersion: "desc" }, select: { packageVersion: true, filename: true, sha256: true, byteSize: true, createdAt: true, builderVersion: true, textVersion: true } } },
+      include: { packages: { orderBy: { packageVersion: "desc" }, select: { packageVersion: true, filename: true, sha256: true, byteSize: true, createdAt: true, builderVersion: true, textVersion: true, storedFile: true } } },
     });
     let official: Awaited<ReturnType<typeof serializeRunMetadata>> | null = null;
     let officialRunId: string | null = null;
