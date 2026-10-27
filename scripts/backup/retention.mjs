@@ -18,9 +18,14 @@
  *      list (a table added later is therefore compared by default) — is held, with an identical value in EVERY column, by the latest backup or the RAW
  *      baseline (a row count is never enough; a changed value, a column or a table the kept copies lack counts as "only in the candidate"),
  *   5. every package file the candidate lists is also listed by the latest backup,
- *   6. the latest backup matches what status.json recorded for it (SHA-256 and content fingerprint): a record that disagrees blocks everything.
+ *   6. the latest backup matches the verification record (status.json on the server; the server's status for a PC copy): a missing record or one
+ *      that disagrees blocks everything. EVERY execution path (daemon, CLI, PC --prune) must pass it — the record is a required input.
  * The ONLY tables left out of the comparison are operational bookkeeping (AnalysisPackageJob, AnalysisExecutionLock) and the migration history table
  * (_prisma_migrations): they are not research content and never block a deletion.
+ *
+ * Immediately before the first removal, inside the caller's lock, the whole plan is rebuilt from scratch (`replan`) and must come out the same
+ * (same policy file bytes, same latest/baseline, the candidate still "delete"); otherwise nothing is deleted.
+ * Files are never chmod-ed: backup files are hard links of live ZIPs, and a mode change would change the live file too.
  *
  * Nothing is deleted unless BOTH the environment variable AUTO_BACKUP_RETENTION=apply AND <backups>/retention-policy.json exist.
  * With AUTO_BACKUP_RETENTION=dry-run the plan is only logged. Any error, mismatch or doubt keeps every existing backup.
@@ -29,6 +34,7 @@
  *   node scripts/backup/retention.mjs --db /data/prod.db --apply        (requires the policy file)
  */
 import { DatabaseSync } from "node:sqlite";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -40,6 +46,8 @@ export const AUTO_BACKUP_DIR = /^\d{8}T\d{6}Z_[a-z0-9-]+$/;
 export const POLICY_FILE = "retention-policy.json";
 const STALE_TMP_MS = 60 * 60 * 1000;
 const LOCK_STALE_MS = 30 * 60 * 1000;
+const LOCK_HARD_STALE_MS = 6 * 60 * 60 * 1000;
+const LOCK_FILE = ".backup.lock";
 
 const quote = (n) => '"' + String(n).replace(/"/g, '""') + '"';
 
@@ -51,10 +59,42 @@ function columnsOf(db, table) {
   }
 }
 
-function canon(values) {
-  return values
-    .map((v) => (v instanceof Uint8Array ? "b:" + Buffer.from(v).toString("hex") : typeof v === "bigint" ? "n:" + v : v === null ? "null" : typeof v + ":" + String(v)))
-    .join("\u0001");
+/**
+ * One value -> one unambiguous token: a type tag, and for strings/blobs the LENGTH before the content, so no value can ever swallow the separator
+ * ("a\u0001string" + "c" never equals "a" + "b\u0001string"). Integers and reals stay different (1 vs 1.0), -0 differs from 0.
+ */
+function enc(v) {
+  if (v === null || v === undefined) return "N";
+  if (typeof v === "bigint") return "I" + v.toString();
+  if (typeof v === "number") return "R" + (Object.is(v, -0) ? "-0" : String(v));
+  if (typeof v === "string") return "S" + v.length + ":" + v;
+  if (v instanceof Uint8Array) {
+    const h = Buffer.from(v).toString("hex");
+    return "B" + h.length + ":" + h;
+  }
+  const t = String(v);
+  return "?" + t.length + ":" + t;
+}
+
+/** Canonical form of one row (the values in the given column order). */
+export function canon(values) {
+  return values.map(enc).join("|");
+}
+
+function rowsOf(db, sql) {
+  const st = db.prepare(sql);
+  if (typeof st.setReadBigInts === "function") st.setReadBigInts(true); // integers stay exact and distinguishable from reals
+  return st.all();
+}
+
+/** Multiset of rows: canonical row -> how many times it occurs. */
+function countRows(rows, cols) {
+  const m = new Map();
+  for (const r of rows) {
+    const k = canon(cols.map((c) => r[c]));
+    m.set(k, (m.get(k) ?? 0) + 1);
+  }
+  return m;
 }
 
 function openRO(file) {
@@ -94,35 +134,19 @@ export function coverage(candidatePath, keptPaths, tables) {
         continue;
       }
       const sel = `select ${cols.map(quote).join(",")} from ${quote(t)}`;
-      const idIdx = cols.indexOf("id");
       const keptSets = [];
       for (const k of kept) {
         const kc = columnsOf(k, t);
         if (kc.length === 0 || cols.some((c) => !kc.includes(c))) continue;
-        const rows = k.prepare(sel).all();
-        const m = new Map();
-        for (const r of rows) {
-          const vals = cols.map((c) => r[c]);
-          const key = idIdx >= 0 ? String(vals[idIdx]) : canon(vals);
-          const val = canon(vals);
-          if (idIdx >= 0) {
-            const arr = m.get(key);
-            if (arr) arr.push(val);
-            else m.set(key, [val]);
-          } else {
-            m.set(key, [val]);
-          }
-        }
-        keptSets.push(m);
+        keptSets.push(countRows(rowsOf(k, sel), cols));
       }
       let rows = 0;
       let uncovered = 0;
-      for (const r of cand.prepare(sel).all()) {
-        rows++;
-        const vals = cols.map((c) => r[c]);
-        const key = idIdx >= 0 ? String(vals[idIdx]) : canon(vals);
-        const val = canon(vals);
-        if (!keptSets.some((m) => (m.get(key) ?? []).includes(val))) uncovered++;
+      // a row that occurs n times in the candidate must occur at least n times in ONE kept copy (duplicates are data too)
+      for (const [key, n] of countRows(rowsOf(cand, sel), cols)) {
+        rows += n;
+        const best = keptSets.reduce((mx, m) => Math.max(mx, m.get(key) ?? 0), 0);
+        if (best < n) uncovered += n - best;
       }
       out[t] = { rows, uncovered, usableKept: keptSets.length };
     }
@@ -140,13 +164,24 @@ export function rawContainedInLive(backupDbPath, liveDbPath) {
 
 export function readPolicy(root) {
   try {
-    const p = JSON.parse(fs.readFileSync(path.join(root, POLICY_FILE), "utf8"));
+    const bytes = fs.readFileSync(path.join(root, POLICY_FILE));
+    const p = JSON.parse(bytes.toString("utf8"));
     if (p && p.version === 1 && typeof p.rawBaseline === "string" && p.rawBaseline && (p.protect === undefined || Array.isArray(p.protect))) {
-      return { ok: true, policy: { rawBaseline: p.rawBaseline, protect: (p.protect ?? []).map(String) } };
+      return { ok: true, policy: { rawBaseline: p.rawBaseline, protect: (p.protect ?? []).map(String) }, sha256: crypto.createHash("sha256").update(bytes).digest("hex") };
     }
     return { ok: false, reason: "POLICY_INVALID" };
   } catch (e) {
     return { ok: false, reason: e && e.code === "ENOENT" ? "NO_POLICY_FILE" : "POLICY_UNREADABLE" };
+  }
+}
+
+/** The server's verification record of its latest backup (status.json): name, SHA-256 and content fingerprint. null when unreadable. */
+export function readLatestRecord(root) {
+  try {
+    const st = JSON.parse(fs.readFileSync(path.join(root, "status.json"), "utf8"));
+    return { dir: st.lastBackupDir, sha256: st.lastBackupSha256, fingerprint: st.lastBackupFingerprint };
+  } catch {
+    return null;
   }
 }
 
@@ -158,11 +193,13 @@ function dbFileOf(dir, manifest) {
  * Builds the retention plan (read-only). `verify` is verifyBackupDir from auto-backup.mjs (injected: avoids a circular import).
  * @returns {{ enabled: boolean, reason?: string, latest?: object, baseline?: object, candidates: object[] }}
  */
-export function planRetention({ root, latestDir, liveDbPath, verify, latestRecord }) {
+export function planRetention({ root, latestDir, liveDbPath, verify, latestRecord, candidateFilter = () => true }) {
   const plan = { enabled: false, candidates: [] };
   const pol = readPolicy(root);
   if (!pol.ok) return { ...plan, reason: pol.reason };
   const { rawBaseline, protect } = pol.policy;
+  plan.policy = pol.policy;
+  plan.policySha256 = pol.sha256;
   if (!latestDir) return { ...plan, reason: "NO_LATEST_BACKUP" };
 
   const latestPath = path.join(root, latestDir);
@@ -170,7 +207,8 @@ export function planRetention({ root, latestDir, liveDbPath, verify, latestRecor
   plan.latest = { dir: latestDir, ok: latestCheck.ok, problems: latestCheck.problems };
   if (!latestCheck.ok || !latestCheck.manifest) return { ...plan, reason: "LATEST_NOT_VERIFIED" };
   // the verification record (status.json) must name exactly this backup and agree with its manifest, or nothing is deleted
-  if (latestRecord && (latestRecord.dir !== latestDir || latestRecord.sha256 !== latestCheck.manifest.sha256 || latestRecord.fingerprint !== latestCheck.manifest.contentFingerprint)) {
+  if (!latestRecord || !latestRecord.dir || !latestRecord.sha256 || !latestRecord.fingerprint) return { ...plan, reason: "LATEST_RECORD_MISSING" };
+  if (latestRecord.dir !== latestDir || latestRecord.sha256 !== latestCheck.manifest.sha256 || latestRecord.fingerprint !== latestCheck.manifest.contentFingerprint) {
     return { ...plan, reason: "LATEST_RECORD_MISMATCH" };
   }
   const baselinePath = path.join(root, rawBaseline);
@@ -200,6 +238,7 @@ export function planRetention({ root, latestDir, liveDbPath, verify, latestRecor
   }
   for (const name of names) {
     if (!AUTO_BACKUP_DIR.test(name)) continue; // changelog, survey-complete_*, pre-mds-v2_*, .tmp-* … are never candidates
+    if (!candidateFilter(name)) continue; // e.g. on the PC only copies this tool created itself
     if (name === latestDir || name === rawBaseline) continue;
     const entry = { dir: name, decision: "keep", reason: "" };
     plan.candidates.push(entry);
@@ -259,29 +298,60 @@ function within(root, p) {
   return x !== r && x.startsWith(r + path.sep) && path.dirname(x) === r;
 }
 
-function makeWritable(dir) {
-  for (const f of fs.readdirSync(dir, { recursive: true, withFileTypes: true })) {
-    const full = path.join(f.parentPath ?? f.path, f.name);
+/**
+ * Directories only. Files are NEVER chmod-ed: a file inside a backup may be a hard link of a live package ZIP (same inode), so a mode change here
+ * would change the live file and the other kept copies too. Unlinking a file needs write permission on its DIRECTORY, not on the file.
+ */
+function makeDirsWritable(dir) {
+  const walk = (d) => {
+    let entries = [];
     try {
-      if (f.isSymbolicLink()) continue; // never follow links
-      fs.chmodSync(full, f.isDirectory() ? 0o755 : 0o666);
+      fs.chmodSync(d, 0o755);
+      entries = fs.readdirSync(d, { withFileTypes: true });
     } catch {
-      // ignore: removal will report the failure
+      return;
     }
-  }
-  try {
-    fs.chmodSync(dir, 0o755);
-  } catch {
-    // ignore
-  }
+    for (const e of entries) if (e.isDirectory() && !e.isSymbolicLink()) walk(path.join(d, e.name));
+  };
+  walk(dir);
 }
 
-/** Executes the plan. Deletes only entries marked "delete", re-checking every guard immediately before each removal. */
-export function applyRetention({ root, plan, dryRun, onDelete }) {
+function removeTree(dir) {
+  makeDirsWritable(dir);
+  fs.rmSync(dir, { recursive: true, force: false });
+}
+
+/**
+ * Executes the plan. Deletes only entries marked "delete".
+ * Before the first removal (inside the caller's lock) `replan()` rebuilds the plan from the current files; the deletion proceeds only if the
+ * policy file is byte-identical to the one the plan was made from, latest/baseline are unchanged and the candidate is STILL a deletion candidate.
+ * Without `replan` nothing is deleted (dry runs only report).
+ */
+export function applyRetention({ root, plan, dryRun, onDelete, replan }) {
   const result = { dryRun: !!dryRun, deleted: [], kept: [], errors: [] };
   if (!plan.enabled) return result;
-  const pol = readPolicy(root);
-  const protect = pol.ok ? pol.policy.protect : [];
+  let protect = plan.policy?.protect ?? [];
+  let fresh = null;
+  if (!dryRun && plan.candidates.some((c) => c.decision === "delete")) {
+    const abort = (error) => {
+      result.errors.push({ dir: null, error });
+      for (const c of plan.candidates) result.kept.push({ dir: c.dir, reason: c.decision === "delete" ? "REVALIDATION_FAILED_KEPT" : c.reason });
+      return result;
+    };
+    if (typeof replan !== "function") return abort("REVALIDATION_UNAVAILABLE: no way to re-check the plan, nothing deleted");
+    try {
+      fresh = replan();
+    } catch (e) {
+      return abort("REVALIDATION_FAILED: " + String(e && e.message ? e.message : e));
+    }
+    if (!fresh || !fresh.enabled) return abort("REVALIDATION_BLOCKED: " + (fresh?.reason ?? "unknown"));
+    if (!plan.policySha256 || fresh.policySha256 !== plan.policySha256) return abort("POLICY_CHANGED: the policy file differs from the one the plan was made from");
+    if (fresh.latest?.dir !== plan.latest?.dir || fresh.baseline?.dir !== plan.baseline?.dir) return abort("PLAN_CHANGED: latest or baseline differs after re-check");
+    protect = fresh.policy.protect;
+  } else if (!dryRun) {
+    const pol = readPolicy(root);
+    protect = pol.ok ? pol.policy.protect : protect;
+  }
   for (const c of plan.candidates) {
     if (c.decision !== "delete") {
       result.kept.push({ dir: c.dir, reason: c.reason });
@@ -290,6 +360,10 @@ export function applyRetention({ root, plan, dryRun, onDelete }) {
     const dir = path.join(root, c.dir);
     try {
       if (!AUTO_BACKUP_DIR.test(c.dir) || c.dir === plan.latest.dir || c.dir === plan.baseline.dir || protect.includes(c.dir)) throw new Error("guard: protected name");
+      if (fresh) {
+        const f = fresh.candidates.find((x) => x.dir === c.dir);
+        if (!f || f.decision !== "delete") throw new Error("guard: not a deletion candidate after re-check (" + (f ? f.reason : "unknown") + ")");
+      }
       if (!fs.existsSync(dir) || fs.lstatSync(dir).isSymbolicLink() || !fs.lstatSync(dir).isDirectory() || !within(root, dir)) {
         throw new Error("guard: path is not a real directory directly inside the backup root");
       }
@@ -303,10 +377,9 @@ export function applyRetention({ root, plan, dryRun, onDelete }) {
       fs.renameSync(dir, trash);
       result.deleted.push({ dir: c.dir });
       if (onDelete) onDelete(c);
-      // Step 2: remove the renamed directory (files are read-only by design; lift that on THIS tree only, never following links).
+      // Step 2: remove the renamed directory (never following links, never changing file modes).
       try {
-        makeWritable(trash);
-        fs.rmSync(trash, { recursive: true, force: false });
+        removeTree(trash);
       } catch (e) {
         result.errors.push({ dir: c.dir, error: "removed from the backup list, leftover will be retried: " + String(e && e.message ? e.message : e) });
       }
@@ -333,13 +406,12 @@ export function removeStaleTemp(root, now = new Date()) {
       if (n.startsWith(".deleting-")) {
         // already decided and renamed out of the backup list by applyRetention; finish the removal
         if (fs.lstatSync(p).isSymbolicLink() || !fs.lstatSync(p).isDirectory()) continue;
-        makeWritable(p);
-        fs.rmSync(p, { recursive: true, force: false });
+        removeTree(p);
         removed.push(n);
       } else if (n.startsWith(".tmp-")) {
         if (fs.lstatSync(p).isSymbolicLink() || !fs.lstatSync(p).isDirectory()) continue;
         if (now.getTime() - fs.statSync(p).mtimeMs > STALE_TMP_MS) {
-          makeWritable(p);
+          makeDirsWritable(p);
           fs.rmSync(p, { recursive: true, force: true });
           removed.push(n);
         }
@@ -351,33 +423,83 @@ export function removeStaleTemp(root, now = new Date()) {
   return removed;
 }
 
-/** Exclusive lock so two runs (daemon tick, pre-deploy guard, manual) never create/prune at the same time. Returns a release function or null. */
+const pidAlive = (pid) => {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return !!e && e.code === "EPERM";
+  }
+};
+
+function readLockInfo(file) {
+  try {
+    return JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Exclusive lock so two runs (daemon tick, pre-deploy guard, manual CLI, PC pull) never create/prune at the same time. Returns a release function or null.
+ * The lock file carries a random token. Release removes the file ONLY if it still carries OUR token, so a run whose lock was taken over (or never
+ * got it) can never delete somebody else's lock. A lock is taken over only when it is older than 30 minutes AND its process is gone (or it is older than 6 hours);
+ * the takeover renames exactly the file that was judged stale, checks what was moved and puts a fresher lock back instead of stealing it.
+ */
 export function acquireLock(root, now = new Date()) {
-  const file = path.join(root, ".backup.lock");
-  for (let attempt = 0; attempt < 2; attempt++) {
+  const file = path.join(root, LOCK_FILE);
+  const token = crypto.randomUUID();
+  const release = () => {
+    const info = readLockInfo(file);
+    if (info && info.token === token) {
+      try {
+        fs.rmSync(file, { force: true });
+      } catch {
+        // ignore
+      }
+    }
+  };
+  for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const fd = fs.openSync(file, "wx");
-      fs.writeSync(fd, JSON.stringify({ pid: process.pid, at: now.toISOString() }));
+      fs.writeSync(fd, JSON.stringify({ pid: process.pid, token, at: now.toISOString() }));
       fs.closeSync(fd);
-      return () => {
-        try {
-          fs.rmSync(file, { force: true });
-        } catch {
-          // ignore
-        }
-      };
+      return release;
     } catch (e) {
       if (!e || e.code !== "EEXIST") return null;
+      let age;
+      let info;
       try {
-        const age = now.getTime() - fs.statSync(file).mtimeMs;
-        if (age > LOCK_STALE_MS) {
-          fs.rmSync(file, { force: true });
-          continue;
-        }
+        age = now.getTime() - fs.statSync(file).mtimeMs;
+        info = readLockInfo(file);
       } catch {
-        continue;
+        continue; // vanished between the attempts
       }
-      return null;
+      const stale = age > LOCK_STALE_MS && (!pidAlive(info?.pid) || age > LOCK_HARD_STALE_MS);
+      if (!stale) return null;
+      const moved = path.join(root, `${LOCK_FILE}.stale-${token}`);
+      try {
+        fs.renameSync(file, moved);
+      } catch {
+        continue; // somebody else took it over first
+      }
+      const movedInfo = readLockInfo(moved);
+      const same = (movedInfo?.token ?? null) === (info?.token ?? null);
+      if (!same) {
+        // a fresh lock appeared between our check and the rename: it is not ours to remove — put it back
+        try {
+          fs.linkSync(moved, file);
+        } catch {
+          // another lock exists now; the owner of the moved one will see the token mismatch at release and remove nothing
+        }
+      }
+      try {
+        fs.rmSync(moved, { force: true });
+      } catch {
+        // ignore
+      }
+      if (!same) return null;
     }
   }
   return null;
@@ -399,15 +521,31 @@ async function cli() {
     process.exit(2);
   }
   const root = backupRootFor(dbPath);
-  const status = JSON.parse(fs.readFileSync(path.join(root, "status.json"), "utf8"));
-  const plan = planRetention({ root, latestDir: status.lastBackupDir, liveDbPath: dbPath, verify: (d) => verifyBackupDir(d) });
   const apply = args.includes("--apply");
-  if (apply && !plan.enabled) {
-    console.error("[retention] not enabled:", plan.reason);
+  // the same lock the daemon uses: never plan or delete while a backup run (or another retention run) is active
+  const release = acquireLock(root);
+  if (!release) {
+    console.error("[retention] another backup/retention run holds the lock; nothing done");
     process.exit(1);
   }
-  const res = applyRetention({ root, plan, dryRun: !apply });
-  console.log(JSON.stringify({ enabled: plan.enabled, reason: plan.reason, latest: plan.latest?.dir, baseline: plan.baseline?.dir, candidates: plan.candidates.map((c) => ({ dir: c.dir, decision: c.decision, reason: c.reason })), result: res }, null, 2));
+  // status.json is read INSIDE the lock, and again by every re-plan, so the record is always current and mandatory
+  const makePlan = () => {
+    const latestRecord = readLatestRecord(root);
+    return planRetention({ root, latestDir: latestRecord?.dir, liveDbPath: dbPath, verify: (d) => verifyBackupDir(d), latestRecord });
+  };
+  try {
+    const plan = makePlan();
+    if (apply && !plan.enabled) {
+      console.error("[retention] not enabled:", plan.reason);
+      process.exitCode = 1;
+      return;
+    }
+    const res = applyRetention({ root, plan, dryRun: !apply, replan: makePlan });
+    console.log(JSON.stringify({ enabled: plan.enabled, reason: plan.reason, latest: plan.latest?.dir, baseline: plan.baseline?.dir, candidates: plan.candidates.map((c) => ({ dir: c.dir, decision: c.decision, reason: c.reason })), result: res }, null, 2));
+    if (res.errors.length) process.exitCode = 1;
+  } finally {
+    release();
+  }
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

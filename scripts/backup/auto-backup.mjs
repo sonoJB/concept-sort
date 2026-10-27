@@ -32,7 +32,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { acquireLock, applyRetention, planRetention, removeStaleTemp, retentionMode } from "./retention.mjs";
+import { acquireLock, applyRetention, planRetention, readLatestRecord, removeStaleTemp, retentionMode } from "./retention.mjs";
 
 export const MIN_FREE_BYTES = 100 * 1024 * 1024; // below this a backup is refused
 export const LOW_DISK_WARN_BYTES = 200 * 1024 * 1024; // below this the admin screen warns
@@ -404,9 +404,9 @@ function retentionStep({ root, dbPath, latestDir, now, record }) {
   const mode = retentionMode();
   if (mode === "off") return null;
   try {
-    const st = readStatus(path.join(root, "status.json"));
-    const latestRecord = { dir: st.lastBackupDir, sha256: st.lastBackupSha256, fingerprint: st.lastBackupFingerprint };
-    const plan = planRetention({ root, latestDir, liveDbPath: dbPath, verify: (d) => verifyBackupDir(d), latestRecord });
+    // the verification record (status.json) is a mandatory input of every plan, including the re-plan done right before a deletion
+    const makePlan = () => planRetention({ root, latestDir, liveDbPath: dbPath, verify: (d) => verifyBackupDir(d), latestRecord: readLatestRecord(root) });
+    const plan = makePlan();
     if (!plan.enabled) {
       record({ result: "RETENTION_NOT_APPLIED", mode, reason: plan.reason });
       log("log", "retention not applied", { mode, reason: plan.reason });
@@ -416,6 +416,7 @@ function retentionStep({ root, dbPath, latestDir, now, record }) {
       root,
       plan,
       dryRun: mode !== "apply",
+      replan: makePlan,
       onDelete: (c) => record({ result: "RETENTION_DELETED", dir: c.dir, reason: c.reason, latest: plan.latest.dir, rawBaseline: plan.baseline.dir }),
     });
     for (const d of res.deleted) log("log", res.dryRun ? "retention (dry run): would delete" : "retention: deleted", { dir: d.dir });

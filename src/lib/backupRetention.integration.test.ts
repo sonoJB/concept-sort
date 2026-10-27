@@ -7,7 +7,8 @@ import { DatabaseSync } from "node:sqlite";
 // @ts-expect-error plain-JS Node scripts (no type declarations)
 import { runOnce, createBackup, verifyBackupDir } from "../../scripts/backup/auto-backup.mjs";
 // @ts-expect-error plain-JS Node scripts (no type declarations)
-import { coverage, planRetention, applyRetention, acquireLock, removeStaleTemp, retentionMode, POLICY_FILE } from "../../scripts/backup/retention.mjs";
+import { coverage, acquireLock, removeStaleTemp, retentionMode, POLICY_FILE } from "../../scripts/backup/retention.mjs";
+import { planRetention, applyRetention } from "./backupRetention.testkit";
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "concept-sort-retention-"));
 afterAll(() => fs.rmSync(root, { recursive: true, force: true }));

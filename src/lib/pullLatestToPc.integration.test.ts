@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 // @ts-expect-error plain-JS Node scripts (no type declarations)
-import { runOnce } from "../../scripts/backup/auto-backup.mjs";
+import { runOnce, createBackup } from "../../scripts/backup/auto-backup.mjs";
 // @ts-expect-error plain-JS Node scripts (no type declarations)
 import { pullLatest, pcStatus } from "../../scripts/backup/pull-latest-to-pc.mjs";
 
@@ -21,13 +21,21 @@ function server() {
   const db = new DatabaseSync(file);
   db.exec(`create table _prisma_migrations (id text, checksum text, finished_at integer, migration_name text, logs text, rolled_back_at integer, started_at integer, applied_steps_count integer);
            insert into _prisma_migrations values ('0','x',1,'20260101_init',null,null,1,1);
-           create table SortSession (id text primary key, phoneNumber text); insert into SortSession values ('a','1'),('b','2');`);
+           create table SortSession (id text primary key, phoneNumber text); insert into SortSession values ('a','1'),('b','2');
+           create table Project (id text primary key); create table Statement (id text primary key); create table SortGroup (id text primary key); create table SortGroupItem (id text primary key);`);
   db.close();
   const zip = Buffer.from("zip");
   fs.writeFileSync(path.join(dir, "analysis-packages", crypto.createHash("sha256").update(zip).digest("hex") + ".zip"), zip);
   const url = `file:${file}`;
   const backups = path.join(dir, "backups");
   return { dir, file, url, backups, bk: (iso: string) => runOnce({ reason: "scheduled", databaseUrl: url, now: t(iso) }) };
+}
+const BASELINE = "survey-complete_20261016T120119Z";
+/** Server side RAW baseline = the CURRENT live state, renamed to a non-automatic name, plus the retention policy file that names it. */
+function addBaseline(s: ReturnType<typeof server>, protect: string[] = []) {
+  const r = createBackup({ reason: "baseline", databaseUrl: s.url, now: t("2026-10-16T12:01:19Z") });
+  fs.renameSync(path.join(s.backups, r.dir), path.join(s.backups, BASELINE));
+  fs.writeFileSync(path.join(s.backups, "retention-policy.json"), JSON.stringify({ version: 1, rawBaseline: BASELINE, protect }));
 }
 const fsTransport = (backups: string, tamper?: (rel: string, b: Buffer) => Buffer) => ({
   readBytes: (rel: string) => {
@@ -107,9 +115,10 @@ describe("pull-latest-to-pc.mjs", () => {
     expect(fs.existsSync(path.join(dest, "PC_LATEST.json"))).toBe(false);
   });
 
-  it("--prune keeps only the newest verified PC copy, after the new one verified, and never touches unmarked folders", () => {
+  it("--prune removes an older PC copy only when its content is fully held by the newest copy or the RAW baseline, and never touches unmarked folders", () => {
     const s = server();
-    s.bk("2026-10-17T00:00:00Z");
+    addBaseline(s); // state 0 (phone '1','2')
+    s.bk("2026-10-17T00:00:00Z"); // identical content to the baseline
     const dest = pc();
     pullLatest({ transport: fsTransport(s.backups), dest, now: t("2026-10-17T01:00:00Z"), prune: true });
     fs.mkdirSync(path.join(dest, "20250101T000000Z_manual-keep")); // looks like a backup name but was not created by this script
@@ -119,6 +128,7 @@ describe("pull-latest-to-pc.mjs", () => {
     const r = pullLatest({ transport: fsTransport(s.backups), dest, now: t("2026-10-18T01:00:00Z"), prune: true });
     expect(r).toMatchObject({ result: "OK", dir: "20261018T000000Z_scheduled", removed: ["20261017T000000Z_scheduled"] });
     expect(fs.readdirSync(dest).filter((x) => /^\d{8}T/.test(x)).sort()).toEqual(["20250101T000000Z_manual-keep", "20261018T000000Z_scheduled"]);
+    expect(fs.existsSync(path.join(dest, BASELINE, "PC_VERIFIED.json"))).toBe(true); // the baseline was pulled, verified and is never a candidate
     expect(fs.existsSync(path.join(dest, "other-folder"))).toBe(true);
     expect(latestOf(dest).dir).toBe("20261018T000000Z_scheduled");
   });
@@ -254,7 +264,87 @@ describe("PC sync state: what the PC shows is the current state, never an infere
       return Buffer.from(JSON.stringify(m));
     };
     const r = pullLatest({ transport: fsTransport(s.backups, evil), dest });
-    expect(r).toMatchObject({ result: "NOT_PULLED", state: "동기화 대기" });
+    expect(r).toMatchObject({ result: "FAILED", state: "동기화 대기" });
+    expect(r.error).toMatch(/outside the backup folder/);
     expect(fs.existsSync(path.join(path.dirname(dest), "escaped.db"))).toBe(false);
+  });
+});
+
+describe("regression 1: PC --prune applies the same RAW / derived-data protection as the server", () => {
+  const L1 = "20261017T000000Z_scheduled";
+  const L2 = "20261018T000000Z_scheduled";
+  const upd = (file: string, q: string) => {
+    const d = new DatabaseSync(file);
+    d.exec(q);
+    d.close();
+  };
+  /** baseline (phone '1','2'); L1 holds a value that exists nowhere else (unless `covered`); L2 is the latest. PC first holds only L1. */
+  function twoCopies(opts: { covered?: boolean; protect?: string[]; noPolicy?: boolean } = {}) {
+    const s = server();
+    if (!opts.noPolicy) addBaseline(s, opts.protect);
+    if (!opts.covered) upd(s.file, "update SortSession set phoneNumber = 'only-on-the-old-copy' where id = 'a'");
+    s.bk("2026-10-17T00:00:00Z");
+    const dest = pc();
+    expect(pullLatest({ transport: fsTransport(s.backups), dest, now: t("2026-10-17T01:00:00Z") }).result).toBe("OK");
+    upd(s.file, "update SortSession set phoneNumber = 'final' where id = 'a'");
+    s.bk("2026-10-18T00:00:00Z");
+    return { s, dest, prune: (tamper?: (rel: string, b: Buffer) => Buffer) => pullLatest({ transport: fsTransport(s.backups, tamper), dest, now: t("2026-10-18T01:00:00Z"), prune: true }) };
+  }
+
+  it("an older PC copy holding a response that exists in neither the newest copy nor the RAW baseline is kept (old code deleted it)", () => {
+    const { dest, prune } = twoCopies();
+    const r = prune();
+    expect(r).toMatchObject({ result: "OK", dir: L2, removed: [] });
+    expect(fs.existsSync(path.join(dest, L1, "PC_VERIFIED.json"))).toBe(true);
+    const copy = new DatabaseSync(path.join(dest, L1, JSON.parse(fs.readFileSync(path.join(dest, L1, "manifest.json"), "utf8")).file), { readOnly: true });
+    expect(copy.prepare("select phoneNumber from SortSession where id = 'a'").get()).toEqual({ phoneNumber: "only-on-the-old-copy" });
+    copy.close();
+  });
+
+  it("an older copy that IS fully held by the baseline / newest copy is removed; the baseline and the newest copy stay", () => {
+    const { dest, prune } = twoCopies({ covered: true });
+    expect(prune()).toMatchObject({ result: "OK", removed: [L1] });
+    expect(fs.existsSync(path.join(dest, L1))).toBe(false);
+    expect(fs.existsSync(path.join(dest, L2))).toBe(true);
+    expect(fs.existsSync(path.join(dest, BASELINE, "PC_VERIFIED.json"))).toBe(true);
+  });
+
+  it("a copy named in the server policy's protect list is kept even though it is covered", () => {
+    const { dest, prune } = twoCopies({ covered: true, protect: [L1] });
+    expect(prune()).toMatchObject({ result: "OK", removed: [] });
+    expect(fs.existsSync(path.join(dest, L1))).toBe(true);
+  });
+
+  it("without the server's policy file nothing is pruned and the reason is reported", () => {
+    const { dest, prune } = twoCopies({ covered: true, noPolicy: true });
+    const r = prune();
+    expect(r).toMatchObject({ result: "OK", removed: [] });
+    expect(r.pruneNotApplied).toBeTruthy();
+    expect(fs.existsSync(path.join(dest, L1))).toBe(true);
+  });
+
+  it("an older copy that no longer verifies (damaged after the pull) is kept", () => {
+    const { dest, prune } = twoCopies({ covered: true });
+    const dbFile = path.join(dest, L1, JSON.parse(fs.readFileSync(path.join(dest, L1, "manifest.json"), "utf8")).file);
+    fs.chmodSync(dbFile, 0o666);
+    fs.appendFileSync(dbFile, "x");
+    expect(prune()).toMatchObject({ result: "OK", removed: [] });
+    expect(fs.existsSync(path.join(dest, L1))).toBe(true);
+  });
+
+  it("a folder that only looks like a backup (no marker from this script) is never touched", () => {
+    const { dest, prune } = twoCopies({ covered: true });
+    fs.mkdirSync(path.join(dest, "20250101T000000Z_manual-keep"));
+    fs.writeFileSync(path.join(dest, "20250101T000000Z_manual-keep", "mine.txt"), "x");
+    prune();
+    expect(fs.readFileSync(path.join(dest, "20250101T000000Z_manual-keep", "mine.txt"), "utf8")).toBe("x");
+  });
+
+  it("a baseline folder that is not this script's own (or does not verify) stops the pruning", () => {
+    const { dest, prune } = twoCopies({ covered: true });
+    fs.mkdirSync(path.join(dest, BASELINE)); // somebody's folder with the baseline's name
+    const r = prune();
+    expect(r).toMatchObject({ removed: [], pruneNotApplied: "BASELINE_UNAVAILABLE" });
+    expect(fs.existsSync(path.join(dest, L1))).toBe(true);
   });
 });
