@@ -12,7 +12,7 @@ export function openReadOnly(file: string): DatabaseSync {
 export function userTables(db: DatabaseSync): string[] {
   return (
     db
-      .prepare("select name from sqlite_master where type='table' and name not like 'sqlite_%' order by name")
+      .prepare("select name from sqlite_master where type='table' and lower(substr(name, 1, 7)) <> 'sqlite_' order by name")
       .all() as { name: string }[]
   ).map((r) => r.name);
 }

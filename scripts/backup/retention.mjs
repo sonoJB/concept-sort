@@ -36,6 +36,7 @@
 import { DatabaseSync } from "node:sqlite";
 import crypto from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -45,8 +46,6 @@ export const OPERATIONAL_TABLES = ["AnalysisPackageJob", "AnalysisExecutionLock"
 export const AUTO_BACKUP_DIR = /^\d{8}T\d{6}Z_[a-z0-9-]+$/;
 export const POLICY_FILE = "retention-policy.json";
 const STALE_TMP_MS = 60 * 60 * 1000;
-const LOCK_STALE_MS = 30 * 60 * 1000;
-const LOCK_HARD_STALE_MS = 6 * 60 * 60 * 1000;
 const LOCK_FILE = ".backup.lock";
 
 const quote = (n) => '"' + String(n).replace(/"/g, '""') + '"';
@@ -108,7 +107,7 @@ export function comparableTables(dbPath) {
   const db = openRO(dbPath);
   try {
     return db
-      .prepare("select name from sqlite_master where type='table' and name not like 'sqlite_%' order by name")
+      .prepare("select name from sqlite_master where type='table' and lower(substr(name, 1, 7)) <> 'sqlite_' order by name")
       .all()
       .map((r) => r.name)
       .filter((n) => !IGNORED_TABLES.has(n));
@@ -326,8 +325,9 @@ function removeTree(dir) {
  * Before the first removal (inside the caller's lock) `replan()` rebuilds the plan from the current files; the deletion proceeds only if the
  * policy file is byte-identical to the one the plan was made from, latest/baseline are unchanged and the candidate is STILL a deletion candidate.
  * Without `replan` nothing is deleted (dry runs only report).
+ * `ownsLock()` must say true right before EVERY removal; a run that lost its lock (taken over, removed, replaced) deletes nothing more.
  */
-export function applyRetention({ root, plan, dryRun, onDelete, replan }) {
+export function applyRetention({ root, plan, dryRun, onDelete, replan, ownsLock }) {
   const result = { dryRun: !!dryRun, deleted: [], kept: [], errors: [] };
   if (!plan.enabled) return result;
   let protect = plan.policy?.protect ?? [];
@@ -339,6 +339,8 @@ export function applyRetention({ root, plan, dryRun, onDelete, replan }) {
       return result;
     };
     if (typeof replan !== "function") return abort("REVALIDATION_UNAVAILABLE: no way to re-check the plan, nothing deleted");
+    if (typeof ownsLock !== "function") return abort("LOCK_CHECK_UNAVAILABLE: cannot confirm that this run still holds the lock, nothing deleted");
+    if (!ownsLock()) return abort("LOCK_LOST: this run no longer holds the lock, nothing deleted");
     try {
       fresh = replan();
     } catch (e) {
@@ -359,6 +361,7 @@ export function applyRetention({ root, plan, dryRun, onDelete, replan }) {
     }
     const dir = path.join(root, c.dir);
     try {
+      if (!dryRun && !ownsLock()) throw new Error("LOCK_LOST: this run no longer holds the lock, nothing more is deleted");
       if (!AUTO_BACKUP_DIR.test(c.dir) || c.dir === plan.latest.dir || c.dir === plan.baseline.dir || protect.includes(c.dir)) throw new Error("guard: protected name");
       if (fresh) {
         const f = fresh.candidates.find((x) => x.dir === c.dir);
@@ -423,16 +426,6 @@ export function removeStaleTemp(root, now = new Date()) {
   return removed;
 }
 
-const pidAlive = (pid) => {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    return !!e && e.code === "EPERM";
-  }
-};
-
 function readLockInfo(file) {
   try {
     return JSON.parse(fs.readFileSync(file, "utf8"));
@@ -441,18 +434,64 @@ function readLockInfo(file) {
   }
 }
 
+const bootId = () => {
+  try {
+    return fs.readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim() || null;
+  } catch {
+    return null;
+  }
+};
+
+/** Process start time in clock ticks since boot (Linux), which tells a reused pid from the original process. null when not available. */
+const procStart = (pid) => {
+  try {
+    const s = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+    return s.slice(s.lastIndexOf(")") + 2).split(" ")[19] ?? null;
+  } catch {
+    return null;
+  }
+};
+
+const pidExists = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return !(e && e.code === "ESRCH"); // EPERM (exists, not ours) and anything unexpected count as "exists"
+  }
+};
+
 /**
- * Exclusive lock so two runs (daemon tick, pre-deploy guard, manual CLI, PC pull) never create/prune at the same time. Returns a release function or null.
- * The lock file carries a random token. Release removes the file ONLY if it still carries OUR token, so a run whose lock was taken over (or never
- * got it) can never delete somebody else's lock. A lock is taken over only when it is older than 30 minutes AND its process is gone (or it is older than 6 hours);
- * the takeover renames exactly the file that was judged stale, checks what was moved and puts a fresher lock back instead of stealing it.
+ * Is the lock owner PROVABLY gone? "dead" only when this machine can prove it; anything else is "alive" or "unknown" and the lock is NOT taken over.
+ *   unknown: no usable owner record (missing/garbled), or the owner ran on another host/container (its liveness cannot be seen from here)
+ *   dead:    same host and (the machine has rebooted since, or the pid does not exist, or the pid now belongs to a different process)
+ *   alive:   same host, the pid exists and is the same process
+ * Elapsed time never decides anything: a long-running job keeps its lock.
+ */
+export function lockOwnerState(info) {
+  if (!info || !Number.isInteger(info.pid) || info.pid <= 0 || typeof info.host !== "string" || info.host !== os.hostname()) return "unknown";
+  const boot = bootId();
+  if (info.bootId && boot && info.bootId !== boot) return "dead";
+  if (!pidExists(info.pid)) return "dead";
+  const start = procStart(info.pid);
+  if (info.startTicks && start && info.startTicks !== start) return "dead";
+  return "alive";
+}
+
+/**
+ * Exclusive lock so two runs (daemon tick, pre-deploy guard, manual CLI, PC pull) never create/prune at the same time. Returns a release function or null;
+ * `release.owns()` tells whether this run STILL holds the lock (the file still carries its token).
+ * The lock file is created complete (written to a private file, then hard-linked into place), carries a random token plus the owner's pid, host, boot id
+ * and process start time. Release removes the file ONLY if it still carries OUR token. A lock is taken over ONLY when its owner is provably gone
+ * (see lockOwnerState); if that cannot be established the takeover is deferred (the caller is told the lock is busy and the log names the holder).
+ * The takeover renames exactly the file that was judged dead, checks what was moved and puts a different (fresher) lock back instead of stealing it.
  */
 export function acquireLock(root, now = new Date()) {
   const file = path.join(root, LOCK_FILE);
   const token = crypto.randomUUID();
+  const owns = () => readLockInfo(file)?.token === token;
   const release = () => {
-    const info = readLockInfo(file);
-    if (info && info.token === token) {
+    if (owns()) {
       try {
         fs.rmSync(file, { force: true });
       } catch {
@@ -460,49 +499,58 @@ export function acquireLock(root, now = new Date()) {
       }
     }
   };
+  release.owns = owns;
+  const mine = JSON.stringify({ pid: process.pid, token, host: os.hostname(), bootId: bootId(), startTicks: procStart(process.pid), at: now.toISOString() });
   for (let attempt = 0; attempt < 3; attempt++) {
+    const priv = path.join(root, `${LOCK_FILE}.new-${token}`);
     try {
-      const fd = fs.openSync(file, "wx");
-      fs.writeSync(fd, JSON.stringify({ pid: process.pid, token, at: now.toISOString() }));
-      fs.closeSync(fd);
-      return release;
-    } catch (e) {
-      if (!e || e.code !== "EEXIST") return null;
-      let age;
-      let info;
+      fs.writeFileSync(priv, mine, { flag: "wx" });
       try {
-        age = now.getTime() - fs.statSync(file).mtimeMs;
-        info = readLockInfo(file);
-      } catch {
-        continue; // vanished between the attempts
-      }
-      const stale = age > LOCK_STALE_MS && (!pidAlive(info?.pid) || age > LOCK_HARD_STALE_MS);
-      if (!stale) return null;
-      const moved = path.join(root, `${LOCK_FILE}.stale-${token}`);
-      try {
-        fs.renameSync(file, moved);
-      } catch {
-        continue; // somebody else took it over first
-      }
-      const movedInfo = readLockInfo(moved);
-      const same = (movedInfo?.token ?? null) === (info?.token ?? null);
-      if (!same) {
-        // a fresh lock appeared between our check and the rename: it is not ours to remove — put it back
+        fs.linkSync(priv, file); // atomic, fails with EEXIST if a lock exists: the lock file is never visible without its content
+        return release;
+      } finally {
         try {
-          fs.linkSync(moved, file);
+          fs.rmSync(priv, { force: true });
         } catch {
-          // another lock exists now; the owner of the moved one will see the token mismatch at release and remove nothing
+          // ignore
         }
       }
-      try {
-        fs.rmSync(moved, { force: true });
-      } catch {
-        // ignore
-      }
-      if (!same) return null;
+    } catch (e) {
+      if (!e || e.code !== "EEXIST") return null;
     }
+    const info = readLockInfo(file);
+    if (!fs.existsSync(file)) continue; // released between the attempts
+    if (lockOwnerState(info) !== "dead") return null; // alive, or not provably gone: hold
+    const moved = path.join(root, `${LOCK_FILE}.stale-${token}`);
+    try {
+      fs.renameSync(file, moved);
+    } catch {
+      continue; // somebody else took it over first
+    }
+    const movedInfo = readLockInfo(moved);
+    const same = (movedInfo?.token ?? null) === (info?.token ?? null);
+    if (!same) {
+      // a different lock appeared between our check and the rename: it is not ours to remove — put it back
+      try {
+        fs.linkSync(moved, file);
+      } catch {
+        // another lock exists now; the owner of the moved one will see the token mismatch at release and remove nothing
+      }
+    }
+    try {
+      fs.rmSync(moved, { force: true });
+    } catch {
+      // ignore
+    }
+    if (!same) return null;
   }
   return null;
+}
+
+/** Who holds the lock right now (for logs; never includes the token). */
+export function lockHolder(root) {
+  const info = readLockInfo(path.join(root, LOCK_FILE));
+  return info ? { pid: info.pid ?? null, host: info.host ?? null, at: info.at ?? null, owner: lockOwnerState(info) } : null;
 }
 
 export function retentionMode(env = process.env) {
@@ -525,7 +573,7 @@ async function cli() {
   // the same lock the daemon uses: never plan or delete while a backup run (or another retention run) is active
   const release = acquireLock(root);
   if (!release) {
-    console.error("[retention] another backup/retention run holds the lock; nothing done");
+    console.error("[retention] another backup/retention run holds the lock; nothing done", JSON.stringify(lockHolder(root)));
     process.exit(1);
   }
   // status.json is read INSIDE the lock, and again by every re-plan, so the record is always current and mandatory
@@ -540,7 +588,7 @@ async function cli() {
       process.exitCode = 1;
       return;
     }
-    const res = applyRetention({ root, plan, dryRun: !apply, replan: makePlan });
+    const res = applyRetention({ root, plan, dryRun: !apply, replan: makePlan, ownsLock: release.owns });
     console.log(JSON.stringify({ enabled: plan.enabled, reason: plan.reason, latest: plan.latest?.dir, baseline: plan.baseline?.dir, candidates: plan.candidates.map((c) => ({ dir: c.dir, decision: c.decision, reason: c.reason })), result: res }, null, 2));
     if (res.errors.length) process.exitCode = 1;
   } finally {

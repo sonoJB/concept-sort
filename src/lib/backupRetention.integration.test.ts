@@ -329,9 +329,9 @@ describe("creation: publish only after verification; failures and concurrency ke
     expect(r.result).toBe("SKIPPED_LOCKED");
     expect(dirs(c)).toEqual([]);
     release();
-    // stale lock (older than 30 minutes) is taken over
+    // a lock whose owner is provably gone (same host, process no longer exists) is taken over; age alone never decides
     const lock = path.join(c.backups, ".backup.lock");
-    fs.writeFileSync(lock, "{}");
+    fs.writeFileSync(lock, JSON.stringify({ pid: 2147483000, host: os.hostname(), token: "dead-owner", at: new Date().toISOString() }));
     const old = new Date(Date.now() - 2 * 60 * 60 * 1000);
     fs.utimesSync(lock, old, old);
     const again = runOnce({ reason: "scheduled", databaseUrl: c.url, now: new Date() });

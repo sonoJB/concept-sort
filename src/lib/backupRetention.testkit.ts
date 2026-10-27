@@ -26,8 +26,9 @@ export function planRetention(args: PlanArgs) {
   return rawPlan({ ...args, latestRecord: "latestRecord" in args ? args.latestRecord : recordFromStatus(args.root) });
 }
 
-export function applyRetention(o: { root: string; plan: any; dryRun?: boolean; onDelete?: (c: unknown) => void; replan?: () => unknown }) {
+export function applyRetention(o: { root: string; plan: any; dryRun?: boolean; onDelete?: (c: unknown) => void; replan?: () => unknown; ownsLock?: () => boolean }) {
   const args = lastArgs.get(o.root);
   const replan = "replan" in o ? o.replan : args ? () => planRetention(args) : undefined;
-  return rawApply({ ...o, replan });
+  // tests that do not exercise the lock behave like a run that holds it; the lock regressions pass their own ownsLock
+  return rawApply({ ...o, replan, ownsLock: "ownsLock" in o ? o.ownsLock : () => true });
 }

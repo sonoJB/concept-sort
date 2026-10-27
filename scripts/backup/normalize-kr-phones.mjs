@@ -33,7 +33,7 @@ const mask = (s) => String(s).replace(/[0-9]/g, "d").replace(/ /g, "_");
 
 /** Per-table fingerprints; SortSession rows listed in `maskPhoneFor` have their phoneNumber replaced by a placeholder. */
 export function tableFingerprints(db, maskPhoneFor = new Set()) {
-  const tables = db.prepare("select name from sqlite_master where type='table' and name not like 'sqlite_%' order by name").all().map((r) => r.name);
+  const tables = db.prepare("select name from sqlite_master where type='table' and lower(substr(name, 1, 7)) <> 'sqlite_' order by name").all().map((r) => r.name);
   const out = {};
   for (const t of tables) {
     const rows = db

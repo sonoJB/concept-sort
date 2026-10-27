@@ -136,7 +136,7 @@ const isOurs = (dest, name) => {
  * pulled and verified here, and a copy is removed only if every row of every comparable table is held by the newest verified copy or the baseline.
  * Never throws; anything unclear keeps every copy.
  */
-function prunePc({ transport, dest, latestDir, record, now }) {
+function prunePc({ transport, dest, latestDir, record, now, owns }) {
   const out = { removed: [], notApplied: null, errors: [] };
   try {
     removeStaleTemp(dest, now); // finishes an interrupted earlier removal (.deleting-*), never touches anything else
@@ -169,7 +169,7 @@ function prunePc({ transport, dest, latestDir, record, now }) {
       out.notApplied = plan.reason;
       return out;
     }
-    const res = applyRetention({ root: dest, plan, dryRun: false, replan: makePlan });
+    const res = applyRetention({ root: dest, plan, dryRun: false, replan: makePlan, ownsLock: owns });
     out.removed = res.deleted.map((d) => d.dir);
     out.errors = res.errors;
     out.kept = res.kept;
@@ -188,13 +188,13 @@ export function pullLatest({ transport, dest, now = new Date(), prune = false })
   const release = acquireLock(dest, now);
   if (!release) return { result: "NOT_PULLED", reason: "another pull is running for this folder", state: pcStatus({ dest }).state };
   try {
-    return pullLocked({ transport, dest, now, prune });
+    return pullLocked({ transport, dest, now, prune, owns: release.owns });
   } finally {
     release();
   }
 }
 
-function pullLocked({ transport, dest, now, prune }) {
+function pullLocked({ transport, dest, now, prune, owns }) {
   let serverLatest = null;
   const finish = (res, state, extra = {}) => {
     recordSync(dest, now, state, { serverLatest, result: res.result, reason: res.reason ?? res.error ?? null, ...extra });
@@ -242,7 +242,7 @@ function pullLocked({ transport, dest, now, prune }) {
       res = finish({ result: "OK", dir, files: rec.files.length }, STATE_SYNCED, { pcLatest: { backupId: dir, manifestSha256 } });
     }
     if (prune) {
-      const p = prunePc({ transport, dest, latestDir: dir, record, now });
+      const p = prunePc({ transport, dest, latestDir: dir, record, now, owns });
       res.removed = p.removed;
       if (p.notApplied) res.pruneNotApplied = p.notApplied;
       if (p.errors.length) res.pruneErrors = p.errors;

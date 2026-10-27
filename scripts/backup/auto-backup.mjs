@@ -32,7 +32,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { acquireLock, applyRetention, planRetention, readLatestRecord, removeStaleTemp, retentionMode } from "./retention.mjs";
+import { acquireLock, applyRetention, lockHolder, planRetention, readLatestRecord, removeStaleTemp, retentionMode } from "./retention.mjs";
 
 export const MIN_FREE_BYTES = 100 * 1024 * 1024; // below this a backup is refused
 export const LOW_DISK_WARN_BYTES = 200 * 1024 * 1024; // below this the admin screen warns
@@ -60,7 +60,7 @@ function sqlQuote(p) {
 /** Order-independent fingerprint of the entire DB content (all tables except SQLite internals). */
 export function contentFingerprint(db) {
   const tables = db
-    .prepare("select name from sqlite_master where type='table' and name not like 'sqlite_%' order by name")
+    .prepare("select name from sqlite_master where type='table' and lower(substr(name, 1, 7)) <> 'sqlite_' order by name")
     .all()
     .map((r) => r.name);
   const h = crypto.createHash("sha256");
@@ -380,17 +380,17 @@ export function runOnce({ reason, databaseUrl = process.env.DATABASE_URL, now = 
   const release = acquireLock(root, now);
   if (!release) {
     try {
-      fs.appendFileSync(path.join(root, "backup-log.jsonl"), JSON.stringify({ at: now.toISOString(), reason, result: "SKIPPED_LOCKED" }) + "\n");
+      fs.appendFileSync(path.join(root, "backup-log.jsonl"), JSON.stringify({ at: now.toISOString(), reason, result: "SKIPPED_LOCKED", holder: lockHolder(root) }) + "\n");
     } catch {
       // ignore
     }
-    log("log", "skipped: another backup run is in progress", { reason });
+    log("log", "skipped: another backup run holds the lock (a lock whose owner cannot be proven gone is never taken over)", { reason, holder: lockHolder(root) });
     return { result: "SKIPPED_LOCKED" };
   }
   try {
     const removed = removeStaleTemp(root, now);
     if (removed.length) log("log", "removed stale temporary backup directories", { removed });
-    return runOnceLocked({ reason, databaseUrl, now, dbPath, root });
+    return runOnceLocked({ reason, databaseUrl, now, dbPath, root, owns: release.owns });
   } finally {
     release();
   }
@@ -400,7 +400,7 @@ export function runOnce({ reason, databaseUrl = process.env.DATABASE_URL, now = 
  * Optional latest-set retention (see retention.mjs). Off unless AUTO_BACKUP_RETENTION=dry-run|apply AND <backups>/retention-policy.json exists.
  * Never throws; any doubt keeps every backup. Returns a small summary for status.json or null when off.
  */
-function retentionStep({ root, dbPath, latestDir, now, record }) {
+function retentionStep({ root, dbPath, latestDir, now, record, owns }) {
   const mode = retentionMode();
   if (mode === "off") return null;
   try {
@@ -417,6 +417,7 @@ function retentionStep({ root, dbPath, latestDir, now, record }) {
       plan,
       dryRun: mode !== "apply",
       replan: makePlan,
+      ownsLock: owns,
       onDelete: (c) => record({ result: "RETENTION_DELETED", dir: c.dir, reason: c.reason, latest: plan.latest.dir, rawBaseline: plan.baseline.dir }),
     });
     for (const d of res.deleted) log("log", res.dryRun ? "retention (dry run): would delete" : "retention: deleted", { dir: d.dir });
@@ -433,7 +434,7 @@ function retentionStep({ root, dbPath, latestDir, now, record }) {
   }
 }
 
-function runOnceLocked({ reason, databaseUrl, now, dbPath, root }) {
+function runOnceLocked({ reason, databaseUrl, now, dbPath, root, owns }) {
   const statusFile = path.join(root, "status.json");
   const logFile = path.join(root, "backup-log.jsonl");
   const prev = readStatus(statusFile);
@@ -494,7 +495,7 @@ function runOnceLocked({ reason, databaseUrl, now, dbPath, root }) {
         });
         record({ result: "SKIPPED_UNCHANGED", verified: prev.lastBackupDir });
         log("log", "skipped: data unchanged and previous backup re-verified", { reason, dir: prev.lastBackupDir });
-        const retentionSkip = retentionStep({ root, dbPath, latestDir: prev.lastBackupDir, now, record });
+        const retentionSkip = retentionStep({ root, dbPath, latestDir: prev.lastBackupDir, now, record, owns });
         if (retentionSkip) save({ ...readStatus(statusFile), lastRetention: retentionSkip });
         return { result: "SKIPPED_UNCHANGED", lastBackup: prev.lastBackupDir };
       }
@@ -529,7 +530,7 @@ function runOnceLocked({ reason, databaseUrl, now, dbPath, root }) {
     });
     record({ result: "OK", dir: created.dir, bytes: m.bytes, sha256: m.sha256 });
     log("log", "backup created", { dir: created.dir, bytes: m.bytes });
-    const retentionNew = retentionStep({ root, dbPath, latestDir: created.dir, now, record });
+    const retentionNew = retentionStep({ root, dbPath, latestDir: created.dir, now, record, owns });
     if (retentionNew) save({ ...readStatus(statusFile), lastRetention: retentionNew });
     return { result: "OK", dir: created.dir, manifest: m };
   } catch (err) {

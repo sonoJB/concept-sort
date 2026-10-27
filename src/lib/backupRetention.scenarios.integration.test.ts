@@ -7,9 +7,9 @@ import { spawn, spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 // @ts-expect-error plain-JS Node scripts (no type declarations)
-import { runOnce, createBackup, verifyBackupDir } from "../../scripts/backup/auto-backup.mjs";
+import { runOnce, createBackup, verifyBackupDir, contentFingerprint } from "../../scripts/backup/auto-backup.mjs";
 // @ts-expect-error plain-JS Node scripts (no type declarations)
-import { removeStaleTemp, POLICY_FILE, canon, coverage, acquireLock } from "../../scripts/backup/retention.mjs";
+import { removeStaleTemp, POLICY_FILE, canon, coverage, acquireLock, comparableTables } from "../../scripts/backup/retention.mjs";
 import { planRetention, applyRetention } from "./backupRetention.testkit";
 
 /**
@@ -499,47 +499,224 @@ describe("regression 3: the manual CLI follows the same rules as the daemon (rec
   });
 });
 
-describe("regression 3: lock ownership", () => {
+describe("regression 3 / round 3: lock ownership; takeover only when the owner is provably gone", () => {
   const lockOf = (c: Live) => path.join(c.backups, ".backup.lock");
-  const holder = (token: string, pid = process.pid) => JSON.stringify({ pid, token, at: new Date().toISOString() });
+  const info = (token: string, extra: Record<string, unknown> = {}) => JSON.stringify({ pid: process.pid, token, host: os.hostname(), at: new Date().toISOString(), ...extra });
   const age = (f: string, ms: number) => {
     const old = new Date(Date.now() - ms);
     fs.utimesSync(f, old, old);
   };
+  const fresh = () => {
+    const c = makeLive();
+    fs.mkdirSync(c.backups, { recursive: true });
+    return c;
+  };
+  const linuxOnly = process.platform === "linux";
+
+  it("a new lock is created complete (owner record with pid, host and token) and owns() tells whether it is still ours", () => {
+    const c = fresh();
+    const release = acquireLock(c.backups) as (() => void) & { owns: () => boolean };
+    const rec = JSON.parse(fs.readFileSync(lockOf(c), "utf8"));
+    expect(rec).toMatchObject({ pid: process.pid, host: os.hostname() });
+    expect(typeof rec.token).toBe("string");
+    expect(release.owns()).toBe(true);
+    expect(fs.readdirSync(c.backups).filter((x) => x.includes(".new-"))).toEqual([]);
+    release();
+    expect(fs.existsSync(lockOf(c))).toBe(false);
+    expect(release.owns()).toBe(false);
+  });
 
   it("release removes the lock only if it still carries this run's token", () => {
-    const c = makeLive();
-    fs.mkdirSync(c.backups, { recursive: true });
-    const release = acquireLock(c.backups) as () => void;
-    fs.writeFileSync(lockOf(c), holder("another-run")); // the lock now belongs to somebody else
+    const c = fresh();
+    const release = acquireLock(c.backups) as (() => void) & { owns: () => boolean };
+    fs.writeFileSync(lockOf(c), info("another-run")); // the lock now belongs to somebody else
+    expect(release.owns()).toBe(false);
     release();
     expect(JSON.parse(fs.readFileSync(lockOf(c), "utf8")).token).toBe("another-run");
-    const release2 = acquireLock(c.backups, new Date(Date.now() + 7 * 3600 * 1000)) as () => void; // 7 h later: hard-stale, taken over
-    expect(release2).toBeTypeOf("function");
-    release2();
-    expect(fs.existsSync(lockOf(c))).toBe(false);
   });
 
-  it("a lock older than 30 minutes whose process is still alive is not taken over (until 6 hours)", () => {
-    const c = makeLive();
-    fs.mkdirSync(c.backups, { recursive: true });
-    fs.writeFileSync(lockOf(c), holder("alive-owner"));
-    age(lockOf(c), 2 * 3600 * 1000);
+  it("a lock whose owner is alive is never taken over, however old it is — also not by a separate process", () => {
+    const c = fresh();
+    const release = acquireLock(c.backups) as (() => void) & { owns: () => boolean };
+    const mine = fs.readFileSync(lockOf(c), "utf8");
+    age(lockOf(c), 7 * 3600 * 1000); // 7 hours ago, owner (this process) still running
     expect(acquireLock(c.backups, new Date())).toBeNull();
-    expect(JSON.parse(fs.readFileSync(lockOf(c), "utf8")).token).toBe("alive-owner");
-    age(lockOf(c), 7 * 3600 * 1000);
-    expect(acquireLock(c.backups, new Date())).toBeTypeOf("function");
+    expect(acquireLock(c.backups, new Date(Date.now() + 30 * 24 * 3600 * 1000))).toBeNull(); // even "a month later" by the clock
+    const code = `import { acquireLock } from ${JSON.stringify(pathToFileURL(path.resolve(__dirname, "../../scripts/backup/retention.mjs")).href)};
+      const r = acquireLock(process.env.ROOT, new Date());
+      console.log(r ? "ACQUIRED" : "BUSY");`;
+    const child = spawnSync(process.execPath, ["--input-type=module", "-e", code], { env: { ...process.env, ROOT: c.backups }, encoding: "utf8" });
+    expect(child.stdout.trim()).toBe("BUSY");
+    expect(fs.readFileSync(lockOf(c), "utf8")).toBe(mine);
+    expect(release.owns()).toBe(true);
+    release();
   });
 
-  it("a stale lock whose process is gone is taken over, and the leftover renamed file is cleaned up", () => {
-    const c = makeLive();
-    fs.mkdirSync(c.backups, { recursive: true });
-    fs.writeFileSync(lockOf(c), holder("dead-owner", 2147483000));
+  it("a lock whose owner is provably gone (same host, process no longer exists) is taken over, and no renamed leftover remains", () => {
+    const c = fresh();
+    fs.writeFileSync(lockOf(c), info("dead-owner", { pid: 2147483000 }));
     age(lockOf(c), 2 * 3600 * 1000);
     const release = acquireLock(c.backups, new Date()) as () => void;
     expect(release).toBeTypeOf("function");
-    expect(fs.readdirSync(c.backups).filter((x) => x.includes(".stale-"))).toEqual([]);
+    expect(fs.readdirSync(c.backups).filter((x) => x.includes(".stale-") || x.includes(".new-"))).toEqual([]);
     release();
+  });
+
+  it.each([
+    ["an empty lock file", () => ""],
+    ["a garbled lock file", () => "{ not json"],
+    ["a record without an owner pid", () => JSON.stringify({ token: "t", host: os.hostname() })],
+    ["a record with a non-numeric pid", () => JSON.stringify({ pid: "123", token: "t", host: os.hostname() })],
+    ["a record without a host", () => JSON.stringify({ pid: 2147483000, token: "t" })],
+    ["an owner on another host or container (its processes cannot be seen from here)", () => JSON.stringify({ pid: 2147483000, token: "t", host: os.hostname() + "-other-container" })],
+  ])("%s: the owner's end cannot be proven, so the takeover is deferred however old the lock is", (_name, content) => {
+    const c = fresh();
+    fs.writeFileSync(lockOf(c), (content as () => string)());
+    age(lockOf(c), 8 * 3600 * 1000);
+    const before = fs.readFileSync(lockOf(c), "utf8");
+    expect(acquireLock(c.backups, new Date())).toBeNull();
+    expect(fs.readFileSync(lockOf(c), "utf8")).toBe(before);
+    expect(fs.readdirSync(c.backups).filter((x) => x.includes(".stale-") || x.includes(".new-"))).toEqual([]);
+  });
+
+  it.skipIf(!linuxOnly)("(Linux) a pid that was reused by another process, or an owner from before a reboot, counts as gone", () => {
+    const c = fresh();
+    fs.writeFileSync(lockOf(c), info("reused-pid", { startTicks: "1" })); // this pid exists, but it started at another time than the owner recorded
+    const r1 = acquireLock(c.backups, new Date()) as () => void;
+    expect(r1).toBeTypeOf("function");
+    r1();
+    fs.writeFileSync(lockOf(c), info("before-reboot", { bootId: "00000000-0000-0000-0000-000000000000" }));
+    const r2 = acquireLock(c.backups, new Date()) as () => void;
+    expect(r2).toBeTypeOf("function");
+    r2();
+  });
+
+  it("two processes racing for a free lock: exactly one gets it", () => {
+    const c = fresh();
+    const code = `import { acquireLock } from ${JSON.stringify(pathToFileURL(path.resolve(__dirname, "../../scripts/backup/retention.mjs")).href)};
+      const r = acquireLock(process.env.ROOT, new Date());
+      console.log(r ? "ACQUIRED" : "BUSY");
+      if (r) await new Promise((res) => setTimeout(res, 800));`;
+    // run the children truly in parallel (async spawn); the winner holds the lock for a while
+    return Promise.all([0, 1, 2].map(() => new Promise<string>((resolve) => {
+      const ch = spawn(process.execPath, ["--input-type=module", "-e", code], { env: { ...process.env, ROOT: c.backups }, stdio: ["ignore", "pipe", "ignore"] });
+      let out = "";
+      ch.stdout.on("data", (b) => (out += b));
+      ch.on("exit", () => resolve(out.trim()));
+    }))).then((r) => {
+      expect(r.filter((x) => x === "ACQUIRED")).toHaveLength(1);
+      expect(r.filter((x) => x === "BUSY")).toHaveLength(2);
+    });
+  });
+});
+
+describe("round 3: a run that lost its lock deletes nothing more", () => {
+  const LATEST3 = "20261019T000000Z_scheduled";
+  /** baseline, two older automatic backups identical to it (both deletable), and a latest one with changed data. */
+  function twoDeletable() {
+    const c = makeLive();
+    const base = makeBaseline(c);
+    createBackup({ reason: "scheduled", databaseUrl: c.url, now: t("2026-10-17T00:00:00Z") });
+    createBackup({ reason: "scheduled", databaseUrl: c.url, now: t("2026-10-18T00:00:00Z") });
+    sql(c.file, "update SortSession set phoneNumber = 'n'");
+    runOnce({ reason: "scheduled", databaseUrl: c.url, now: t("2026-10-19T00:00:00Z") });
+    writePolicy(c, { rawBaseline: base });
+    const p = planRetention({ root: c.backups, latestDir: LATEST3, liveDbPath: c.file, verify });
+    expect(p.candidates.map((x: { dir: string; decision: string }) => x.decision)).toEqual(["delete", "delete"]);
+    return { c, p };
+  }
+
+  it("the lock was replaced by another run after the plan: nothing is deleted", () => {
+    const { c, p } = twoDeletable();
+    const release = acquireLock(c.backups) as (() => void) & { owns: () => boolean };
+    fs.writeFileSync(path.join(c.backups, ".backup.lock"), JSON.stringify({ pid: process.pid, token: "someone-else", host: os.hostname(), at: new Date().toISOString() }));
+    const res = applyRetention({ root: c.backups, plan: p, dryRun: false, ownsLock: release.owns });
+    expect(res.deleted).toEqual([]);
+    expect(res.errors[0].error).toMatch(/LOCK_LOST/);
+    expect(dirs(c)).toEqual(expect.arrayContaining([L1, L2]));
+  });
+
+  it("the lock file was removed after the plan: nothing is deleted", () => {
+    const { c, p } = twoDeletable();
+    const release = acquireLock(c.backups) as (() => void) & { owns: () => boolean };
+    fs.rmSync(path.join(c.backups, ".backup.lock"));
+    expect(applyRetention({ root: c.backups, plan: p, dryRun: false, ownsLock: release.owns }).deleted).toEqual([]);
+    expect(dirs(c).filter((d) => /^\d{8}T/.test(d))).toHaveLength(3);
+  });
+
+  it("the lock is lost BETWEEN two removals: the first is done, the second is kept", () => {
+    const { c, p } = twoDeletable();
+    let calls = 0;
+    const res = applyRetention({ root: c.backups, plan: p, dryRun: false, ownsLock: () => ++calls <= 2 }); // 1: initial check, 2: before the first removal
+    expect(res.deleted.map((d: { dir: string }) => d.dir)).toEqual([L1]);
+    expect(res.errors).toHaveLength(1);
+    expect(res.errors[0].error).toMatch(/LOCK_LOST/);
+    expect(dirs(c)).toContain(L2);
+  });
+
+  it("while the run still owns the lock both are deleted (the check does not block the normal path)", () => {
+    const { c, p } = twoDeletable();
+    const release = acquireLock(c.backups) as (() => void) & { owns: () => boolean };
+    const res = applyRetention({ root: c.backups, plan: p, dryRun: false, ownsLock: release.owns });
+    release();
+    expect(res.errors).toEqual([]);
+    expect(res.deleted).toHaveLength(2);
+  });
+
+  it("without a way to confirm lock ownership nothing is deleted", () => {
+    const { c, p } = twoDeletable();
+    const res = applyRetention({ root: c.backups, plan: p, dryRun: false, ownsLock: undefined });
+    expect(res.deleted).toEqual([]);
+    expect(res.errors[0].error).toMatch(/LOCK_CHECK_UNAVAILABLE/);
+  });
+});
+
+describe("round 3: tables whose names merely start with the letters 'sqlite' are ordinary tables", () => {
+  const ddl = "create table sqliteXResponses (id text primary key, answer text);";
+
+  it("comparableTables() and contentFingerprint() include sqliteXResponses but not SQLite's own sqlite_sequence", () => {
+    const f = smallDb("sqx", `${ddl} create table Auto (id integer primary key autoincrement, v text); insert into Auto (v) values ('a'); insert into sqliteXResponses values ('1','yes');`);
+    const names = comparableTables(f);
+    expect(names).toContain("sqliteXResponses");
+    expect(names).not.toContain("sqlite_sequence");
+    const d = new DatabaseSync(f);
+    expect(d.prepare("select count(*) n from sqlite_master where name = 'sqlite_sequence'").get()).toEqual({ n: 1 }); // the internal table really exists
+    const { counts } = contentFingerprint(d);
+    d.close();
+    expect(Object.keys(counts)).toContain("sqliteXResponses");
+    expect(Object.keys(counts)).not.toContain("sqlite_sequence");
+  });
+
+  it("a change in that table alone changes the content fingerprint, so a new backup is made instead of 'unchanged'", () => {
+    const c = makeLive(ddl);
+    expect(runOnce({ reason: "scheduled", databaseUrl: c.url, now: t("2026-10-17T00:00:00Z") }).result).toBe("OK");
+    expect(runOnce({ reason: "scheduled", databaseUrl: c.url, now: t("2026-10-17T06:00:00Z") }).result).toBe("SKIPPED_UNCHANGED");
+    sql(c.file, "insert into sqliteXResponses values ('1','only-answer')");
+    expect(runOnce({ reason: "scheduled", databaseUrl: c.url, now: t("2026-10-17T12:00:00Z") }).result).toBe("OK");
+  });
+
+  it("a past backup whose only response is in that table is kept (it was deleted before the fix)", () => {
+    const c = makeLive(ddl);
+    const base = makeBaseline(c);
+    sql(c.file, "insert into sqliteXResponses values ('1','only-in-the-old-backup')");
+    createBackup({ reason: "scheduled", databaseUrl: c.url, now: t("2026-10-17T00:00:00Z") }); // L1: holds the response
+    sql(c.file, "delete from sqliteXResponses; update SortSession set phoneNumber='n'");
+    runOnce({ reason: "scheduled", databaseUrl: c.url, now: t("2026-10-18T00:00:00Z") }); // latest: no such row
+    writePolicy(c, { rawBaseline: base });
+    const p = plan(c);
+    expect(p.enabled).toBe(true);
+    expect(entry(p, L1)).toMatchObject({ decision: "keep", reason: "RAW_ROWS_ONLY_IN_THIS_BACKUP", tables: ["sqliteXResponses"] });
+    expect(entry(p, L1).comparedTables).toContain("sqliteXResponses");
+    expect(applyRetention({ root: c.backups, plan: p, dryRun: false }).deleted).toEqual([]);
+    expect(dirs(c)).toContain(L1);
+    // control: without the extra row the same layout deletes
+    const c2 = makeLive(ddl);
+    const b2 = makeBaseline(c2);
+    createBackup({ reason: "scheduled", databaseUrl: c2.url, now: t("2026-10-17T00:00:00Z") });
+    sql(c2.file, "update SortSession set phoneNumber='n'");
+    runOnce({ reason: "scheduled", databaseUrl: c2.url, now: t("2026-10-18T00:00:00Z") });
+    writePolicy(c2, { rawBaseline: b2 });
+    expect(entry(plan(c2), L1)).toMatchObject({ decision: "delete" });
   });
 });
 
