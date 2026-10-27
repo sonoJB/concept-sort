@@ -109,7 +109,7 @@ export function runGuard({
   }
   let applied, unfinished, userTableCount, projectCount;
   try {
-    const tables = db.prepare("select name from sqlite_master where type='table' and name not like 'sqlite_%'").all().map((r) => r.name);
+    const tables = db.prepare("select name from sqlite_master where type='table' and lower(substr(name, 1, 7)) <> 'sqlite_'").all().map((r) => r.name);
     userTableCount = tables.filter((t) => t !== "_prisma_migrations").length;
     applied = appliedMigrationNames(db);
     unfinished = [];

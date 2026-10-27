@@ -32,6 +32,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { acquireLock, applyRetention, lockHolder, planRetention, readLatestRecord, removeStaleTemp, retentionMode } from "./retention.mjs";
 
 export const MIN_FREE_BYTES = 100 * 1024 * 1024; // below this a backup is refused
 export const LOW_DISK_WARN_BYTES = 200 * 1024 * 1024; // below this the admin screen warns
@@ -59,7 +60,7 @@ function sqlQuote(p) {
 /** Order-independent fingerprint of the entire DB content (all tables except SQLite internals). */
 export function contentFingerprint(db) {
   const tables = db
-    .prepare("select name from sqlite_master where type='table' and name not like 'sqlite_%' order by name")
+    .prepare("select name from sqlite_master where type='table' and lower(substr(name, 1, 7)) <> 'sqlite_' order by name")
     .all()
     .map((r) => r.name);
   const h = crypto.createHash("sha256");
@@ -205,14 +206,21 @@ export function appliedMigrationNames(db) {
  * Re-verifies an existing backup directory without modifying it.
  * @returns {{ ok: boolean, problems: string[], manifest: object|null }}
  */
+const isPlainName = (n) => n !== "" && n !== "." && n !== ".." && n === path.basename(n) && !n.includes("/") && !n.includes("\\");
+
 export function verifyBackupDir(dir, { expectedMigrations } = {}) {
   const problems = [];
   const manifestPath = path.join(dir, "manifest.json");
   if (!fs.existsSync(dir)) return { ok: false, problems: ["backup directory is missing"], manifest: null };
   const manifest = readJson(manifestPath);
   if (!manifest) return { ok: false, problems: ["manifest.json is missing or unreadable"], manifest: null };
-  const dbFile = path.join(dir, manifest.file ?? "");
-  if (!manifest.file || !fs.existsSync(dbFile)) return { ok: false, problems: ["backup database file is missing"], manifest };
+  // file names in a manifest must be plain names inside the backup; a path (".." or separators) is refused, never followed
+  if (typeof manifest.file !== "string" || !isPlainName(manifest.file)) return { ok: false, problems: ["manifest names a database file outside the backup"], manifest };
+  if ((manifest.analysisPackages ?? []).some((pk) => typeof pk.file !== "string" || !isPlainName(pk.file))) {
+    return { ok: false, problems: ["manifest names a package file outside the backup"], manifest };
+  }
+  const dbFile = path.join(dir, manifest.file);
+  if (!fs.existsSync(dbFile)) return { ok: false, problems: ["backup database file is missing"], manifest };
   try {
     if (sha256File(dbFile) !== manifest.sha256) problems.push("SHA-256 does not match the recorded value");
   } catch (e) {
@@ -262,8 +270,8 @@ function freeBytesOf(dir) {
 }
 
 /**
- * Creates one new verified backup of the live database.
- * Never skips and never deletes. Returns { result: "OK"|"FAILED", ... }.
+ * Creates one new verified backup of the live database (set = database + manifest.json + analysis-packages/).
+ * Never skips and never deletes an existing backup. Returns { result: "OK"|"FAILED", ... }.
  */
 export function createBackup({ reason, databaseUrl = process.env.DATABASE_URL, now = new Date() }) {
   const dbPath = resolveDbPath(databaseUrl);
@@ -303,15 +311,17 @@ export function createBackup({ reason, databaseUrl = process.env.DATABASE_URL, n
     }
     if (integrity !== "ok") throw new Error(`integrity_check failed on the new backup: ${integrity}`);
 
+    // The complete set (database + manifest + package links) is assembled and verified INSIDE the temporary directory and only then
+    // published with one rename. An existing backup is never overwritten, and a failed run leaves nothing but a temporary directory
+    // that is removed again (a crash leaves at most one, which the next run removes).
     const finalName = `${stamp(now)}_${reason}`;
     const finalDir = path.join(root, finalName);
-    fs.mkdirSync(finalDir); // throws if it already exists: never overwrite
+    if (fs.existsSync(finalDir)) throw new Error(`backup directory ${finalName} already exists — refusing to overwrite it`);
     const fileName = `concept-sort_${stamp(now)}.db`;
-    const finalDb = path.join(finalDir, fileName);
+    const finalDb = path.join(tmpDir, fileName);
     fs.renameSync(tmpDb, finalDb);
-    fs.rmSync(tmpDir, { recursive: true, force: true });
 
-    const { packages: analysisPackages, problems: analysisPackageProblems } = captureAnalysisPackages(dbPath, finalDir);
+    const { packages: analysisPackages, problems: analysisPackageProblems } = captureAnalysisPackages(dbPath, tmpDir);
     const manifest = {
       createdAtUtc: now.toISOString(),
       reason,
@@ -327,14 +337,15 @@ export function createBackup({ reason, databaseUrl = process.env.DATABASE_URL, n
       analysisPackages,
       analysisPackageProblems,
     };
-    fs.writeFileSync(path.join(finalDir, "manifest.json"), JSON.stringify(manifest, null, 2));
+    fs.writeFileSync(path.join(tmpDir, "manifest.json"), JSON.stringify(manifest, null, 2));
     fs.chmodSync(finalDb, 0o444);
-    fs.chmodSync(path.join(finalDir, "manifest.json"), 0o444);
+    fs.chmodSync(path.join(tmpDir, "manifest.json"), 0o444);
 
     // The backup must verify as a whole (file + manifest + migration history) before it counts as a success.
-    const check = verifyBackupDir(finalDir, { expectedMigrations: liveMigrations ?? undefined });
+    const check = verifyBackupDir(tmpDir, { expectedMigrations: liveMigrations ?? undefined });
     if (!check.ok) throw new Error("new backup failed verification: " + check.problems.join("; "));
 
+    fs.renameSync(tmpDir, finalDir); // publish: atomic on the same volume; fails (and keeps everything) if the target appeared meanwhile
     return { result: "OK", dir: finalName, dirPath: finalDir, manifest };
   } catch (err) {
     try {
@@ -365,6 +376,65 @@ export function runOnce({ reason, databaseUrl = process.env.DATABASE_URL, now = 
     log("error", "BACKUP FAILED (cannot create backup directory)", { error: String(e) });
     return { result: "FAILED", error: String(e) };
   }
+  // one run at a time: two simultaneous runs (scheduler tick, pre-deploy guard, manual) must never create or prune together
+  const release = acquireLock(root, now);
+  if (!release) {
+    try {
+      fs.appendFileSync(path.join(root, "backup-log.jsonl"), JSON.stringify({ at: now.toISOString(), reason, result: "SKIPPED_LOCKED", holder: lockHolder(root) }) + "\n");
+    } catch {
+      // ignore
+    }
+    log("log", "skipped: another backup run holds the lock (a lock whose owner cannot be proven gone is never taken over)", { reason, holder: lockHolder(root) });
+    return { result: "SKIPPED_LOCKED" };
+  }
+  try {
+    const removed = removeStaleTemp(root, now);
+    if (removed.length) log("log", "removed stale temporary backup directories", { removed });
+    return runOnceLocked({ reason, databaseUrl, now, dbPath, root, owns: release.owns });
+  } finally {
+    release();
+  }
+}
+
+/**
+ * Optional latest-set retention (see retention.mjs). Off unless AUTO_BACKUP_RETENTION=dry-run|apply AND <backups>/retention-policy.json exists.
+ * Never throws; any doubt keeps every backup. Returns a small summary for status.json or null when off.
+ */
+function retentionStep({ root, dbPath, latestDir, now, record, owns }) {
+  const mode = retentionMode();
+  if (mode === "off") return null;
+  try {
+    // the verification record (status.json) is a mandatory input of every plan, including the re-plan done right before a deletion
+    const makePlan = () => planRetention({ root, latestDir, liveDbPath: dbPath, verify: (d) => verifyBackupDir(d), latestRecord: readLatestRecord(root) });
+    const plan = makePlan();
+    if (!plan.enabled) {
+      record({ result: "RETENTION_NOT_APPLIED", mode, reason: plan.reason });
+      log("log", "retention not applied", { mode, reason: plan.reason });
+      return { at: now.toISOString(), mode, applied: false, reason: plan.reason };
+    }
+    const res = applyRetention({
+      root,
+      plan,
+      dryRun: mode !== "apply",
+      replan: makePlan,
+      ownsLock: owns,
+      onDelete: (c) => record({ result: "RETENTION_DELETED", dir: c.dir, reason: c.reason, latest: plan.latest.dir, rawBaseline: plan.baseline.dir }),
+    });
+    for (const d of res.deleted) log("log", res.dryRun ? "retention (dry run): would delete" : "retention: deleted", { dir: d.dir });
+    if (res.errors.length) {
+      record({ result: "RETENTION_ERRORS", errors: res.errors });
+      log("error", "retention errors (affected backups kept)", res.errors);
+    }
+    return { at: now.toISOString(), mode, applied: true, latest: plan.latest.dir, rawBaseline: plan.baseline.dir, deleted: res.deleted.map((d) => d.dir), kept: res.kept, errors: res.errors };
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    record({ result: "RETENTION_FAILED", mode, error: message });
+    log("error", "retention failed (nothing deleted)", { error: message });
+    return { at: now.toISOString(), mode, applied: false, error: message };
+  }
+}
+
+function runOnceLocked({ reason, databaseUrl, now, dbPath, root, owns }) {
   const statusFile = path.join(root, "status.json");
   const logFile = path.join(root, "backup-log.jsonl");
   const prev = readStatus(statusFile);
@@ -425,6 +495,8 @@ export function runOnce({ reason, databaseUrl = process.env.DATABASE_URL, now = 
         });
         record({ result: "SKIPPED_UNCHANGED", verified: prev.lastBackupDir });
         log("log", "skipped: data unchanged and previous backup re-verified", { reason, dir: prev.lastBackupDir });
+        const retentionSkip = retentionStep({ root, dbPath, latestDir: prev.lastBackupDir, now, record, owns });
+        if (retentionSkip) save({ ...readStatus(statusFile), lastRetention: retentionSkip });
         return { result: "SKIPPED_UNCHANGED", lastBackup: prev.lastBackupDir };
       }
       // Previous backup is missing / damaged / does not match: do NOT skip, and do NOT touch the old copy.
@@ -458,6 +530,8 @@ export function runOnce({ reason, databaseUrl = process.env.DATABASE_URL, now = 
     });
     record({ result: "OK", dir: created.dir, bytes: m.bytes, sha256: m.sha256 });
     log("log", "backup created", { dir: created.dir, bytes: m.bytes });
+    const retentionNew = retentionStep({ root, dbPath, latestDir: created.dir, now, record, owns });
+    if (retentionNew) save({ ...readStatus(statusFile), lastRetention: retentionNew });
     return { result: "OK", dir: created.dir, manifest: m };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
